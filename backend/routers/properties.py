@@ -1376,13 +1376,15 @@ def dashboard_summary(
         sum(l.current_balance for l in p.loans) for p in props
     )
     total_monthly_mortgage = sum(
-        sum(l.monthly_payment + l.escrow_amount for l in p.loans) for p in props
+        sum(max(l.monthly_payment - l.escrow_amount, 0) for l in p.loans) for p in props
     )
     total_equity = total_market_value - total_loan_balance
 
     # Pre-aggregate interest paid per property from tax return entries
+    # Include tax entries from shared owners so the shared-user view is complete
+    all_owner_ids = [current_user.id] + shared_owner_ids
     _tax_entries = db.query(models.TaxReturnEntry).filter(
-        models.TaxReturnEntry.owner_id == current_user.id
+        models.TaxReturnEntry.owner_id.in_(all_owner_ids)
     ).all()
     interest_by_prop: dict[int, float] = {}
     for _e in _tax_entries:
@@ -1448,8 +1450,9 @@ def dashboard_summary(
     ) if balance_sum > 0 else 0
 
     # Interest paid till date — from TaxReturnEntry (1098 / Schedule E) across all properties
+    # Include shared owners so the marvzy / joint-filing shared view shows the full figure
     tax_entries = db.query(models.TaxReturnEntry).filter(
-        models.TaxReturnEntry.owner_id == current_user.id,
+        models.TaxReturnEntry.owner_id.in_(all_owner_ids),
     ).all()
     total_interest_paid = round(sum(e.mortgage_interest or 0 for e in tax_entries), 2)
 
