@@ -2,6 +2,7 @@ import os
 import json
 import re
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -10,6 +11,41 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 import models
+
+
+def detect_duplicate_ids(doc_objects) -> set:
+    """Return the IDs of documents that are duplicates.
+
+    Two documents are considered duplicates when they share the same
+    (property_id, doc_category, statement_year, normalised loan_account_number).
+    Among each duplicate group, the document with the earliest upload_date is
+    kept as the original; the rest are flagged.
+
+    For documents without a statement_year (e.g., lease agreements), no
+    duplicate detection is performed.
+    """
+    groups: dict = defaultdict(list)
+    for d in doc_objects:
+        year = getattr(d, "statement_year", None)
+        if not year:
+            continue  # can't meaningfully de-dup without a year
+        key = (
+            getattr(d, "property_id", None),
+            (getattr(d, "doc_category", None) or "").lower(),
+            int(year),
+            (getattr(d, "loan_account_number", None) or "").upper().strip(),
+        )
+        groups[key].append(d)
+
+    duplicate_ids: set = set()
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        # Sort ascending by upload_date; earliest is the original
+        ordered = sorted(group, key=lambda d: str(getattr(d, "upload_date", "") or ""))
+        for dup in ordered[1:]:
+            duplicate_ids.add(dup.id)
+    return duplicate_ids
 from database import get_db
 from routers.auth import get_current_user
 from routers.properties import import_tax_return
@@ -558,6 +594,8 @@ def list_documents(
         models.Document.property_id == property_id
     ).all()
 
+    dup_ids = detect_duplicate_ids(docs)
+
     return [
         {
             "id": d.id,
@@ -573,6 +611,7 @@ def list_documents(
             "period_end": d.period_end,
             "upload_date": d.upload_date,
             "has_markdown": bool(d.markdown_file),
+            "is_duplicate": d.id in dup_ids,
         }
         for d in docs
     ]

@@ -25,22 +25,22 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 px-4">
       <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl p-8">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 sm:p-8">
           {/* Logo */}
           <div className="flex items-center gap-3 mb-8">
             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
               <Home className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-xl text-gray-900">RentalProps</h1>
-              <p className="text-xs text-gray-400">RE Consolidation Tool</p>
+              <h1 className="font-bold text-xl text-gray-900">PropertyLens</h1>
+              <p className="text-xs text-gray-400">Property Intelligence Platform</p>
             </div>
           </div>
 
-          <h2 className="text-2xl font-semibold text-gray-900 mb-1">Welcome back</h2>
-          <p className="text-gray-500 text-sm mb-6">Sign in to your account</p>
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-1">Welcome back</h2>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">Sign in to your account</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

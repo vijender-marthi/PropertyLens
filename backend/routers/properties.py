@@ -74,6 +74,8 @@ class PropertyBase(BaseModel):
     capex_reserve: float = 0.0
     other_expenses: float = 0.0
     land_value: float = 0.0
+    land_price: float = 0.0
+    construction_price: float = 0.0
     depreciation_years: float = 27.5
     market_value: float = 0.0
     market_value_source: str = "manual"
@@ -140,6 +142,8 @@ class TaxEntryOut(BaseModel):
     depreciation: float
     total_expenses: float
     net_income: float
+    days_rented: Optional[int] = 0
+    personal_use_days: Optional[int] = 0
 
     class Config:
         from_attributes = True
@@ -159,6 +163,13 @@ def _validate_rental(r: RentalPeriodBase):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _depreciable_basis(prop) -> float:
+    construction_price = getattr(prop, "construction_price", 0) or 0
+    if construction_price > 0:
+        return construction_price
+    return (getattr(prop, "purchase_price", 0) or 0) * 0.75
+
+
 def compute_property_metrics(prop: models.Property) -> dict:
     total_loan_balance = sum(l.current_balance for l in prop.loans)
 
@@ -176,8 +187,9 @@ def compute_property_metrics(prop: models.Property) -> dict:
     effective_rent = 0.0 if is_primary else prop.monthly_rent * (prop.occupancy_rate / 100)
 
     # Full operating expenses — taxes, insurance, HOA, maintenance, etc.
-    # Escrow is NOT a separate line; it is accounted for via property_tax + insurance.
-    tax_ins_monthly = prop.property_tax / 12 + prop.insurance / 12
+    # Use statement escrow when annual tax/insurance fields are empty or lower.
+    # This avoids double-counting while still counting escrowed costs.
+    tax_ins_monthly = max((prop.property_tax / 12 + prop.insurance / 12), monthly_escrow)
     other_operating = (
         prop.hoa_fee + prop.maintenance +
         prop.property_management_fee + prop.utilities +
@@ -188,7 +200,7 @@ def compute_property_metrics(prop: models.Property) -> dict:
     monthly_cash_flow = effective_rent - monthly_mortgage - monthly_expenses
 
     equity             = prop.market_value - total_loan_balance
-    depreciable        = prop.purchase_price - prop.land_value
+    depreciable        = _depreciable_basis(prop)
     annual_depreciation = depreciable / prop.depreciation_years if prop.depreciation_years else 0
 
     # NOI = Gross Rent − Operating Expenses (no debt service)
@@ -619,7 +631,8 @@ def _match_property(address: str, props):
 
 
 TAX_ENTRY_FIELDS = ("rents_received", "mortgage_interest", "property_taxes",
-                    "depreciation", "total_expenses", "net_income")
+                    "depreciation", "total_expenses", "net_income",
+                    "days_rented", "personal_use_days")
 
 
 def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) -> int:
@@ -692,6 +705,33 @@ def get_performance(
     tax_return_depr_by_year = {
         e.tax_year: e.depreciation for e in _tax_entries if e.depreciation
     }
+    tax_return_interest_by_year = {
+        e.tax_year: e.mortgage_interest for e in _tax_entries if e.mortgage_interest
+    }
+    # Schedule E total_expenses includes interest + depreciation; strip them out
+    # to get operating-only expenses (insurance, taxes, maintenance, etc.)
+    tax_return_opex_by_year = {
+        e.tax_year: round(
+            (e.total_expenses or 0) - (e.mortgage_interest or 0) - (e.depreciation or 0), 2
+        )
+        for e in _tax_entries if e.total_expenses
+    }
+    # Schedule E lines 2 & 3 — Fair Rental Days / Personal Use Days
+    days_rented_by_year = {
+        e.tax_year: e.days_rented for e in _tax_entries if e.days_rented
+    }
+    personal_use_days_by_year = {
+        e.tax_year: e.personal_use_days for e in _tax_entries if e.personal_use_days
+    }
+    # Per-year property taxes from filed returns: prefer Schedule E entries
+    # (total_expenses > 0 means it came from an actual return, not just a 1098)
+    _prop_tax_by_year: dict[int, float] = {}
+    for _e in _tax_entries:
+        if not _e.property_taxes:
+            continue
+        _existing = _prop_tax_by_year.get(_e.tax_year)
+        if _existing is None or bool(_e.total_expenses):
+            _prop_tax_by_year[_e.tax_year] = _e.property_taxes
 
     annual_rent = metrics["effective_rent"] * 12
     annual_tax_ins = prop.property_tax + prop.insurance
@@ -788,14 +828,19 @@ def get_performance(
             interest_paid = interest_by_year[year]
             if source != "actual":
                 source = "1098"
+        elif year in tax_return_interest_by_year:
+            interest_paid = tax_return_interest_by_year[year]
+            source = "tax_return"
 
-        # Use actual taxes from documents for this year when available; this
-        # also feeds operating expenses so each year reflects its own data
-        # instead of repeating the property's static estimate.
-        year_tax = tax_by_year.get(year)
+        # Use actual taxes: document extracts first, then filed tax return, then static field.
+        year_tax = tax_by_year.get(year) or _prop_tax_by_year.get(year)
         op_property_tax = year_tax if year_tax is not None else prop.property_tax
-        operating_expenses = round(annual_other_op + prop.insurance + op_property_tax, 2)
-        taxes_paid = round(year_tax if year_tax is not None else prop.property_tax, 2)
+        # Schedule E total (minus interest and depreciation) beats static field estimates
+        if year in tax_return_opex_by_year:
+            operating_expenses = round(max(0, tax_return_opex_by_year[year]), 2)
+        else:
+            operating_expenses = round(annual_other_op + prop.insurance + op_property_tax, 2)
+        taxes_paid = round(op_property_tax, 2)
 
         # Escrow from the year's statement if present, else the model estimate
         if ss and ss[-1].get("escrow"):
@@ -821,9 +866,19 @@ def get_performance(
             occupancy = None
             rent_source = "none"
 
-        # Depreciation: tax return (Schedule E line 18) > IRS mid-month calculation
+        # Depreciation: Schedule E filed value (highest trust) > days-rented proration
+        # > IRS mid-month purchase-year convention > full-year straight-line.
+        # "days_rented" from Schedule E lines 2/3 handles mixed-use years
+        # (e.g. 6 months primary + 6 months rental) automatically.
+        _days_rented = days_rented_by_year.get(year)
         if tax_return_depr_by_year.get(year):
             year_depreciation = tax_return_depr_by_year[year]
+        elif _days_rented:
+            # IRS: depreciation is only allowed on the rental portion of the year.
+            # For a calendar year (365 or 366 days) use the actual days rented.
+            import calendar as _cal
+            year_days = 366 if _cal.isleap(year) else 365
+            year_depreciation = round(annual_depreciation * _days_rented / year_days, 2)
         elif purchase_year and year == purchase_year and prop.purchase_date:
             # IRS mid-month convention: residential rental placed in service in
             # month M → available months = (12 - M + 0.5)
@@ -858,6 +913,8 @@ def get_performance(
             "total_return": round(cash_flow + principal_paid, 2),
             "statements": len(ss),
             "source": source,
+            "days_rented": days_rented_by_year.get(year),
+            "personal_use_days": personal_use_days_by_year.get(year),
         })
 
     totals = {
@@ -919,6 +976,7 @@ def get_performance(
     return {
         "yearly": yearly,
         "totals": totals,
+        "year_notes": json.loads(prop.year_notes or "{}"),
         "snapshots": snapshots,
         "all_documents": all_documents,
         "equity": equity,
@@ -956,6 +1014,24 @@ def get_lifetime_summary(
     tax_return_depr_by_year = {
         e.tax_year: e.depreciation for e in _tax_entries if e.depreciation
     }
+    tax_return_interest_by_year = {
+        e.tax_year: e.mortgage_interest for e in _tax_entries if e.mortgage_interest
+    }
+    tax_return_opex_by_year = {
+        e.tax_year: round(
+            (e.total_expenses or 0) - (e.mortgage_interest or 0) - (e.depreciation or 0), 2
+        )
+        for e in _tax_entries if e.total_expenses
+    }
+    # Per-year property taxes from filed returns: prefer Schedule E entries
+    # (total_expenses > 0 means it came from an actual return, not just a 1098)
+    _prop_tax_by_year: dict[int, float] = {}
+    for _e in _tax_entries:
+        if not _e.property_taxes:
+            continue
+        _existing = _prop_tax_by_year.get(_e.tax_year)
+        if _existing is None or bool(_e.total_expenses):
+            _prop_tax_by_year[_e.tax_year] = _e.property_taxes
 
     # Every year we have any data for — statements, 1098s, tax bills, leases, tax returns.
     data_years = ({s["year"] for s in snapshots} | set(tax_by_year)
@@ -1051,12 +1127,19 @@ def get_lifetime_summary(
             interest_paid = interest_by_year[year]
             if source != "actual":
                 source = "1098"
+        elif year in tax_return_interest_by_year:
+            interest_paid = tax_return_interest_by_year[year]
+            source = "tax_return"
 
-        # Per-year actuals from documents so each year reflects its own data
-        year_tax = tax_by_year.get(year)
+        # Use actual taxes: document extracts first, then filed tax return, then static field.
+        year_tax = tax_by_year.get(year) or _prop_tax_by_year.get(year)
         op_property_tax = year_tax if year_tax is not None else prop.property_tax
-        operating_expenses = round(annual_other_op + prop.insurance + op_property_tax, 2)
-        taxes_paid = round(year_tax if year_tax is not None else prop.property_tax, 2)
+        # Schedule E total (minus interest and depreciation) beats static field estimates
+        if year in tax_return_opex_by_year:
+            operating_expenses = round(max(0, tax_return_opex_by_year[year]), 2)
+        else:
+            operating_expenses = round(annual_other_op + prop.insurance + op_property_tax, 2)
+        taxes_paid = round(op_property_tax, 2)
 
         if ss and ss[-1].get("escrow"):
             escrow_paid = round(ss[-1]["escrow"] * 12, 2)
@@ -1140,6 +1223,15 @@ def get_lifetime_summary(
         yd["is_partial"] = True
         yd["months_elapsed"] = months_elapsed
 
+    # Original loan amount is authoritative — use it to compute how much
+    # principal has actually been paid off. The per-year principal_paid values
+    # can be negative when 1098/statement data is incomplete or inconsistent
+    # (e.g. a new loan originated mid-year whose first 1098 Box-2 balance is
+    # higher than the next year's balance). Summing those gives nonsense totals.
+    _original_loan = round(sum(l.original_amount for l in prop.loans if l.original_amount), 2)
+    _current_bal   = round(metrics["total_loan_balance"], 2)
+    _principal_paid_actual = round(max(0, _original_loan - _current_bal), 2)
+
     lifetime = {
         "years_owned": years_owned,
         "purchase_year": purchase_year,
@@ -1147,15 +1239,16 @@ def get_lifetime_summary(
         "total_rental_income": round(sum(y["rental_income"] for y in yearly_details), 2),
         "total_operating_expenses": round(sum(y["operating_expenses"] for y in yearly_details), 2),
         "total_interest_paid": round(sum(y["interest_paid"] for y in yearly_details), 2),
-        "total_principal_paid": round(sum(y["principal_paid"] for y in yearly_details), 2),
+        "total_principal_paid": _principal_paid_actual,
         "total_escrow_paid": round(sum(y["escrow_paid"] for y in yearly_details), 2),
         "total_taxes_paid": round(sum(y["taxes_paid"] for y in yearly_details), 2),
         "total_depreciation": round(sum(y["depreciation"] for y in yearly_details), 2),
         "total_cash_flow": round(sum(y["cash_flow"] for y in yearly_details), 2),
         "total_taxable_income": round(sum(y["taxable_income"] for y in yearly_details), 2),
         "total_return": round(
-            sum(y["cash_flow"] + y["principal_paid"] for y in yearly_details), 2),
-        "current_loan_balance": round(metrics["total_loan_balance"], 2),
+            sum(y["cash_flow"] for y in yearly_details) + _principal_paid_actual, 2),
+        "current_loan_balance": _current_bal,
+        "original_loan_amount": _original_loan,
         "market_value": prop.market_value,
         "equity": round(metrics["equity"], 2),
         "purchase_price": prop.purchase_price or 0,
@@ -1164,6 +1257,221 @@ def get_lifetime_summary(
     }
 
     return {"lifetime": lifetime, "yearly": yearly_details}
+
+
+@router.get("/{prop_id}/rawdata")
+def get_raw_data(
+    prop_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Return every raw data point we hold for a property, grouped by source,
+    so the frontend can render a side-by-side cross-verification view.
+
+    Sources:
+      tax_entries  — TaxReturnEntry rows extracted from uploaded Schedule E
+      docs_1098    — exact mortgage interest from Form 1098 (per year, per account)
+      docs_balance — outstanding principal at Jan-1 from Form 1098 Box 2
+      stmt_annual  — annualised figures from monthly mortgage statements
+      tax_docs     — property-tax amounts extracted from any uploaded document
+      lease_rent   — income / occupancy derived from entered RentalPeriod records
+      snapshots    — every raw statement row (date, balance, interest, principal)
+    """
+    prop = _get_accessible_property(prop_id, db, current_user)
+
+    # Determine purchase year so pre-acquisition data is excluded
+    purchase_year = None
+    if prop.purchase_date:
+        _m = re.search(r'(?:19|20)\d{2}', prop.purchase_date)
+        if _m:
+            purchase_year = int(_m.group(0))
+
+    snapshots, tax_by_year, interest_by_year, balance_by_year = _collect_doc_history(prop)
+    rental_by_year = _rental_income_by_year(prop)
+
+    # Strip any data from before the acquisition year
+    if purchase_year:
+        snapshots       = [s for s in snapshots if s["year"] >= purchase_year]
+        tax_by_year     = {y: v for y, v in tax_by_year.items()     if y >= purchase_year}
+        interest_by_year = {y: v for y, v in interest_by_year.items() if y >= purchase_year}
+        balance_by_year  = {y: v for y, v in balance_by_year.items()  if y >= purchase_year}
+        rental_by_year   = {y: v for y, v in rental_by_year.items()   if y >= purchase_year}
+
+    # Schedule E tax return entries
+    tax_entries_q = db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.property_id == prop_id,
+    )
+    if purchase_year:
+        tax_entries_q = tax_entries_q.filter(
+            models.TaxReturnEntry.tax_year >= purchase_year
+        )
+    tax_entries = tax_entries_q.order_by(models.TaxReturnEntry.tax_year).all()
+
+    # Aggregate mortgage statement snapshots by year
+    stmt_by_year: dict = {}
+    for s in snapshots:
+        yr = s["year"]
+        bucket = stmt_by_year.setdefault(yr, {
+            "interest": [], "principal": [], "balance": [], "doc_ids": []
+        })
+        if s.get("interest") is not None:
+            bucket["interest"].append(s["interest"])
+        if s.get("principal") is not None:
+            bucket["principal"].append(s["principal"])
+        if s.get("balance") is not None:
+            bucket["balance"].append(s["balance"])
+        if s.get("document_id"):
+            bucket["doc_ids"].append(s["document_id"])
+
+    stmt_annual = {}
+    for yr, d in stmt_by_year.items():
+        n = len(d["interest"]) or 1
+        stmt_annual[yr] = {
+            "interest_annual": round(sum(d["interest"]) / n * 12, 2) if d["interest"] else None,
+            "principal_annual": round(sum(d["principal"]) / n * 12, 2) if d["principal"] else None,
+            "avg_balance": round(sum(d["balance"]) / len(d["balance"]), 2) if d["balance"] else None,
+            "statement_count": len(set(d["doc_ids"])),
+        }
+
+    # Annual depreciation (IRS straight-line)
+    depreciable = _depreciable_basis(prop)
+    annual_depr = round(depreciable / prop.depreciation_years, 2) if prop.depreciation_years else 0
+
+    # Compute duplicate flags across all docs for this property
+    from routers.documents import detect_duplicate_ids
+    _dup_ids = detect_duplicate_ids(prop.documents)
+
+    # 1098 document-level detail (per-document, not just aggregated)
+    docs_1098_detail = []
+    for d in prop.documents:
+        if d.doc_category != "1098" or not d.extracted_data:
+            continue
+        import json as _json
+        data = _json.loads(d.extracted_data)
+        yr = d.statement_year or data.get("tax_year") or data.get("statement_year")
+        if isinstance(yr, str):
+            m = re.search(r"(?:19|20)\d{2}", yr)
+            yr = int(m.group(0)) if m else None
+        if not yr:
+            continue
+        if purchase_year and yr < purchase_year:
+            continue
+        docs_1098_detail.append({
+            "year": yr,
+            "filename": d.original_filename or d.filename,
+            "mortgage_interest": data.get("mortgage_interest"),
+            "outstanding_principal": data.get("current_balance"),
+            "account_number": d.loan_account_number or data.get("account_number"),
+            "document_id": d.id,
+            "upload_date": str(d.upload_date) if d.upload_date else None,
+            "is_duplicate": d.id in _dup_ids,
+        })
+
+    return {
+        "tax_entries": [
+            {
+                "tax_year": e.tax_year,
+                "rents_received": e.rents_received,
+                "mortgage_interest": e.mortgage_interest,
+                "property_taxes": e.property_taxes,
+                "depreciation": e.depreciation,
+                "total_expenses": e.total_expenses,
+                "net_income": e.net_income,
+                "days_rented": e.days_rented or 0,
+                "personal_use_days": e.personal_use_days or 0,
+            }
+            for e in tax_entries
+        ],
+        "docs_1098": {yr: amt for yr, amt in interest_by_year.items()},
+        "docs_1098_detail": docs_1098_detail,
+        "docs_balance": {yr: bal for yr, bal in balance_by_year.items()},
+        "stmt_annual": {yr: v for yr, v in stmt_annual.items()},
+        "tax_docs": {yr: amt for yr, amt in tax_by_year.items()},
+        "lease_rent": {
+            yr: {
+                "income": d["income"],
+                "occupied_months": d["occupied_months"],
+                "occupancy": d.get("occupancy"),
+                # Approximate days from occupied months (not exact but consistent)
+                "lease_days": round((d["occupied_months"] or 0) / 12 * (
+                    366 if yr % 4 == 0 and (yr % 100 != 0 or yr % 400 == 0) else 365
+                )),
+            }
+            for yr, d in rental_by_year.items()
+        },
+        "irs_annual_depreciation": annual_depr,
+        "snapshots": [
+            {
+                "date": s["date"],
+                "year": s["year"],
+                "balance": s["balance"],
+                "principal": s["principal"],
+                "interest": s["interest"],
+                "escrow": s.get("escrow"),
+                "document_id": s.get("document_id"),
+                "is_duplicate": s.get("document_id") in _dup_ids,
+            }
+            for s in snapshots
+        ],
+        "loans": [
+            {
+                "lender": l.lender_name,
+                "current_balance": l.current_balance,
+                "interest_rate": l.interest_rate,
+                "monthly_payment": l.monthly_payment,
+                "interest_due": l.interest_due,
+                "principal_due": l.principal_due,
+                "escrow_amount": l.escrow_amount,
+                "origination_date": l.origination_date,
+                "original_amount": l.original_amount,
+            }
+            for l in prop.loans
+        ],
+    }
+
+
+@router.patch("/{prop_id}/notes")
+def update_property_notes(
+    prop_id: int,
+    note: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Save a free-text note on a property."""
+    prop = db.query(models.Property).filter(
+        models.Property.id == prop_id,
+        models.Property.owner_id == current_user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    prop.notes = note.strip()
+    db.commit()
+    return {"note": prop.notes}
+
+
+@router.patch("/{prop_id}/year-note")
+def update_year_note(
+    prop_id: int,
+    year: int,
+    note: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Save or clear a free-text note for a specific year on a property."""
+    prop = db.query(models.Property).filter(
+        models.Property.id == prop_id,
+        models.Property.owner_id == current_user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    notes = json.loads(prop.year_notes or "{}")
+    if note.strip():
+        notes[str(year)] = note.strip()
+    else:
+        notes.pop(str(year), None)
+    prop.year_notes = json.dumps(notes)
+    db.commit()
+    return {"year": year, "note": notes.get(str(year), "")}
 
 
 @router.post("/{prop_id}/refresh-value")
@@ -1302,6 +1610,52 @@ def tax_return_comparison(
         }
         result.append({"tax_year": year, "entries": rows, "totals": totals})
     return {"years": result}
+
+
+class ManualYearEntryIn(BaseModel):
+    tax_year: int
+    rents_received: Optional[float] = None
+    mortgage_interest: Optional[float] = None
+    property_taxes: Optional[float] = None
+    depreciation: Optional[float] = None
+    total_expenses: Optional[float] = None
+    net_income: Optional[float] = None
+
+
+@router.post("/{prop_id}/tax-entries", response_model=TaxEntryOut)
+def upsert_tax_entry(
+    prop_id: int,
+    entry: ManualYearEntryIn,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = _get_owned_property(prop_id, db, current_user)
+    rec = db.query(models.TaxReturnEntry).filter_by(
+        property_id=prop.id, tax_year=entry.tax_year
+    ).first()
+    if not rec:
+        rec = models.TaxReturnEntry(
+            owner_id=current_user.id,
+            property_id=prop.id,
+            tax_year=entry.tax_year,
+            property_kind="rental",
+        )
+        db.add(rec)
+    if entry.rents_received is not None:
+        rec.rents_received = entry.rents_received
+    if entry.mortgage_interest is not None:
+        rec.mortgage_interest = entry.mortgage_interest
+    if entry.property_taxes is not None:
+        rec.property_taxes = entry.property_taxes
+    if entry.depreciation is not None:
+        rec.depreciation = entry.depreciation
+    if entry.total_expenses is not None:
+        rec.total_expenses = entry.total_expenses
+    if entry.net_income is not None:
+        rec.net_income = entry.net_income
+    db.commit()
+    db.refresh(rec)
+    return rec
 
 
 @router.get("/{prop_id}/tax-entries", response_model=List[TaxEntryOut])
@@ -1483,10 +1837,12 @@ def dashboard_summary(
     properties_detail = []
     total_monthly_rent = 0.0
     total_annual_noi = 0.0
+    total_monthly_cf = 0.0
     for p in props:
         m = compute_property_metrics(p)
         total_monthly_rent += m["effective_rent"]
         total_annual_noi += m["annual_noi"]
+        total_monthly_cf += m["monthly_cash_flow"]
         _orig_loans = [l for l in p.loans if (l.original_amount or 0) > 0]
         prop_original_loan = sum(l.original_amount for l in _orig_loans)
         prop_principal_paid = sum(l.original_amount - (l.current_balance or 0) for l in _orig_loans)
@@ -1504,6 +1860,7 @@ def dashboard_summary(
             "original_loan_amount": round(prop_original_loan, 2),
             "principal_paid": round(prop_principal_paid, 2),
             "interest_paid": round(interest_by_prop.get(p.id, 0.0), 2),
+            "notes": p.notes or "",
             "loans": [
                 {
                     "id": l.id,
@@ -1551,6 +1908,47 @@ def dashboard_summary(
     original_ltv = round(total_original_loan / total_purchase_price * 100, 1) if total_purchase_price else 0
 
     total_cap_rate = round(total_annual_noi / total_market_value * 100, 2) if total_market_value else 0
+    prop_ids = {p.id for p in props}
+    yearly_trends_by_year: dict[int, dict] = {}
+    for entry in tax_entries:
+        if entry.property_id not in prop_ids:
+            continue
+        row = yearly_trends_by_year.setdefault(entry.tax_year, {
+            "year": entry.tax_year,
+            "rental_income": 0.0,
+            "mortgage_interest": 0.0,
+            "property_taxes": 0.0,
+            "operating_expenses": 0.0,
+            "depreciation": 0.0,
+            "net_income": 0.0,
+            "properties": [],
+        })
+        row["rental_income"] += entry.rents_received or 0.0
+        row["mortgage_interest"] += entry.mortgage_interest or 0.0
+        row["property_taxes"] += entry.property_taxes or 0.0
+        row["operating_expenses"] += entry.total_expenses or 0.0
+        row["depreciation"] += entry.depreciation or 0.0
+        row["net_income"] += entry.net_income or 0.0
+        row["properties"].append({
+            "property_id": entry.property_id,
+            "rental_income": round(entry.rents_received or 0.0, 2),
+            "mortgage_interest": round(entry.mortgage_interest or 0.0, 2),
+            "property_taxes": round(entry.property_taxes or 0.0, 2),
+            "operating_expenses": round(entry.total_expenses or 0.0, 2),
+            "depreciation": round(entry.depreciation or 0.0, 2),
+            "net_income": round(entry.net_income or 0.0, 2),
+        })
+    yearly_trends = []
+    for row in sorted(yearly_trends_by_year.values(), key=lambda r: r["year"]):
+        yearly_trends.append({
+            **row,
+            "rental_income": round(row["rental_income"], 2),
+            "mortgage_interest": round(row["mortgage_interest"], 2),
+            "property_taxes": round(row["property_taxes"], 2),
+            "operating_expenses": round(row["operating_expenses"], 2),
+            "depreciation": round(row["depreciation"], 2),
+            "net_income": round(row["net_income"], 2),
+        })
 
     return {
         "total_properties": total_properties,
@@ -1559,7 +1957,7 @@ def dashboard_summary(
         "total_loan_balance": round(total_loan_balance, 2),
         "total_monthly_mortgage": round(total_monthly_mortgage, 2),
         "total_equity": round(total_equity, 2),
-        "total_monthly_cash_flow": round(total_monthly_rent - total_monthly_mortgage, 2),
+        "total_monthly_cash_flow": round(total_monthly_cf, 2),
         "total_purchase_price": round(total_purchase_price, 2),
         "total_appreciation_gain": round(total_market_value - total_purchase_price, 2),
         "portfolio_ltv": round(total_loan_balance / total_market_value * 100, 1) if total_market_value else 0,
@@ -1574,5 +1972,6 @@ def dashboard_summary(
         "total_principal_paid": round(total_principal_paid, 2),
         "portfolio_dscr": portfolio_dscr,
         "annual_debt_service": round(annual_debt_service, 2),
+        "yearly_trends": yearly_trends,
         "properties": properties_detail,
     }

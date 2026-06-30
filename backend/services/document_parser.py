@@ -628,6 +628,9 @@ def _parse_schedule_e_page(page) -> list:
         'property_taxes': r'\b16 Taxes\b',
         'depreciation': r'Depreciation expense',
         'total_expenses': r'Total expenses',
+        # Schedule E lines 2 & 3 — integer day counts, not dollar amounts
+        'days_rented':       r'(?:Fair\s+)?[Rr]ental\s+[Dd]ays|(?:2\s+)?(?:Fair\s+)?[Dd]ays\s+rented',
+        'personal_use_days': r'[Pp]ersonal\s+[Uu]se\s+[Dd]ays|(?:3\s+)?[Dd]ays\s+(?:of\s+)?personal',
     }
     found, anchor_xs = {}, []
     for ln in lines:
@@ -671,6 +674,8 @@ def _parse_schedule_e_page(page) -> list:
             'depreciation': vals['depreciation'],
             'total_expenses': vals['total_expenses'],
             'net_income': round(vals['rents'] - vals['total_expenses'], 2),
+            'days_rented':       int(vals['days_rented']),
+            'personal_use_days': int(vals['personal_use_days']),
         })
     return props
 
@@ -696,6 +701,8 @@ def _parse_schedule_a_primary(text: str) -> Optional[dict]:
         'depreciation': 0.0,
         'total_expenses': 0.0,
         'net_income': 0.0,
+        'days_rented': 0,
+        'personal_use_days': 0,
     }
 
 
@@ -1036,7 +1043,19 @@ def parse_property_tax(text: str) -> Dict[str, Any]:
         r'total\s+assessed\s+taxes?',
         r'your\s+total\s+\d{4}\s+property\s+taxes?',
         r'your\s+total\s+property\s+taxes?',
+        # Alameda County: "Ad Valorem Tax plus Special Assessments ... $X"
+        r'ad\s+valorem\s+tax\s+plus\s+special\s+assessments',
     ])
+    # "Total Amount Billed" header with amount on next line (Alameda County portal)
+    if v is None:
+        m = re.search(
+            r'total\s+amount\s+billed[^\n]*\n[^\n]*?\$?\s*([\d,]+\.\d{2})',
+            text, re.IGNORECASE)
+        if m:
+            try:
+                v = float(m.group(1).replace(',', ''))
+            except ValueError:
+                pass
     # County installment bills (e.g. San Joaquin CA) show no single "total"
     # line — the annual tax is the sum of the 1st and 2nd installments.
     if v is None:

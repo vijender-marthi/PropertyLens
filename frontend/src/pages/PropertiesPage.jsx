@@ -27,8 +27,8 @@ export default function PropertiesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Properties</h1>
-          <p className="text-gray-500 text-sm mt-1">{properties.length} rental {properties.length === 1 ? 'property' : 'properties'}</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Properties</h1>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">{properties.length} rental {properties.length === 1 ? 'property' : 'properties'}</p>
         </div>
         <div className="flex gap-2">
           <Link to="/uploads" className="btn-secondary flex items-center gap-2"
@@ -44,8 +44,8 @@ export default function PropertiesPage() {
       {properties.length === 0 ? (
         <div className="text-center py-20 card">
           <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">No properties yet</h2>
-          <p className="text-gray-400 mb-6">
+          <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-300 mb-2">No properties yet</h2>
+          <p className="text-gray-400 dark:text-gray-500 mb-6">
             Drop a mortgage statement and we'll create the property and loan for you —
             or add one manually
           </p>
@@ -68,8 +68,8 @@ export default function PropertiesPage() {
 }
 
 const TILE_COLORS = [
-  'bg-white',
-  'bg-gray-50',
+  'bg-white dark:bg-gray-800',
+  'bg-gray-50 dark:bg-gray-800',
 ]
 
 function PropertyCard({ property: p, index = 0 }) {
@@ -80,8 +80,8 @@ function PropertyCard({ property: p, index = 0 }) {
     <Link to={`/properties/${p.id}`} className={`card hover:shadow-md transition-shadow block ${tileBg}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 truncate">{p.address}</h3>
-          <p className="text-sm text-gray-400 flex items-center gap-1 mt-0.5">
+          <h3 className="font-semibold text-gray-900 dark:text-white truncate">{p.address}</h3>
+          <p className="text-sm text-gray-400 dark:text-gray-500 flex items-center gap-1 mt-0.5">
             <MapPin className="w-3 h-3" /> {p.city}, {p.state}
           </p>
         </div>
@@ -116,8 +116,8 @@ function PropertyCard({ property: p, index = 0 }) {
 function Metric({ label, value }) {
   return (
     <div>
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className="text-sm font-semibold text-gray-900">{value}</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">{label}</p>
+      <p className="text-sm font-semibold text-gray-900 dark:text-white">{value}</p>
     </div>
   )
 }

@@ -17,6 +17,8 @@ MIGRATIONS = {
         "usage_type": "VARCHAR DEFAULT 'Rental'",
         "vacancy_allowance": "FLOAT DEFAULT 0.0",
         "capex_reserve": "FLOAT DEFAULT 0.0",
+        "land_price": "FLOAT DEFAULT 0.0",
+        "construction_price": "FLOAT DEFAULT 0.0",
     },
     "documents": {
         "markdown_file": "VARCHAR",
@@ -25,6 +27,10 @@ MIGRATIONS = {
         "period_type": "VARCHAR DEFAULT 'other'",
         "period_start": "VARCHAR",
         "period_end": "VARCHAR",
+    },
+    "tax_return_entries": {
+        "days_rented": "INTEGER DEFAULT 0",
+        "personal_use_days": "INTEGER DEFAULT 0",
     },
     "loans": {
         "rate_note": "VARCHAR",

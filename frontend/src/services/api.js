@@ -47,7 +47,10 @@ export const propAPI = {
   metrics: (id) => api.get(`/properties/${id}/metrics`),
   performance: (id) => api.get(`/properties/${id}/performance`),
   lifetime: (id) => api.get(`/properties/${id}/lifetime`),
+  rawdata: (id) => api.get(`/properties/${id}/rawdata`),
   refreshValue: (id) => api.post(`/properties/${id}/refresh-value`),
+  updateYearNote: (id, year, note) => api.patch(`/properties/${id}/year-note`, null, { params: { year, note } }),
+  updateNotes: (id, note) => api.patch(`/properties/${id}/notes`, null, { params: { note } }),
   dashboard: () => api.get('/properties/dashboard/summary'),
   // Loans
   addLoan: (propId, data) => api.post(`/properties/${propId}/loans`, data),
@@ -59,6 +62,7 @@ export const propAPI = {
     api.get(`/properties/${propId}/loans/${loanId}/arm-schedule`),
   // Tax return entries
   taxEntries: (propId) => api.get(`/properties/${propId}/tax-entries`),
+  upsertYearEntry: (propId, data) => api.post(`/properties/${propId}/tax-entries`, data),
   taxComparison: () => api.get('/properties/tax-returns/comparison'),
   // Rental periods
   rentals: (propId) => api.get(`/properties/${propId}/rentals`),

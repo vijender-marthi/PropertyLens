@@ -50,13 +50,13 @@ export default function RegisterPage() {
               <Home className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-xl text-gray-900">RentalProps</h1>
-              <p className="text-xs text-gray-400">RE Consolidation Tool</p>
+              <h1 className="font-bold text-xl text-gray-900">PropertyLens</h1>
+              <p className="text-xs text-gray-400">Property Intelligence Platform</p>
             </div>
           </div>
 
           <h2 className="text-2xl font-semibold text-gray-900 mb-1">Create account</h2>
-          <p className="text-gray-500 text-sm mb-6">Start managing your rental portfolio</p>
+          <p className="text-gray-500 text-sm mb-6">Start managing your property portfolio</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {field('name', 'Full name', 'text', 'John Smith')}

@@ -16,13 +16,13 @@ export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propI
     <div className="card">
       <div className="flex items-start justify-between mb-4">
         <div>
-          <h4 className="font-semibold text-gray-900">{l.lender_name || 'Loan'}</h4>
+          <h4 className="font-semibold text-gray-900 dark:text-white">{l.lender_name || 'Loan'}</h4>
           <div className="flex gap-2 mt-1">
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${l.loan_type === 'ARM' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
               {l.loan_type}
             </span>
             {l.maturity_date && (
-              <span className="text-xs text-gray-400">Matures: {l.maturity_date}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">Matures: {l.maturity_date}</span>
             )}
           </div>
         </div>
@@ -52,8 +52,8 @@ export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propI
 
       {(l.account_number || l.borrowers || l.principal_due != null || l.interest_due != null ||
         l.statement_date || l.payment_due_date) && (
-        <div className="mt-4 pt-4 border-t border-gray-100">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Latest Statement</p>
+        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+          <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">Latest Statement</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {l.account_number && <LoanMetric label="Account #" value={l.account_number} />}
             {l.statement_date && <LoanMetric label="Statement Date" value={l.statement_date} />}
@@ -66,7 +66,7 @@ export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propI
       )}
 
       {l.loan_type === 'ARM' && (
-        <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 grid grid-cols-2 md:grid-cols-4 gap-4">
           <LoanMetric label="Initial Period" value={l.arm_initial_period ? `${l.arm_initial_period} yr` : 'N/A'} />
           <LoanMetric label="Adj. Period" value={l.arm_adjustment_period ? `${l.arm_adjustment_period} yr` : 'N/A'} />
           <LoanMetric label="Rate Cap" value={l.arm_cap ? `${l.arm_cap}%` : 'N/A'} />
@@ -80,8 +80,8 @@ export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propI
 function LoanMetric({ label, value, bold, sub, wide }) {
   return (
     <div className={wide ? 'col-span-2' : ''}>
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className={`text-sm ${bold ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>{value}</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">{label}</p>
+      <p className={`text-sm ${bold ? 'font-bold text-gray-900 dark:text-white' : 'font-medium text-gray-800 dark:text-gray-200'}`}>{value}</p>
       {sub && <p className="text-xs text-amber-600">{sub}</p>}
     </div>
   )

@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider, useAuth } from './hooks/useAuth'
+import { ThemeProvider } from './hooks/useTheme'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
@@ -11,6 +12,7 @@ import PropertyFormPage from './pages/PropertyFormPage'
 import UploadsPage from './pages/UploadsPage'
 import SettingsPage from './pages/SettingsPage'
 import HelpPage from './pages/HelpPage'
+import ReportsPage from './pages/ReportsPage'
 
 function PrivateRoute({ children }) {
   const { user } = useAuth()
@@ -36,6 +38,7 @@ function AppRoutes() {
                 <Route path="/uploads" element={<UploadsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/help" element={<HelpPage />} />
+                <Route path="/reports" element={<ReportsPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </Layout>
@@ -48,11 +51,13 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-        <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <AppRoutes />
+          <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   )
 }

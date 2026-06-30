@@ -55,11 +55,11 @@ export default function LoanModal({ propId, loan, onClose, onSaved }) {
   )
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">{isEdit ? 'Edit Loan' : 'Add Loan'}</h2>
-          <button onClick={onClose}><X className="w-5 h-5 text-gray-400" /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-gray-900/80 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{isEdit ? 'Edit Loan' : 'Add Loan'}</h2>
+          <button onClick={onClose}><X className="w-5 h-5 text-gray-400 dark:text-gray-500" /></button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -85,7 +85,7 @@ export default function LoanModal({ propId, loan, onClose, onSaved }) {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Statement Details</h3>
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Statement Details</h3>
             <div className="grid grid-cols-2 gap-4">
               <F label="Account Number" k="account_number" />
               <F label="Borrowers" k="borrowers" />
@@ -98,7 +98,7 @@ export default function LoanModal({ propId, loan, onClose, onSaved }) {
 
           {form.loan_type === 'ARM' && (
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">ARM Details</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">ARM Details</h3>
               <div className="grid grid-cols-2 gap-4">
                 <F label="Initial Period (yrs)" k="arm_initial_period" type="number" />
                 <F label="Adjustment Period (yrs)" k="arm_adjustment_period" type="number" />

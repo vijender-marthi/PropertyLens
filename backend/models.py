@@ -71,12 +71,19 @@ class Property(Base):
 
     # Depreciation
     land_value = Column(Float, default=0.0)  # excluded from depreciation
+    land_price = Column(Float, default=0.0)
+    construction_price = Column(Float, default=0.0)
     depreciation_years = Column(Float, default=27.5)  # 27.5 for residential
 
     # Market value (from Zillow/Redfin or manual)
     market_value = Column(Float, default=0.0)
     market_value_source = Column(String, default="manual")  # manual/zillow/redfin
     market_value_updated = Column(String)
+
+    # Free-form note about this property (refinances, events, etc.)
+    notes = Column(Text, default="")
+    # Per-year notes: JSON string mapping year (str) → note (str)
+    year_notes = Column(Text, default="{}")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -209,6 +216,9 @@ class TaxReturnEntry(Base):
     depreciation = Column(Float, default=0.0)
     total_expenses = Column(Float, default=0.0)
     net_income = Column(Float, default=0.0)
+    # Schedule E "Fair Rental Days" / "Personal Use Days" (lines 2 & 3)
+    days_rented = Column(Integer, default=0)       # days property was rented
+    personal_use_days = Column(Integer, default=0) # days owner personally used it
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

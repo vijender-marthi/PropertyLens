@@ -4,8 +4,9 @@ import {
   TrendingUp, DollarSign, Landmark, Shield, Calculator,
   ChevronDown, ChevronRight, BookOpen, Search, Map,
   Upload, Building2, FileText, Settings, BarChart3,
-  Home, CheckCircle, ArrowRight, X
+  Home, CheckCircle, ArrowRight, X, Download
 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 // ── reusable display components ───────────────────────────────────────────────
 
@@ -19,8 +20,8 @@ function Formula({ children }) {
 
 function ExampleBox({ children }) {
   return (
-    <div className="bg-gray-50 border border-gray-100 rounded-lg px-4 py-3 text-sm text-gray-700 my-2 space-y-1">
-      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Example</p>
+    <div className="bg-gray-50 dark:bg-gray-700/50 border border-gray-100 dark:border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 my-2 space-y-1">
+      <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-1.5">Example</p>
       {children}
     </div>
   )
@@ -42,20 +43,20 @@ function MetricCard({ title, tags = [], description, formula, example, extra, hi
   const [open, setOpen] = useState(true)
   const titleMatch = highlight && title.toLowerCase().includes(highlight.toLowerCase())
   return (
-    <div className={`border rounded-xl overflow-hidden mb-3 ${titleMatch ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-100'}`}>
+    <div className={`border rounded-xl overflow-hidden mb-3 ${titleMatch ? 'border-blue-300 ring-1 ring-blue-200' : 'border-gray-100 dark:border-gray-700'}`}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-5 py-3.5 bg-white hover:bg-gray-50 text-left transition-colors"
+        className="w-full flex items-center justify-between px-5 py-3.5 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-left transition-colors"
       >
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="font-semibold text-gray-900">{title}</span>
+          <span className="font-semibold text-gray-900 dark:text-white">{title}</span>
           <div className="flex gap-1.5 flex-wrap">{tags.map((t, i) => <Tag key={i} color={t.color}>{t.label}</Tag>)}</div>
         </div>
-        {open ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0 ml-2" /> : <ChevronRight className="w-4 h-4 text-gray-400 shrink-0 ml-2" />}
+        {open ? <ChevronDown className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0 ml-2" /> : <ChevronRight className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0 ml-2" />}
       </button>
       {open && (
-        <div className="px-5 pb-4 pt-1 bg-white border-t border-gray-50 space-y-1">
-          <p className="text-sm text-gray-600 leading-relaxed">{description}</p>
+        <div className="px-5 pb-4 pt-1 bg-white dark:bg-gray-800 border-t border-gray-50 dark:border-gray-800 space-y-1">
+          <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">{description}</p>
           {formula && <Formula>{formula}</Formula>}
           {example && <ExampleBox>{example}</ExampleBox>}
           {extra}
@@ -78,7 +79,7 @@ function SectionHeading({ icon: Icon, label, color = 'blue' }) {
       <div className={`w-8 h-8 rounded-xl ${bg[color] || bg.blue} flex items-center justify-center shrink-0`}>
         <Icon className="w-4 h-4 text-white" />
       </div>
-      <h2 className="text-lg font-bold text-gray-900">{label}</h2>
+      <h2 className="text-lg font-bold text-gray-900 dark:text-white">{label}</h2>
     </div>
   )
 }
@@ -148,7 +149,7 @@ const METRICS = [
     search: 'ltv loan to value ratio leverage percentage debt',
     example: <>
       <p>$3,333,000 ÷ $5,600,000 × 100 = <strong>59.5%</strong></p>
-      <p className="text-xs text-gray-400">Zones: &lt;60% Healthy · 60–80% Moderate · &gt;80% High risk</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: &lt;60% Healthy · 60–80% Moderate · &gt;80% High risk</p>
     </>,
   },
   {
@@ -160,7 +161,7 @@ const METRICS = [
     search: 'appreciation gain value growth purchase price increase',
     example: <>
       <p>$5,600,000 (current) − $5,200,000 (purchased) = <strong>+$400,000</strong></p>
-      <p className="text-xs text-gray-400">Purchase price is the sum of original purchase prices entered per property.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Purchase price is the sum of original purchase prices entered per property.</p>
     </>,
   },
   {
@@ -216,7 +217,7 @@ const METRICS = [
       <p>Effective rent: $4,500</p>
       <p>Operating expenses: −$1,450</p>
       <p>NOI = <strong>$3,050/mo</strong> · <strong>$36,600/yr</strong></p>
-      <p className="text-xs text-gray-400">Mortgage P&amp;I is NOT included — NOI is pre-financing.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Mortgage P&amp;I is NOT included — NOI is pre-financing.</p>
     </>,
   },
   {
@@ -229,7 +230,7 @@ const METRICS = [
     example: <>
       <p>Annual NOI: $36,600 · Market Value: $875,000</p>
       <p>$36,600 ÷ $875,000 × 100 = <strong>4.2%</strong></p>
-      <p className="text-xs text-gray-400">Benchmark: &lt;4% Low · 4–6% Average · &gt;6% Strong</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Benchmark: &lt;4% Low · 4–6% Average · &gt;6% Strong</p>
     </>,
   },
   {
@@ -254,7 +255,7 @@ const METRICS = [
     example: <>
       <p>Loan statement: $3,847/mo PITI · Escrow: $647/mo</p>
       <p>P&amp;I = $3,847 − $647 = <strong>$3,200/mo</strong></p>
-      <p className="text-xs text-gray-400">Escrow covers property tax + insurance already in Operating Expenses above.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Escrow covers property tax + insurance already in Operating Expenses above.</p>
     </>,
   },
   {
@@ -269,7 +270,7 @@ const METRICS = [
       <p>− Operating expenses: $1,450</p>
       <p>− Mortgage P&amp;I: $3,200</p>
       <p>= <strong>−$150/mo</strong></p>
-      <p className="text-xs text-gray-400">Slight negative cash flow is common on leveraged investment properties — appreciation and equity buildup often offset it.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Slight negative cash flow is common on leveraged investment properties — appreciation and equity buildup often offset it.</p>
     </>,
   },
   {
@@ -281,7 +282,7 @@ const METRICS = [
     search: 'cash flow margin efficiency percentage rent ratio',
     example: <>
       <p>−$150 ÷ $4,500 × 100 = <strong>−3.3%</strong></p>
-      <p className="text-xs text-gray-400">Target: &gt;10% healthy · 0–10% break-even · &lt;0% subsidized</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Target: &gt;10% healthy · 0–10% break-even · &lt;0% subsidized</p>
     </>,
   },
 
@@ -307,7 +308,7 @@ const METRICS = [
     search: 'original ltv loan to value purchase leverage pmi historical',
     example: <>
       <p>$3,586,000 ÷ $5,200,000 × 100 = <strong>69.0%</strong></p>
-      <p className="text-xs text-gray-400">Below 80% at purchase avoids PMI on conventional loans.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Below 80% at purchase avoids PMI on conventional loans.</p>
     </>,
   },
   {
@@ -335,7 +336,7 @@ const METRICS = [
       <p>2023 Schedule E (all properties): $118,000</p>
       <p>2024 Schedule E (all properties): $113,000</p>
       <p>Total (3 years) = <strong>$354,000</strong></p>
-      <p className="text-xs text-gray-400">Requires uploaded tax returns or 1098s. Only covers years with documents.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Requires uploaded tax returns or 1098s. Only covers years with documents.</p>
     </>,
   },
   {
@@ -348,7 +349,7 @@ const METRICS = [
     example: <>
       <table className="w-full text-xs mt-1 mb-2">
         <thead>
-          <tr className="text-gray-400 border-b border-gray-100">
+          <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
             <th className="text-left pb-1">Property</th>
             <th className="text-right pb-1">Balance</th>
             <th className="text-right pb-1">Rate</th>
@@ -364,8 +365,8 @@ const METRICS = [
             ['Palermo Way', '$830,000','2.875%','$2,386,250'],
             ['Osprey Dr',   '$438,000','7.625%','$3,339,750'],
           ].map(([n,b,r,p]) => (
-            <tr key={n} className="border-b border-gray-50">
-              <td className="py-0.5 text-gray-600 pr-2">{n}</td>
+            <tr key={n} className="border-b border-gray-50 dark:border-gray-800">
+              <td className="py-0.5 text-gray-600 dark:text-gray-300 pr-2">{n}</td>
               <td className="text-right">{b}</td>
               <td className="text-right">{r}</td>
               <td className="text-right font-medium">{p}</td>
@@ -392,7 +393,7 @@ const METRICS = [
     example: <>
       <p>Total monthly P&amp;I across all loans: $18,300/mo</p>
       <p>$18,300 × 12 = <strong>$219,600/yr</strong></p>
-      <p className="text-xs text-gray-400">Escrow (taxes/insurance via lender) is NOT included here — those costs appear in Operating Expenses.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Escrow (taxes/insurance via lender) is NOT included here — those costs appear in Operating Expenses.</p>
     </>,
   },
   {
@@ -406,7 +407,7 @@ const METRICS = [
       <p>Annual NOI (all rentals): $228,000/yr</p>
       <p>Annual Debt Service (P&amp;I only): $219,600/yr</p>
       <p>DSCR = $228,000 ÷ $219,600 = <strong>1.04</strong></p>
-      <p className="text-xs text-gray-400">Zones: ≥1.25 Strong · 1.0–1.25 Marginal · &lt;1.0 Income below debt</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: ≥1.25 Strong · 1.0–1.25 Marginal · &lt;1.0 Income below debt</p>
     </>,
   },
 
@@ -422,7 +423,7 @@ const METRICS = [
       <p>Palermo Way equity: $630,000 (largest)</p>
       <p>Total portfolio equity: $2,267,000</p>
       <p>$630,000 ÷ $2,267,000 × 100 = <strong>27.8%</strong> — Diversified</p>
-      <p className="text-xs text-gray-400">Zones: &lt;35% Diversified · 35–50% Moderate · &gt;50% Concentrated</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: &lt;35% Diversified · 35–50% Moderate · &gt;50% Concentrated</p>
     </>,
   },
   {
@@ -435,7 +436,7 @@ const METRICS = [
     example: <>
       <p>All loans are fixed-rate → ARM balance = $0</p>
       <p>$0 ÷ $3,333,000 × 100 = <strong>0%</strong> — No rate risk</p>
-      <p className="text-xs text-gray-400">Zones: 0% None · &lt;25% Low · 25–50% Moderate · &gt;50% High</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: 0% None · &lt;25% Low · 25–50% Moderate · &gt;50% High</p>
     </>,
   },
   {
@@ -449,7 +450,7 @@ const METRICS = [
       <p>Electra Way: $497,000 @ 6.5% + Osprey Dr: $438,000 @ 7.625%</p>
       <p>High-rate balance: $935,000</p>
       <p>$935,000 ÷ $3,333,000 × 100 = <strong>28.1%</strong></p>
-      <p className="text-xs text-gray-400">Zones: 0% Clean · &lt;10% Manageable · &gt;30% Refinance candidate</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: 0% Clean · &lt;10% Manageable · &gt;30% Refinance candidate</p>
     </>,
   },
   {
@@ -463,7 +464,7 @@ const METRICS = [
       <p>Property at 95% occupancy → vacancy rate = <strong>5%</strong></p>
       <p>Scheduled: $4,500/mo · Effective: $4,275/mo</p>
       <p>($4,500 − $4,275) ÷ $4,500 × 100 = <strong>5%</strong></p>
-      <p className="text-xs text-gray-400">Zones: &lt;7% Healthy · 7–10% Watch · &gt;10% High</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: &lt;7% Healthy · 7–10% Watch · &gt;10% High</p>
     </>,
   },
   {
@@ -477,7 +478,7 @@ const METRICS = [
       <p>Σ(Balance × Rate) = $15,445,438</p>
       <p>Σ(Balance) = $3,333,000</p>
       <p>= <strong>4.63%</strong> (see Financing tab for full breakdown)</p>
-      <p className="text-xs text-gray-400">Zones: ≤5% Low · 5–6.5% Moderate · &gt;6.5% High — refinance candidates</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: ≤5% Low · 5–6.5% Moderate · &gt;6.5% High — refinance candidates</p>
     </>,
   },
   {
@@ -502,7 +503,7 @@ const METRICS = [
     description: 'IRS allows residential rental property to be depreciated over 27.5 years. Only the structure depreciates — not the land. The first year uses the mid-month convention: you get credit for only the fraction of months remaining after placed in service.',
     formula: 'Full Year:   (Purchase Price − Land Value) ÷ 27.5\nFirst Year:  Full Year × (12 − Month Placed + 0.5) ÷ 12',
     search: 'depreciation irs 27.5 years tax deduction residential rental mid-month',
-    extra: <p className="text-xs text-gray-400 mt-1">Source priority: Tax Return (Schedule E line 18) → IRS mid-month calculation → full-year estimate. Upload tax returns to get the exact filed figure.</p>,
+    extra: <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Source priority: Tax Return (Schedule E line 18) → IRS mid-month calculation → full-year estimate. Upload tax returns to get the exact filed figure.</p>,
     example: <>
       <p>Purchase price: $875,000 · Land value: $175,000</p>
       <p>Depreciable basis: $875,000 − $175,000 = $700,000</p>
@@ -537,7 +538,7 @@ const METRICS = [
       <p>Annual cash flow: −$1,800</p>
       <p>Principal paid (from 1098 balance delta): +$8,400</p>
       <p>Total return: <strong>$6,600/yr</strong></p>
-      <p className="text-xs text-gray-400">Even with negative cash flow, principal paydown creates real equity.</p>
+      <p className="text-xs text-gray-400 dark:text-gray-500">Even with negative cash flow, principal paydown creates real equity.</p>
     </>,
   },
   {
@@ -744,29 +745,29 @@ function GuideSection() {
   return (
     <div>
       <SectionHeading icon={Map} label="Getting Started — How to Use This Tool" color="blue" />
-      <p className="text-sm text-gray-500 mb-6">
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
         Follow these steps to get your portfolio fully set up. Each step takes 2–5 minutes.
         You can do them in any order, but the sequence below gives the best results.
       </p>
 
       <div className="space-y-4">
         {GUIDE_STEPS.map((step) => (
-          <div key={step.num} className="card border border-gray-100">
+          <div key={step.num} className="card border border-gray-100 dark:border-gray-700">
             <div className="flex gap-4">
               <div className="shrink-0 flex flex-col items-center">
                 <div className={`w-9 h-9 rounded-xl ${SECTION_COLOR[step.color]} flex items-center justify-center`}>
                   <step.icon className="w-4 h-4 text-white" />
                 </div>
-                <div className="text-xs font-bold text-gray-300 mt-1">#{step.num}</div>
+                <div className="text-xs font-bold text-gray-300 dark:text-gray-600 mt-1">#{step.num}</div>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold text-gray-900">{step.title}</h3>
+                  <h3 className="font-semibold text-gray-900 dark:text-white">{step.title}</h3>
                 </div>
-                <p className="text-sm text-gray-600 leading-relaxed mb-3">{step.body}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed mb-3">{step.body}</p>
                 <ul className="space-y-1 mb-3">
                   {step.tips.map((tip, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs text-gray-500">
+                    <li key={i} className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
                       <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
                       {tip}
                     </li>
@@ -786,15 +787,15 @@ function GuideSection() {
       <div className="mt-6 bg-blue-50 border border-blue-100 rounded-xl p-4">
         <p className="text-sm font-semibold text-blue-800 mb-2">Data flow summary</p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-blue-700">
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-blue-100">
             <p className="font-semibold mb-1">Inputs</p>
             <p>Mortgage statements · Tax returns · Rent &amp; occupancy · Market value · Operating expenses</p>
           </div>
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-blue-100">
             <p className="font-semibold mb-1">Calculated</p>
             <p>NOI · Cash flow · Equity · LTV · DSCR · Cap rate · Weighted rate · Taxable income</p>
           </div>
-          <div className="bg-white rounded-lg p-3 border border-blue-100">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-blue-100">
             <p className="font-semibold mb-1">Views</p>
             <p>Dashboard tabs · Yearly P&amp;L table · Performance signals · Loan amortization · Scenarios</p>
           </div>
@@ -818,6 +819,84 @@ const SECTIONS = [
 
 const SECTION_ICON = { portfolio: TrendingUp, cashflow: DollarSign, financing: Landmark, risk: Shield, analytics: BarChart3, expenses: Calculator }
 const SECTION_COLOR_MAP = { portfolio: 'blue', cashflow: 'green', financing: 'purple', risk: 'red', analytics: 'teal', expenses: 'amber' }
+
+// ── field mapping data (sources and input variables per metric) ───────────────
+const FIELD_SOURCES = {
+  'num-props':              { variables: 'Count of properties',                           source: 'System — auto-counted from all created properties' },
+  'portfolio-value':        { variables: 'market_value per property',                     source: 'Manual entry: Property Details → Market Value field; or Zillow refresh' },
+  'loan-balance':           { variables: 'current_balance per loan',                      source: 'Manual entry: Loan Details → Current Balance; or uploaded mortgage statement (PDF)' },
+  'equity':                 { variables: 'market_value, current_balance',                 source: 'Derived: Portfolio Value − Total Loan Balance' },
+  'equity-pct':             { variables: 'total_equity, total_market_value',              source: 'Derived: Total Equity ÷ Portfolio Value' },
+  'ltv':                    { variables: 'total_loan_balance, total_market_value',        source: 'Derived: Total Loan Balance ÷ Portfolio Value' },
+  'appreciation':           { variables: 'market_value, purchase_price',                  source: 'Manual entry: Property Details → Market Value & Purchase Price' },
+  'original-ltv-portfolio': { variables: 'original_loan_amount, purchase_price',          source: 'Manual entry: Loan Details → Original Loan Amount; Property Details → Purchase Price' },
+  'effective-rent':         { variables: 'monthly_rent, occupancy_rate',                  source: 'Manual entry: Property Details → Monthly Rent + Rental Periods (occupancy)' },
+  'operating-expenses':     { variables: 'property_tax, insurance, hoa, maintenance, mgmt_fee, utilities, vacancy_allowance, capex, other_expenses', source: 'Manual entry: Property page → Expenses section (all fields)' },
+  'noi':                    { variables: 'effective_rent, operating_expenses',             source: 'Derived: Effective Rent − Operating Expenses' },
+  'cap-rate':               { variables: 'annual_noi, market_value',                      source: 'Derived: (NOI × 12) ÷ Market Value' },
+  'gross-yield':            { variables: 'monthly_rent, market_value',                    source: 'Derived: (Monthly Rent × 12) ÷ Market Value' },
+  'mortgage-payment':       { variables: 'monthly_payment, escrow_amount',                source: 'Manual entry: Loan Details → Monthly P&I; or uploaded mortgage statement (PDF)' },
+  'cash-flow':              { variables: 'effective_rent, operating_expenses, monthly_payment', source: 'Derived: Effective Rent − Op Expenses − Mortgage P&I' },
+  'cf-margin':              { variables: 'monthly_cash_flow, effective_rent',              source: 'Derived: Cash Flow ÷ Effective Rent' },
+  'original-loan':          { variables: 'original_loan_amount',                          source: 'Manual entry: Loan Details → Original Loan Amount; or uploaded mortgage statement' },
+  'original-ltv':           { variables: 'original_loan_amount, purchase_price',          source: 'Manual entry: Loan Details → Original Loan Amount; Property Details → Purchase Price' },
+  'principal-paid':         { variables: 'original_loan_amount, current_balance',         source: 'Manual entry: Loan Details → Original Loan Amount & Current Balance' },
+  'interest-paid':          { variables: 'mortgage_interest (per year)',                  source: 'Uploaded tax returns (Schedule E) or 1098 forms — one entry per year' },
+  'weighted-rate':          { variables: 'current_balance, interest_rate per loan',       source: 'Manual entry: Loan Details → Current Balance & Interest Rate; or uploaded statement' },
+  'annual-debt-service':    { variables: 'monthly_payment, escrow_amount per loan',       source: 'Manual entry: Loan Details → Monthly P&I; or uploaded mortgage statement (PDF)' },
+  'dscr':                   { variables: 'annual_noi, annual_debt_service',               source: 'Derived: Annual NOI ÷ Annual Debt Service' },
+  'concentration':          { variables: 'largest_property_equity, total_equity',         source: 'Derived from market_value & current_balance per property' },
+  'arm-exposure':           { variables: 'loan_type, current_balance',                    source: 'Manual entry: Loan Details → Loan Type (Fixed / ARM)' },
+  'high-rate':              { variables: 'interest_rate, current_balance',                source: 'Manual entry: Loan Details → Interest Rate & Current Balance' },
+  'vacancy-rate':           { variables: 'occupancy_rate, monthly_rent',                  source: 'Manual entry: Rental Periods → Occupancy % (per property)' },
+  'debt-weighted-rate':     { variables: 'current_balance, interest_rate per loan',       source: 'Manual entry: Loan Details → Current Balance & Interest Rate' },
+  'portfolio-occupancy':    { variables: 'effective_rent, scheduled_rent',                source: 'Derived from monthly_rent × occupancy_rate vs monthly_rent at 100%' },
+  'depreciation':           { variables: 'purchase_price, land_value, placed_in_service_date', source: 'Tax return (Schedule E line 18); fallback: IRS 27.5-yr mid-month formula' },
+  'taxable-income':         { variables: 'rental_income, operating_expenses, mortgage_interest, depreciation', source: 'Uploaded tax returns (Schedule E) — all four lines' },
+  'total-return':           { variables: 'annual_cash_flow, annual_principal_paid',       source: 'Derived: Annual Cash Flow + Principal Paydown in period' },
+  'cumulative-net-income':  { variables: 'net_income per year',                           source: 'Uploaded tax returns (Schedule E net income line) — running sum across years' },
+  'prop-tax':               { variables: 'property_tax (annual)',                          source: 'Manual entry: Property Expenses → Property Taxes (annual $)' },
+  'insurance':              { variables: 'insurance (annual)',                             source: 'Manual entry: Property Expenses → Insurance (annual $)' },
+  'hoa':                    { variables: 'hoa (monthly)',                                  source: 'Manual entry: Property Expenses → HOA Fee (monthly $)' },
+  'maintenance':            { variables: 'maintenance (monthly)',                          source: 'Manual entry: Property Expenses → Repairs & Maintenance (monthly $)' },
+  'mgmt-fee':               { variables: 'mgmt_fee (monthly)',                             source: 'Manual entry: Property Expenses → Property Management Fee (monthly $)' },
+  'utilities':              { variables: 'utilities (monthly)',                            source: 'Manual entry: Property Expenses → Utilities (monthly $)' },
+  'vacancy-allowance':      { variables: 'vacancy_allowance (monthly)',                   source: 'Manual entry: Property Expenses → Vacancy Allowance (monthly $)' },
+  'capex':                  { variables: 'capex (monthly)',                                source: 'Manual entry: Property Expenses → CapEx Reserve (monthly $)' },
+  'other-expenses':         { variables: 'other_expenses (monthly)',                       source: 'Manual entry: Property Expenses → Other Expenses (monthly $)' },
+}
+
+function downloadFieldMapping() {
+  const rows = METRICS.map(m => {
+    const src = FIELD_SOURCES[m.id] || {}
+    // strip JSX from formula — use string or convert
+    const formulaStr = typeof m.formula === 'string' ? m.formula : ''
+    return {
+      'Metric Name':      m.title,
+      'Category':         m.sectionLabel,
+      'Formula':          formulaStr,
+      'Input Variables':  src.variables || '',
+      'Source of Inputs': src.source   || '',
+      'Tags':             (m.tags || []).map(t => t.label).join(', '),
+    }
+  })
+
+  const ws = XLSX.utils.json_to_sheet(rows)
+
+  // Column widths
+  ws['!cols'] = [
+    { wch: 32 },  // Metric Name
+    { wch: 26 },  // Category
+    { wch: 70 },  // Formula
+    { wch: 60 },  // Input Variables
+    { wch: 80 },  // Source of Inputs
+    { wch: 30 },  // Tags
+  ]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Field & Logic Mapping')
+  XLSX.writeFile(wb, 'PropertyLens_Field_Logic_Mapping.xlsx')
+}
 
 export default function HelpPage() {
   const [activeSection, setActiveSection] = useState('guide')
@@ -847,23 +926,32 @@ export default function HelpPage() {
         <div className="flex items-center gap-3 flex-1">
           <BookOpen className="w-6 h-6 text-blue-600 shrink-0" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Help &amp; Documentation</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Formulas, definitions, and worked examples for every metric</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Help &amp; Documentation</h1>
+              <button
+                onClick={downloadFieldMapping}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Field &amp; Logic Mapping (.xlsx)
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Formulas, definitions, and worked examples for every metric</p>
           </div>
         </div>
 
         {/* Search */}
         <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500 pointer-events-none" />
           <input
             type="text"
             placeholder="Search metrics, formulas…"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
           {query && (
-            <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+            <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -873,13 +961,13 @@ export default function HelpPage() {
       {/* Search results */}
       {searchResults !== null ? (
         <div className="flex-1">
-          <p className="text-sm text-gray-500 mb-4">
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
             {searchResults.length === 0
               ? `No results for "${query}"`
               : `${searchResults.length} result${searchResults.length !== 1 ? 's' : ''} for "${query}"`}
           </p>
           {searchResults.length === 0 ? (
-            <div className="text-center py-12 card text-gray-400">
+            <div className="text-center py-12 card text-gray-400 dark:text-gray-500">
               <Search className="w-8 h-8 mx-auto mb-3 opacity-30" />
               <p>Try searching for a metric name, formula term, or keyword like "NOI", "LTV", "vacancy", or "DSCR".</p>
             </div>
@@ -910,7 +998,7 @@ export default function HelpPage() {
                   className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-colors ${
                     activeSection === id
                       ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      : 'text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
                   }`}
                 >
                   <Icon className="w-4 h-4 shrink-0" />
@@ -934,7 +1022,7 @@ export default function HelpPage() {
 
                 {activeSection === 'expenses' && (
                   <>
-                    <p className="text-sm text-gray-500 mb-4">
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
                       All fields below are stored per property and sum into the Operating Expenses line used in NOI, Cash Flow, and yearly P&amp;L calculations.
                     </p>
                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-5 text-sm text-blue-700">

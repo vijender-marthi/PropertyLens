@@ -33,10 +33,12 @@ const FIELDS = {
     { key: 'capex_reserve', label: 'CapEx Reserve/mo ($)', type: 'number' },
     { key: 'other_expenses', label: 'Other Expenses/mo ($)', type: 'number' },
   ],
-  'Depreciation': [
-    { key: 'land_value', label: 'Land Value ($)', type: 'number' },
-    { key: 'depreciation_years', label: 'Depreciation Period (yrs)', type: 'number' },
-  ],
+'Depreciation': [
+{ key: 'land_value', label: 'Land Value ($)', type: 'number' },
+{ key: 'land_price', label: 'Land Price ($)', type: 'number' },
+{ key: 'construction_price', label: 'Construction Price ($)', type: 'number' },
+{ key: 'depreciation_years', label: 'Depreciation Period (yrs)', type: 'number' },
+],
 }
 
 const DEFAULTS = {
@@ -46,8 +48,8 @@ const DEFAULTS = {
   monthly_rent: 0, occupancy_rate: 100,
   property_tax: 0, insurance: 0, hoa_fee: 0,
   maintenance: 0, property_management_fee: 0,
-  utilities: 0, vacancy_allowance: 0, capex_reserve: 0, other_expenses: 0,
-  land_value: 0, depreciation_years: 27.5,
+utilities: 0, vacancy_allowance: 0, capex_reserve: 0, other_expenses: 0,
+land_value: 0, land_price: 0, construction_price: 0, depreciation_years: 27.5,
 }
 
 export default function PropertyFormPage() {
@@ -90,12 +92,12 @@ export default function PropertyFormPage() {
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }))
 
   return (
-    <div className="max-w-3xl">
-      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-gray-500 hover:text-gray-900 text-sm mb-4">
+    <div className="max-w-3xl mx-auto">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm mb-4">
         <ChevronLeft className="w-4 h-4" /> Back
       </button>
 
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
         {isEdit ? 'Edit Property' : 'Add Property'}
       </h1>
 
@@ -104,7 +106,7 @@ export default function PropertyFormPage() {
           .filter(([section]) => !(section === 'Rental Income' && form.usage_type === 'Primary'))
           .map(([section, fields]) => (
           <div key={section} className="card">
-            <h2 className="font-semibold text-gray-900 mb-4">{section}</h2>
+            <h2 className="font-semibold text-gray-900 dark:text-white mb-4">{section}</h2>
             <div className="grid grid-cols-2 gap-4">
               {fields.map(({ key, label, type = 'text', required, colSpan, options }) => (
                 <div key={key} className={colSpan === 2 ? 'col-span-2' : ''}>

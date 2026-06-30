@@ -29,14 +29,14 @@ export default function AmortizationModal({ propId, loan, onClose }) {
   const chartData = data?.schedule?.filter((_, i) => i % 12 === 0) || []
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-gray-900/80 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Amortization Schedule</h2>
-            <p className="text-sm text-gray-400">{loan.lender_name || 'Loan'} · {loan.loan_type} · {loan.interest_rate}%</p>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Amortization Schedule</h2>
+            <p className="text-sm text-gray-400 dark:text-gray-500">{loan.lender_name || 'Loan'} · {loan.loan_type} · {loan.interest_rate}%</p>
           </div>
-          <button onClick={onClose}><X className="w-5 h-5 text-gray-400" /></button>
+          <button onClick={onClose}><X className="w-5 h-5 text-gray-400 dark:text-gray-500" /></button>
         </div>
 
         <div className="p-6 flex-1 overflow-y-auto space-y-4">
@@ -54,11 +54,11 @@ export default function AmortizationModal({ propId, loan, onClose }) {
             </div>
             <div className="flex gap-2 ml-auto">
               <button onClick={() => setView('chart')}
-                className={`text-sm px-3 py-1.5 rounded-lg ${view === 'chart' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}>
+                className={`text-sm px-3 py-1.5 rounded-lg ${view === 'chart' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}>
                 Chart
               </button>
               <button onClick={() => setView('table')}
-                className={`text-sm px-3 py-1.5 rounded-lg ${view === 'table' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}>
+                className={`text-sm px-3 py-1.5 rounded-lg ${view === 'table' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}>
                 Table
               </button>
             </div>
@@ -73,9 +73,9 @@ export default function AmortizationModal({ propId, loan, onClose }) {
                 { l: 'Total Interest', v: fmt(data.analysis.extra_total_interest) },
                 { l: 'Interest Saved', v: fmt(data.analysis.interest_saved), c: 'text-purple-600' },
               ].map(({ l, v, c }) => (
-                <div key={l} className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500">{l}</p>
-                  <p className={`text-base font-bold mt-0.5 ${c || 'text-gray-900'}`}>{v}</p>
+                <div key={l} className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{l}</p>
+                  <p className={`text-base font-bold mt-0.5 ${c || 'text-gray-900 dark:text-white'}`}>{v}</p>
                 </div>
               ))}
             </div>
@@ -98,8 +98,8 @@ export default function AmortizationModal({ propId, loan, onClose }) {
           {view === 'table' && data?.schedule && (
             <div className="overflow-auto max-h-96">
               <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-gray-50">
-                  <tr className="text-left text-gray-500">
+                <thead className="sticky top-0 bg-gray-50 dark:bg-gray-700/50">
+                  <tr className="text-left text-gray-500 dark:text-gray-400">
                     <th className="px-3 py-2">Month</th>
                     <th className="px-3 py-2 text-right">Payment</th>
                     <th className="px-3 py-2 text-right">Principal</th>
@@ -107,9 +107,9 @@ export default function AmortizationModal({ propId, loan, onClose }) {
                     <th className="px-3 py-2 text-right">Balance</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50">
+                <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
                   {data.schedule.map((row) => (
-                    <tr key={row.month} className="hover:bg-gray-50">
+                    <tr key={row.month} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                       <td className="px-3 py-1.5">{row.month}</td>
                       <td className="px-3 py-1.5 text-right">{fmt(row.payment)}</td>
                       <td className="px-3 py-1.5 text-right text-green-600">{fmt(row.principal)}</td>
