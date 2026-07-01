@@ -6,7 +6,14 @@ namespace objects to drive the functions directly.
 """
 import pytest
 from types import SimpleNamespace
-from routers.properties import compute_property_metrics, _principal_from_1098
+from routers.properties import (
+    compute_property_metrics,
+    _principal_from_1098,
+    _principal_from_1098_segments,
+    _scheduled_principal_cumulative,
+    _statement_end_month_for_year,
+    _dedup_balance,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +143,31 @@ class TestComputePropertyMetrics:
         m = compute_property_metrics(prop)
         assert m["monthly_mortgage"] == pytest.approx(2_000.0)
 
+    def test_escrow_counts_as_expense_when_tax_insurance_missing(self):
+        loan = _make_loan(monthly_payment=4_274.51, escrow_amount=1_913.46)
+        prop = _make_prop(
+            monthly_rent=3_200.0,
+            property_tax=0.0,
+            insurance=0.0,
+            loans=[loan],
+        )
+        m = compute_property_metrics(prop)
+        assert m["monthly_mortgage"] == pytest.approx(2_361.05)
+        assert m["tax_ins_monthly"] == pytest.approx(1_913.46)
+        assert m["monthly_cash_flow"] == pytest.approx(-1_074.51)
+
+    def test_property_tax_is_prorated_monthly_into_expenses(self):
+        prop = _make_prop(
+            monthly_rent=3_000.0,
+            property_tax=12_000.0,
+            insurance=0.0,
+            loans=[],
+        )
+        m = compute_property_metrics(prop)
+        assert m["property_tax_monthly"] == pytest.approx(1_000.0)
+        assert m["monthly_expenses"] == pytest.approx(1_000.0)
+        assert m["monthly_cash_flow"] == pytest.approx(2_000.0)
+
     def test_multiple_loans(self):
         l1 = _make_loan(current_balance=200_000.0, monthly_payment=1_300.0)
         l2 = _make_loan(current_balance=100_000.0, monthly_payment=700.0)
@@ -186,6 +218,17 @@ class TestPrincipalFrom1098:
         assert result is not None
         assert result > 0
 
+    def test_back_amortize_negative_estimate_returns_none(self):
+        loan = _make_loan(
+            current_balance=466_681.81,
+            interest_rate=6.5,
+            monthly_payment=1_000.0,
+        )
+
+        result = _principal_from_1098({2024: 466_681.81}, 2023, loans=[loan])
+
+        assert result is None
+
     def test_no_data_returns_none(self):
         result = _principal_from_1098({}, 2023)
         assert result is None
@@ -202,3 +245,198 @@ class TestPrincipalFrom1098:
         result = _principal_from_1098({2022: 300_000, 2023: 100_000}, 2022, loans=[loan])
         # Should NOT return 200 000 — that's many years of principal
         assert result < 20_000
+
+
+class TestDedupBalance:
+    def test_single_loan_duplicate_balances_are_not_summed(self):
+        loan = _make_loan(current_balance=465_055.0)
+        result = _dedup_balance(
+            [
+                ("ACCT-001", 465_055.0),
+                ("ACCT-001-COPY", 465_055.0),
+            ],
+            loans=[loan],
+        )
+
+        assert result == pytest.approx(465_055.0)
+
+    def test_multiple_loans_can_sum_distinct_account_balances(self):
+        loans = [
+            _make_loan(current_balance=300_000.0),
+            _make_loan(current_balance=165_055.0),
+        ]
+        result = _dedup_balance(
+            [
+                ("ACCT-001", 300_000.0),
+                ("ACCT-002", 165_055.0),
+            ],
+            loans=loans,
+        )
+
+        assert result == pytest.approx(465_055.0)
+
+    def test_refinance_balances_use_latest_loan_not_sum(self):
+        result = _dedup_balance(
+            [
+                {
+                    "account": "OLD-LOAN",
+                    "balance": 455_000.0,
+                    "origination_date": "01/15/2020",
+                    "mortgage_acquisition_date": "01/15/2020",
+                },
+                {
+                    "account": "NEW-LOAN",
+                    "balance": 475_110.0,
+                    "origination_date": "08/20/2024",
+                    "mortgage_acquisition_date": "08/20/2024",
+                },
+            ],
+            loans=[_make_loan(current_balance=475_110.0)],
+        )
+
+        assert result == pytest.approx(475_110.0)
+
+
+class TestSegmented1098Principal:
+    def test_prior_year_uses_next_year_first_segment_not_latest_transfer_balance(self):
+        balance_by_year = {
+            2023: 468_750.00,
+            2024: 463_428.32,
+        }
+        balance_logic_by_year = {
+            2024: {
+                "mode": "latest_loan_balance",
+                "entries": [
+                    {
+                        "account": "64944077",
+                        "balance": 466_681.81,
+                        "origination_date": "05/26/2023",
+                    },
+                    {
+                        "account": "3550379001",
+                        "balance": 463_428.32,
+                        "origination_date": "05/26/2023",
+                    },
+                ]
+            }
+        }
+
+        result = _principal_from_1098_segments(
+            balance_by_year,
+            balance_logic_by_year,
+            2023,
+        )
+
+        assert result == pytest.approx(2_068.19)
+
+    def test_osprey_2024_servicer_transfer_principal_uses_both_segments(self):
+        balance_by_year = {
+            2024: 463_428.32,  # latest active 2024 balance: Rocket
+            2025: 462_201.95,
+        }
+        balance_logic_by_year = {
+            2024: {
+                "entries": [
+                    {
+                        "account": "64944077",
+                        "balance": 466_681.81,
+                        "origination_date": "05/26/2023",
+                    },
+                    {
+                        "account": "3550379001",
+                        "balance": 463_428.32,
+                        "origination_date": "05/26/2023",
+                    },
+                ]
+            }
+        }
+
+        result = _principal_from_1098_segments(
+            balance_by_year,
+            balance_logic_by_year,
+            2024,
+        )
+
+        # LoanCare segment: 466,681.81 - 463,428.32 = 3,253.49
+        # Rocket segment: 463,428.32 - 462,201.95 = 1,226.37
+        assert result == pytest.approx(4_479.86)
+
+    def test_direct_1098_delta_not_zero_when_payment_fields_missing(self):
+        result = _principal_from_1098(
+            {2024: 463_428.32, 2025: 462_201.95},
+            2024,
+            loans=[_make_loan(monthly_payment=0.0, interest_rate=6.5)],
+        )
+
+        assert result == pytest.approx(1_226.37)
+
+    def test_current_year_uses_latest_statement_when_next_1098_missing(self):
+        balance_by_year = {
+            2026: 457_576.25,
+        }
+        balance_logic_by_year = {
+            2026: {
+                "entries": [
+                    {
+                        "account": "3550379001",
+                        "balance": 457_576.25,
+                        "origination_date": "05/26/2023",
+                    },
+                ]
+            }
+        }
+
+        result = _principal_from_1098_segments(
+            balance_by_year,
+            balance_logic_by_year,
+            2026,
+            statement_balance_by_year={2026: 438_502.37},
+        )
+
+        assert result == pytest.approx(19_073.88)
+
+
+class TestPrincipalTopup:
+    def test_statement_end_month_accepts_stored_iso_dates(self):
+        snapshots = [{"year": 2026, "date": "2026-06-11", "balance": 438_502.37}]
+
+        assert _statement_end_month_for_year(snapshots, 2026) == 6
+
+    def test_osprey_expected_principal_and_topup_use_amortization_schedule(self):
+        loan = _make_loan(
+            original_amount=468_750.0,
+            monthly_payment=4_274.51,
+            escrow_amount=1_913.46,
+            principal_due=531.46,
+            interest_due=2_786.32,
+            interest_rate=7.625,
+            loan_term_years=30,
+            origination_date="05/26/2023",
+        )
+
+        expected_cumulative = _scheduled_principal_cumulative(loan, 2026, 6)
+        actual_cumulative = 30_247.63
+
+        assert expected_cumulative == pytest.approx(13_674.91, abs=0.02)
+        assert round(actual_cumulative - expected_cumulative, 2) == pytest.approx(16_572.72, abs=0.02)
+
+    def test_syrah_expected_principal_schedule_excludes_topup(self):
+        loan = _make_loan(
+            original_amount=1_384_000.0,
+            monthly_payment=5_742.11,
+            escrow_amount=0.0,
+            interest_rate=2.875,
+            loan_term_years=30,
+            origination_date="09/01/2021",
+        )
+
+        assert _scheduled_principal_cumulative(loan, 2021) == pytest.approx(4_858.37, abs=0.02)
+        assert _scheduled_principal_cumulative(loan, 2022) == pytest.approx(34_501.98, abs=0.05)
+        assert _scheduled_principal_cumulative(loan, 2025) == pytest.approx(128_715.63, abs=0.15)
+        assert _scheduled_principal_cumulative(loan, 2026, 6) == pytest.approx(145_222.18, abs=0.15)
+
+    def test_syrah_cumulative_topup_is_actual_minus_expected(self):
+        actual_cumulative = 161_392.25
+        expected_cumulative = 145_222.18
+
+        assert round(actual_cumulative - expected_cumulative, 2) == pytest.approx(16_170.07)

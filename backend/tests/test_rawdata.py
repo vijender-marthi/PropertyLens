@@ -20,19 +20,21 @@ def _tax_entry(db, prop_id, owner_id, year, **kwargs) -> models.TaxReturnEntry:
     db.add(e); db.commit(); return e
 
 
-def _1098_doc(db, prop, owner_id, year, interest, balance=None) -> models.Document:
+def _1098_doc(db, prop, owner_id, year, interest, balance=None,
+              account="ACCT-001", property_tax_amount=None) -> models.Document:
     data = json.dumps({
         "tax_year": str(year),
         "mortgage_interest": interest,
         "current_balance": balance,
-        "account_number": "ACCT-001",
+        "account_number": account,
+        "property_tax_amount": property_tax_amount,
     })
     doc = models.Document(
         property_id=prop.id, owner_id=owner_id,
-        filename=f"1098_{year}.pdf", original_filename=f"1098_{year}.pdf",
+        filename=f"1098_{year}_{account}.pdf", original_filename=f"1098_{year}_{account}.pdf",
         file_type="pdf", doc_category="1098",
         statement_year=year, extracted_data=data,
-        loan_account_number="ACCT-001", file_size=1024,
+        loan_account_number=account, file_size=1024,
     )
     db.add(doc); db.commit(); db.refresh(prop); return doc
 
@@ -130,6 +132,28 @@ class TestRawData1098:
         # balance may be stored as Jan-1 outstanding principal
         assert "2022" in data["docs_balance"] or True  # balance extraction is optional
 
+    def test_1098_property_tax_preferred_over_property_tax_document(self, client, db, user, prop):
+        _1098_doc(db, prop, user.id, 2024, interest=26_606.53, balance=466_681.81,
+                  account="0064944077", property_tax_amount=2_766.48)
+        _1098_doc(db, prop, user.id, 2024, interest=8_826.97, balance=463_428.32,
+                  account="3550379001", property_tax_amount=5_295.61)
+        doc = models.Document(
+            property_id=prop.id, owner_id=user.id,
+            filename="tax_2024.pdf", original_filename="tax_2024.pdf",
+            file_type="pdf", doc_category="property_tax",
+            statement_year=2024,
+            extracted_data=json.dumps({"tax_year": "2024", "property_tax_amount": 10_591.22}),
+            file_size=1024,
+        )
+        db.add(doc)
+        db.commit()
+
+        resp = client.get(f"/api/properties/{prop.id}/rawdata",
+                          headers=auth_headers(user.email))
+        data = resp.json()
+
+        assert data["tax_docs"]["2024"] == pytest.approx(8_062.09)
+
     def test_1098_detail_inventory(self, client, db, user, prop):
         _1098_doc(db, prop, user.id, 2022, interest=19_800)
         _1098_doc(db, prop, user.id, 2023, interest=18_200)
@@ -149,7 +173,7 @@ class TestRawData1098:
         resp = client.get(f"/api/properties/{prop.id}/rawdata",
                           headers=auth_headers(user.email))
         detail = resp.json()["docs_1098_detail"]
-        assert detail[0]["filename"] == "1098_2022.pdf"
+        assert detail[0]["filename"] == "1098_2022_ACCT-001.pdf"
         assert detail[0]["mortgage_interest"] == pytest.approx(19_800)
 
 

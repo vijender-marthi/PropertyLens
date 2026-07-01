@@ -74,7 +74,6 @@ class PropertyBase(BaseModel):
     capex_reserve: float = 0.0
     other_expenses: float = 0.0
     land_value: float = 0.0
-    land_price: float = 0.0
     construction_price: float = 0.0
     depreciation_years: float = 27.5
     market_value: float = 0.0
@@ -187,9 +186,12 @@ def compute_property_metrics(prop: models.Property) -> dict:
     effective_rent = 0.0 if is_primary else prop.monthly_rent * (prop.occupancy_rate / 100)
 
     # Full operating expenses — taxes, insurance, HOA, maintenance, etc.
-    # Use statement escrow when annual tax/insurance fields are empty or lower.
-    # This avoids double-counting while still counting escrowed costs.
-    tax_ins_monthly = max((prop.property_tax / 12 + prop.insurance / 12), monthly_escrow)
+    # Property tax and insurance are annual fields prorated into monthly expenses.
+    # If lender escrow is higher, count only missing escrow to avoid double-counting.
+    property_tax_monthly = (prop.property_tax or 0) / 12
+    insurance_monthly = (prop.insurance or 0) / 12
+    escrow_expense = max(monthly_escrow - property_tax_monthly - insurance_monthly, 0)
+    tax_ins_monthly = property_tax_monthly + insurance_monthly + escrow_expense
     other_operating = (
         prop.hoa_fee + prop.maintenance +
         prop.property_management_fee + prop.utilities +
@@ -211,6 +213,9 @@ def compute_property_metrics(prop: models.Property) -> dict:
         "monthly_piti":          round(monthly_piti, 2),
         "monthly_escrow":        round(monthly_escrow, 2),
         "monthly_mortgage":      round(monthly_mortgage, 2),   # P&I only
+        "property_tax_monthly":  round(property_tax_monthly, 2),
+        "insurance_monthly":     round(insurance_monthly, 2),
+        "escrow_expense":        round(escrow_expense, 2),
         "tax_ins_monthly":       round(tax_ins_monthly, 2),
         "monthly_expenses":      round(monthly_expenses, 2),
         "effective_rent":        round(effective_rent, 2),
@@ -369,7 +374,7 @@ def get_metrics(
 
 
 def _parse_statement_date(s: str):
-    for f in ("%m/%d/%Y", "%m/%d/%y", "%m/%Y"):
+    for f in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m/%Y"):
         try:
             return datetime.strptime(s, f)
         except (ValueError, TypeError):
@@ -392,9 +397,10 @@ def _collect_doc_history(prop: models.Property):
         by account (same logic as interest) — used for principal-delta calc
     """
     snapshots = []
-    tax_by_year = {}
+    tax_1098_entries = {}
+    tax_fallback_by_year = {}
     interest_entries = {}  # year -> list of (account_or_None, interest)
-    balance_entries = {}   # year -> list of (account_or_None, balance)
+    balance_entries = {}   # year -> list of 1098 Box 2 balance entries
     for d in prop.documents:
         if not d.extracted_data:
             continue
@@ -438,25 +444,59 @@ def _collect_doc_history(prop: models.Property):
                     (acct, round(data["mortgage_interest"], 2)))
             if data.get("current_balance") is not None:
                 balance_entries.setdefault(year, []).append(
-                    (acct, round(data["current_balance"], 2)))
-        # Collect tax data from any document type
+                    {
+                        "account": acct,
+                        "balance": round(data["current_balance"], 2),
+                        "origination_date": data.get("origination_date"),
+                        "mortgage_acquisition_date": data.get("mortgage_acquisition_date"),
+                        "document_id": d.id,
+                        "upload_date": str(d.upload_date) if d.upload_date else None,
+                    })
+        # Collect tax data. 1098 real-estate taxes are preferred over
+        # property-tax documents for the same year; do not count both.
         tax_val = data.get("property_tax_amount") or data.get("taxes_paid")
         if tax_val:
             if d.doc_category == "mortgage_statement":
                 # Monthly amount -> annualize
                 annual_tax = round(tax_val * 12, 2)
+            elif d.doc_category == "1098":
+                # Annual amount. Key by account so transfer-year 1098s from
+                # different servicers can both contribute, while duplicate
+                # uploads for the same account collapse.
+                annual_tax = round(tax_val, 2)
+                acct = d.loan_account_number or data.get("account_number")
+                tax_1098_entries.setdefault(year, []).append((acct, annual_tax))
+                continue
             else:
                 # Already annual (tax bill, tax return, 1098, 1099, etc.)
                 annual_tax = round(tax_val, 2)
-            tax_by_year[year] = max(tax_by_year.get(year, 0), annual_tax)
+            tax_fallback_by_year[year] = max(tax_fallback_by_year.get(year, 0), annual_tax)
     snapshots.sort(key=lambda s: s["date"])
+    tax_1098_by_year = {
+        y: _dedup_interest(entries) for y, entries in tax_1098_entries.items()
+    }
+    tax_by_year = {
+        **tax_fallback_by_year,
+        **tax_1098_by_year,
+    }
     interest_by_year = {
         y: _dedup_interest(entries) for y, entries in interest_entries.items()
     }
-    balance_by_year = {
-        y: _dedup_interest(entries) for y, entries in balance_entries.items()
-    }
-    return snapshots, tax_by_year, interest_by_year, balance_by_year
+    balance_by_year = {}
+    balance_logic_by_year = {}
+    for y, entries in balance_entries.items():
+        amount, logic = _resolve_1098_balance(entries, prop.loans)
+        balance_by_year[y] = amount
+        balance_logic_by_year[y] = logic
+    return snapshots, tax_by_year, interest_by_year, balance_by_year, balance_logic_by_year
+
+
+def _latest_statement_balance_by_year(snapshots: list) -> dict:
+    balances = {}
+    for snap in sorted(snapshots, key=lambda s: s.get("date") or ""):
+        if snap.get("balance") is not None:
+            balances[snap["year"]] = round(snap["balance"], 2)
+    return balances
 
 
 def _dedup_interest(entries) -> float:
@@ -482,6 +522,156 @@ def _dedup_interest(entries) -> float:
             total += val
             seen_values.add(round(val, 2))
     return round(total, 2)
+
+
+def _balance_entry(entry):
+    if isinstance(entry, dict):
+        return {
+            "account": entry.get("account"),
+            "balance": entry.get("balance"),
+            "origination_date": entry.get("origination_date"),
+            "mortgage_acquisition_date": entry.get("mortgage_acquisition_date"),
+            "document_id": entry.get("document_id"),
+            "upload_date": entry.get("upload_date"),
+        }
+    acct, val = entry[:2]
+    return {
+        "account": acct,
+        "balance": val,
+        "origination_date": None,
+        "mortgage_acquisition_date": None,
+        "document_id": None,
+        "upload_date": None,
+    }
+
+
+def _entry_event_date(entry):
+    return (
+        _parse_statement_date(entry.get("mortgage_acquisition_date"))
+        or _parse_statement_date(entry.get("origination_date"))
+    )
+
+
+def _resolve_1098_balance(entries, loans=None):
+    """Return Form 1098 Box 2 balance plus explanation.
+
+    Box 1 interest is annual and can be summed across refinance lenders. Box 2
+    principal is point-in-time loan balance; when Box 3/11 dates show one loan
+    replaced another, use the latest loan balance instead of adding them.
+    """
+    normalized = [
+        _balance_entry(e) for e in entries
+        if _balance_entry(e).get("balance") is not None
+    ]
+    if not normalized:
+        return 0.0, {"mode": "none", "summary": "No 1098 Box 2 balance found."}
+
+    loan_count = len(loans or [])
+    accounts = {e["account"] for e in normalized if e.get("account")}
+    event_dates = {
+        _entry_event_date(e).date().isoformat()
+        for e in normalized
+        if _entry_event_date(e)
+    }
+    refinance_signal = len(event_dates) > 1
+
+    if loan_count > 1 and len(accounts) > 1 and not refinance_signal:
+        amount = _dedup_interest([(e["account"], e["balance"]) for e in normalized])
+        return amount, {
+            "mode": "active_parallel_loans",
+            "summary": "Summed Box 2 balances because multiple current loans/accounts are present and 1098 dates do not indicate refinance replacement.",
+            "verify_note": "Box 2 summed: multiple active loan accounts.",
+            "source_count": len(normalized),
+            "accounts": sorted(accounts),
+            "event_dates": sorted(event_dates),
+            "entries": normalized,
+        }
+
+    latest = max(
+        normalized,
+        key=lambda e: (
+            _entry_event_date(e) or datetime.min,
+            e.get("upload_date") or "",
+            e.get("balance") or 0,
+        ),
+    )
+    date_note = latest.get("mortgage_acquisition_date") or latest.get("origination_date")
+    note_parts = ["Box 2 uses latest loan balance"]
+    if date_note:
+        note_parts.append(f"date {date_note}")
+    if latest.get("account"):
+        note_parts.append(str(latest["account"]))
+    return round(latest["balance"], 2), {
+        "mode": "latest_loan_balance",
+        "summary": "Used latest 1098 loan balance. Interest may combine old/new refinance lenders, but Box 2 principal is not added unless loans are clearly active together.",
+        "verify_note": " · ".join(note_parts),
+        "source_count": len(normalized),
+        "selected_document_id": latest.get("document_id"),
+        "selected_account": latest.get("account"),
+        "selected_origination_date": latest.get("origination_date"),
+        "selected_acquisition_date": latest.get("mortgage_acquisition_date"),
+        "event_dates": sorted(event_dates),
+        "entries": normalized,
+    }
+
+
+def _dedup_balance(entries, loans=None) -> float:
+    amount, _logic = _resolve_1098_balance(entries, loans)
+    return amount
+
+
+def _principal_from_1098_segments(balance_by_year: dict, balance_logic_by_year: dict,
+                                  year: int, loans: list = None,
+                                  statement_balance_by_year: dict = None) -> Optional[float]:
+    """Compute principal paid using all sequential 1098 balance checkpoints.
+
+    Example: one calendar year has LoanCare Jan-Sep and Rocket Oct-Dec after a
+    transfer. Outstanding balance uses the latest active loan only, but
+    principal paid is the balance drop across each sequential checkpoint plus
+    the drop into next year's Box 2 balance.
+    """
+    logic = (balance_logic_by_year or {}).get(year) or {}
+    entries = [
+        e for e in logic.get("entries", [])
+        if e.get("balance") is not None
+    ]
+    balances = sorted(
+        {round(e["balance"], 2) for e in entries},
+        reverse=True,
+    )
+    statement_balance_by_year = statement_balance_by_year or {}
+    next_balance = balance_by_year.get(year + 1)
+    if next_balance is None:
+        next_balance = statement_balance_by_year.get(year)
+
+    if len(balances) > 1:
+        total = 0.0
+        for start, end in zip(balances, balances[1:]):
+            if start > end:
+                total += start - end
+        if next_balance is not None and balances[-1] > next_balance:
+            total += balances[-1] - next_balance
+        if total > 0:
+            return round(total, 2)
+
+    if len(balances) == 1 and next_balance is not None and balances[0] > next_balance:
+        return round(balances[0] - next_balance, 2)
+
+    curr = balance_by_year.get(year)
+    next_logic = (balance_logic_by_year or {}).get(year + 1) or {}
+    next_entries = [
+        e for e in next_logic.get("entries", [])
+        if e.get("balance") is not None
+    ]
+    if curr is not None and next_entries:
+        if next_logic.get("mode") == "active_parallel_loans":
+            next_start = balance_by_year.get(year + 1)
+        else:
+            next_start = max(round(e["balance"], 2) for e in next_entries)
+        if next_start is not None and curr > next_start:
+            return round(curr - next_start, 2)
+
+    return _principal_from_1098(balance_by_year, year, loans)
 
 
 def _principal_from_1098(balance_by_year: dict, year: int,
@@ -515,7 +705,7 @@ def _principal_from_1098(balance_by_year: dict, year: int,
         # guard against them by capping at one full year of amortization.
         if loan:
             r, pni = _amort_factor(loan)
-            if r > 0:
+            if r > 0 and pni > 0:
                 # Max plausible annual principal from amortization
                 max_annual = sum(
                     pni - (curr * (1 + r) ** (-i) * r / (1 - (1 + r) ** (-1))) * 0
@@ -543,7 +733,8 @@ def _principal_from_1098(balance_by_year: dict, year: int,
             factor = (1 + r) ** 12
             annuity = pni * (factor - 1) / r
             estimated_curr = (nxt + annuity) / factor
-            return round(estimated_curr - nxt, 2)
+            principal = round(estimated_curr - nxt, 2)
+            return principal if principal > 0 else None
 
     if curr is not None and nxt is None and loan:
         # Forward-amortize curr for 12 months.
@@ -558,6 +749,54 @@ def _principal_from_1098(balance_by_year: dict, year: int,
         return round(total, 2)
 
     return None
+
+
+def _scheduled_principal_cumulative(loan, year: int, end_month: int = 12) -> Optional[float]:
+    """Expected scheduled principal through end_month of year.
+
+    The first month after origination is treated as interest-only; regular
+    principal starts in the following month. Extra payments/topups stay outside
+    this expected amortization schedule.
+    """
+    if not loan or not getattr(loan, "origination_date", None):
+        return None
+    orig = _parse_statement_date(loan.origination_date)
+    if not orig:
+        return None
+    rate = (getattr(loan, "interest_rate", 0) or 0) / 12 / 100
+    balance = getattr(loan, "original_amount", 0) or 0
+    term_months = (getattr(loan, "loan_term_years", 0) or 0) * 12
+    if balance > 0 and rate > 0 and term_months > 0:
+        pni = balance * rate / (1 - (1 + rate) ** (-term_months))
+    else:
+        statement_pni = (getattr(loan, "principal_due", 0) or 0) + (getattr(loan, "interest_due", 0) or 0)
+        pni = statement_pni or max(
+            (getattr(loan, "monthly_payment", 0) or 0) - (getattr(loan, "escrow_amount", 0) or 0), 0)
+    if pni <= 0 or rate <= 0 or balance <= 0:
+        return None
+
+    end_month = max(1, min(int(end_month or 12), 12))
+    payment_count = (year - orig.year) * 12 + end_month - orig.month - 1
+    if payment_count <= 0:
+        return 0.0
+
+    total = 0.0
+    for _ in range(payment_count):
+        interest = balance * rate
+        principal = max(pni - interest, 0)
+        total += principal
+        balance -= principal
+    return round(total, 2)
+
+
+def _statement_end_month_for_year(snapshots: list, year: int) -> int:
+    dates = [
+        _parse_statement_date(s.get("date"))
+        for s in snapshots
+        if s.get("year") == year and s.get("date")
+    ]
+    dates = [d for d in dates if d]
+    return max((d.month for d in dates), default=12)
 
 
 def _rental_income_by_year(prop: models.Property) -> dict:
@@ -692,7 +931,8 @@ def get_performance(
     metrics = compute_property_metrics(prop)
 
     # Statement snapshots & per-year tax/interest from uploaded documents
-    snapshots, tax_by_year, interest_by_year, balance_by_year = _collect_doc_history(prop)
+    snapshots, tax_by_year, interest_by_year, balance_by_year, balance_logic_by_year = _collect_doc_history(prop)
+    statement_balance_by_year = _latest_statement_balance_by_year(snapshots)
     # Actual per-year rent/occupancy from recorded lease periods
     rental_by_year = _rental_income_by_year(prop)
     # Schedule E figures from tax returns (highest-confidence source)
@@ -764,6 +1004,9 @@ def get_performance(
         year_set = {y for y in year_set if y >= purchase_year}
 
     yearly = []
+    cumulative_principal_paid = 0.0
+    previous_expected_principal_cumulative = 0.0
+    cumulative_principal_topup_paid = 0.0
     for year in sorted(year_set):
         ss = [s for s in snapshots if s["year"] == year]
 
@@ -778,7 +1021,8 @@ def get_performance(
 
         # Principal: prefer 1098 balance delta (most accurate), then
         # mortgage-statement balance delta, then annualized, then estimated
-        p1098 = _principal_from_1098(balance_by_year, year, prop.loans)
+        p1098 = _principal_from_1098_segments(
+            balance_by_year, balance_logic_by_year, year, prop.loans, statement_balance_by_year)
         if p1098 is not None:
             # Exact: 1098 balance delta (balance_this_year − balance_next_year)
             principal_paid = p1098
@@ -812,6 +1056,37 @@ def get_performance(
         else:
             principal_paid = round(sum(l.principal_due or 0 for l in prop.loans) * months_owned, 2)
             source = "estimated"
+
+        cumulative_principal_paid = round(cumulative_principal_paid + principal_paid, 2)
+        # Scheduled principal is the year-end amortization target. Current-year
+        # actual principal may be YTD, but the scheduled column should not stop
+        # at the latest statement month.
+        _sched_end_month = 12
+        expected_principal_cumulative = _scheduled_principal_cumulative(
+            prop.loans[0] if prop.loans else None, year, _sched_end_month)
+        expected_principal_paid = None
+        if expected_principal_cumulative is not None:
+            expected_principal_paid = round(
+                max(0, expected_principal_cumulative - previous_expected_principal_cumulative), 2)
+            previous_expected_principal_cumulative = expected_principal_cumulative
+        principal_topup_paid = round(
+            max(0, principal_paid - (expected_principal_paid or 0)), 2
+        ) if expected_principal_paid is not None else None
+
+        # For an in-progress year, do not create topup from projected values
+        # such as current statement principal_due annualization. Keep actual
+        # deltas from 1098 balances or statement balance drops visible.
+        if year == current_year and source in {"estimated", "annualized"}:
+            principal_topup_paid = 0.0 if principal_topup_paid is not None else None
+
+        if principal_topup_paid is not None:
+            cumulative_principal_topup_paid = round(
+                cumulative_principal_topup_paid + principal_topup_paid, 2
+            )
+        principal_topup_cumulative = (
+            cumulative_principal_topup_paid
+            if expected_principal_cumulative is not None else None
+        )
 
         # Interest: always from 1098 when available
         if ss and not p1098:
@@ -905,6 +1180,11 @@ def get_performance(
             "operating_expenses": operating_expenses,
             "interest_paid": interest_paid,
             "principal_paid": principal_paid,
+            "expected_principal_paid": expected_principal_paid,
+            "principal_topup_paid": principal_topup_paid,
+            "cumulative_principal_paid": cumulative_principal_paid,
+            "expected_principal_cumulative": expected_principal_cumulative,
+            "principal_topup_cumulative": principal_topup_cumulative,
             "escrow_paid": escrow_paid,
             "taxes_paid": taxes_paid,
             "depreciation": round(year_depreciation, 2),
@@ -918,12 +1198,16 @@ def get_performance(
         })
 
     totals = {
-        k: round(sum(y[k] for y in yearly), 2)
+        k: round(sum((y.get(k) or 0) for y in yearly), 2)
         for k in ("rental_income", "operating_expenses", "interest_paid",
-                  "principal_paid", "escrow_paid", "taxes_paid",
+                  "principal_paid", "expected_principal_paid", "principal_topup_paid",
+                  "escrow_paid", "taxes_paid",
                   "depreciation", "cash_flow",
                   "taxable_income", "total_return")
     }
+    totals["cumulative_principal_paid"] = yearly[-1].get("cumulative_principal_paid") if yearly else 0
+    totals["expected_principal_cumulative"] = yearly[-1].get("expected_principal_cumulative") if yearly else 0
+    totals["principal_topup_cumulative"] = yearly[-1].get("principal_topup_cumulative") if yearly else 0
 
     latest = yearly[-1] if yearly else None
     equity = metrics["equity"]
@@ -1001,7 +1285,8 @@ def get_lifetime_summary(
     metrics = compute_property_metrics(prop)
 
     # Snapshots & per-year tax/interest from uploaded documents
-    snapshots, tax_by_year, interest_by_year, balance_by_year = _collect_doc_history(prop)
+    snapshots, tax_by_year, interest_by_year, balance_by_year, balance_logic_by_year = _collect_doc_history(prop)
+    statement_balance_by_year = _latest_statement_balance_by_year(snapshots)
     # Actual per-year rent/occupancy from recorded lease periods
     rental_by_year = _rental_income_by_year(prop)
     # Schedule E figures from uploaded tax returns (highest-confidence source)
@@ -1086,6 +1371,9 @@ def get_lifetime_summary(
             _pur_month = int(_mm.group(1))
 
     yearly_details = []
+    cumulative_principal_paid = 0.0
+    previous_expected_principal_cumulative = 0.0
+    cumulative_principal_topup_paid = 0.0
     for year in range(purchase_year, end_year + 1):
         ss = [s for s in snapshots if s["year"] == year]
 
@@ -1095,7 +1383,8 @@ def get_lifetime_summary(
 
         # Principal: prefer 1098 balance delta (most accurate), then
         # mortgage-statement balance delta, then annualized, then estimated
-        p1098 = _principal_from_1098(balance_by_year, year, prop.loans)
+        p1098 = _principal_from_1098_segments(
+            balance_by_year, balance_logic_by_year, year, prop.loans, statement_balance_by_year)
         if p1098 is not None:
             principal_paid = p1098
             source = "actual"
@@ -1115,6 +1404,36 @@ def get_lifetime_summary(
             source = "estimated"
         else:
             continue
+
+        cumulative_principal_paid = round(cumulative_principal_paid + principal_paid, 2)
+        # Scheduled principal is the year-end amortization target. Current-year
+        # actual principal may be YTD, but the scheduled column should not stop
+        # at the latest statement month.
+        _sched_end_month = 12
+        expected_principal_cumulative = _scheduled_principal_cumulative(
+            prop.loans[0] if prop.loans else None, year, _sched_end_month)
+        expected_principal_paid = None
+        if expected_principal_cumulative is not None:
+            expected_principal_paid = round(
+                max(0, expected_principal_cumulative - previous_expected_principal_cumulative), 2)
+            previous_expected_principal_cumulative = expected_principal_cumulative
+        principal_topup_paid = round(
+            max(0, principal_paid - (expected_principal_paid or 0)), 2
+        ) if expected_principal_paid is not None else None
+
+        # Current-year topup should only come from actual annual data or
+        # balance deltas, not from projected monthly statement estimates.
+        if year == current_year and source in {"estimated", "annualized"}:
+            principal_topup_paid = 0.0 if principal_topup_paid is not None else None
+
+        if principal_topup_paid is not None:
+            cumulative_principal_topup_paid = round(
+                cumulative_principal_topup_paid + principal_topup_paid, 2
+            )
+        principal_topup_cumulative = (
+            cumulative_principal_topup_paid
+            if expected_principal_cumulative is not None else None
+        )
 
         # Interest from mortgage statements or loan estimate
         if ss:
@@ -1193,6 +1512,11 @@ def get_lifetime_summary(
             "operating_expenses": operating_expenses,
             "interest_paid": interest_paid,
             "principal_paid": principal_paid,
+            "expected_principal_paid": expected_principal_paid,
+            "principal_topup_paid": principal_topup_paid,
+            "cumulative_principal_paid": cumulative_principal_paid,
+            "expected_principal_cumulative": expected_principal_cumulative,
+            "principal_topup_cumulative": principal_topup_cumulative,
             "escrow_paid": escrow_paid,
             "taxes_paid": taxes_paid,
             "depreciation": round(year_depreciation, 2),
@@ -1231,6 +1555,13 @@ def get_lifetime_summary(
     _original_loan = round(sum(l.original_amount for l in prop.loans if l.original_amount), 2)
     _current_bal   = round(metrics["total_loan_balance"], 2)
     _principal_paid_actual = round(max(0, _original_loan - _current_bal), 2)
+    _expected_principal_cumulative = (
+        yearly_details[-1].get("expected_principal_cumulative") if yearly_details else None
+    )
+    _principal_topup_cumulative = (
+        yearly_details[-1].get("principal_topup_cumulative")
+        if yearly_details else None
+    )
 
     lifetime = {
         "years_owned": years_owned,
@@ -1240,6 +1571,10 @@ def get_lifetime_summary(
         "total_operating_expenses": round(sum(y["operating_expenses"] for y in yearly_details), 2),
         "total_interest_paid": round(sum(y["interest_paid"] for y in yearly_details), 2),
         "total_principal_paid": _principal_paid_actual,
+        "expected_principal_paid": _expected_principal_cumulative,
+        "principal_topup_paid": _principal_topup_cumulative,
+        "total_expected_principal_paid": _expected_principal_cumulative,
+        "total_principal_topup_paid": _principal_topup_cumulative,
         "total_escrow_paid": round(sum(y["escrow_paid"] for y in yearly_details), 2),
         "total_taxes_paid": round(sum(y["taxes_paid"] for y in yearly_details), 2),
         "total_depreciation": round(sum(y["depreciation"] for y in yearly_details), 2),
@@ -1286,7 +1621,7 @@ def get_raw_data(
         if _m:
             purchase_year = int(_m.group(0))
 
-    snapshots, tax_by_year, interest_by_year, balance_by_year = _collect_doc_history(prop)
+    snapshots, tax_by_year, interest_by_year, balance_by_year, balance_logic_by_year = _collect_doc_history(prop)
     rental_by_year = _rental_income_by_year(prop)
 
     # Strip any data from before the acquisition year
@@ -1295,6 +1630,7 @@ def get_raw_data(
         tax_by_year     = {y: v for y, v in tax_by_year.items()     if y >= purchase_year}
         interest_by_year = {y: v for y, v in interest_by_year.items() if y >= purchase_year}
         balance_by_year  = {y: v for y, v in balance_by_year.items()  if y >= purchase_year}
+        balance_logic_by_year = {y: v for y, v in balance_logic_by_year.items() if y >= purchase_year}
         rental_by_year   = {y: v for y, v in rental_by_year.items()   if y >= purchase_year}
 
     # Schedule E tax return entries
@@ -1361,6 +1697,8 @@ def get_raw_data(
             "filename": d.original_filename or d.filename,
             "mortgage_interest": data.get("mortgage_interest"),
             "outstanding_principal": data.get("current_balance"),
+            "origination_date": data.get("origination_date"),
+            "mortgage_acquisition_date": data.get("mortgage_acquisition_date"),
             "account_number": d.loan_account_number or data.get("account_number"),
             "document_id": d.id,
             "upload_date": str(d.upload_date) if d.upload_date else None,
@@ -1385,6 +1723,7 @@ def get_raw_data(
         "docs_1098": {yr: amt for yr, amt in interest_by_year.items()},
         "docs_1098_detail": docs_1098_detail,
         "docs_balance": {yr: bal for yr, bal in balance_by_year.items()},
+        "docs_balance_logic": {yr: v for yr, v in balance_logic_by_year.items()},
         "stmt_annual": {yr: v for yr, v in stmt_annual.items()},
         "tax_docs": {yr: amt for yr, amt in tax_by_year.items()},
         "lease_rent": {
@@ -1791,6 +2130,7 @@ def get_arm_schedule(
 
 @router.get("/dashboard/summary")
 def dashboard_summary(
+    exclude_ids: str = "",
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -1809,7 +2149,12 @@ def dashboard_summary(
             models.Property.owner_id.in_(shared_owner_ids)
         ).all()
 
-    props = own_props + shared_props
+    all_props = own_props + shared_props
+    excluded_id_set = {
+        int(x) for x in (exclude_ids or "").split(",")
+        if x.strip().isdigit()
+    }
+    props = [p for p in all_props if p.id not in excluded_id_set]
 
     total_properties = len(props)
     total_market_value = sum(p.market_value for p in props)
@@ -1950,7 +2295,132 @@ def dashboard_summary(
             "net_income": round(row["net_income"], 2),
         })
 
+    def _is_primary_row(row):
+        return (row.get("usage_type") or "Rental").lower() == "primary"
+
+    rental_details = [p for p in properties_detail if not _is_primary_row(p)]
+    primary_details = [p for p in properties_detail if _is_primary_row(p)]
+    rental_loans = [l for p in rental_details for l in p.get("loans", [])]
+    rental_market_value = sum(p.get("market_value") or 0 for p in rental_details)
+    rental_loan_balance = sum(p.get("total_loan_balance") or 0 for p in rental_details)
+    rental_monthly_rent = sum(p.get("effective_rent") or 0 for p in rental_details)
+    rental_monthly_mortgage = sum(p.get("monthly_mortgage") or 0 for p in rental_details)
+    rental_monthly_cf = sum(p.get("monthly_cash_flow") or 0 for p in rental_details)
+    rental_annual_noi = sum(p.get("annual_noi") or 0 for p in rental_details)
+    rental_debt_service = rental_monthly_mortgage * 12
+    scheduled_rent = sum(p.get("monthly_rent") or 0 for p in rental_details)
+    selected_market_value = sum(p.get("market_value") or 0 for p in properties_detail)
+    selected_loan_balance = sum(p.get("total_loan_balance") or 0 for p in properties_detail)
+    selected_equity = sum(p.get("equity") or 0 for p in properties_detail)
+    selected_purchase_price = sum(p.get("purchase_price") or 0 for p in properties_detail)
+    rental_original_loan = sum(p.get("original_loan_amount") or 0 for p in rental_details)
+    rental_principal_paid = sum(p.get("principal_paid") or 0 for p in rental_details)
+    rental_interest_paid = sum(p.get("interest_paid") or 0 for p in rental_details)
+    primary_market_value = sum(p.get("market_value") or 0 for p in primary_details)
+    primary_loan_balance = sum(p.get("total_loan_balance") or 0 for p in primary_details)
+    primary_purchase_price = sum(p.get("purchase_price") or 0 for p in primary_details)
+    arm_balance = sum(l.get("current_balance") or 0 for l in rental_loans if (l.get("loan_type") or "").upper() == "ARM")
+    high_rate_balance = sum(l.get("current_balance") or 0 for l in rental_loans if (l.get("interest_rate") or 0) > 6)
+    rate_balance = sum(l.get("current_balance") or 0 for l in rental_loans)
+    debt_weighted_rate = (
+        sum((l.get("current_balance") or 0) * (l.get("interest_rate") or 0) for l in rental_loans) / rate_balance
+    ) if rate_balance else 0
+    portfolio_ltv = rental_loan_balance / rental_market_value * 100 if rental_market_value else 0
+    portfolio_dscr = round(rental_annual_noi / rental_debt_service, 2) if rental_debt_service else None
+    vacancy_rate = ((scheduled_rent - rental_monthly_rent) / scheduled_rent * 100) if scheduled_rent else 0
+    occupancy_rate = 100 - vacancy_rate
+    cf_margin_pct = rental_monthly_cf / rental_monthly_rent * 100 if rental_monthly_rent else 0
+    max_equity = max([p.get("equity") or 0 for p in rental_details] + [0])
+    risk_factors = [
+        {"label": "Equity Concentration", "value": round(max_equity / rental_loan_balance * 100, 2) if rental_loan_balance else 0, "lo": 35, "hi": 50},
+        {"label": "ARM Exposure", "value": round(arm_balance / rental_loan_balance * 100, 2) if rental_loan_balance else 0, "lo": 25, "hi": 50},
+        {"label": "High Rate Debt", "value": round(high_rate_balance / rental_loan_balance * 100, 2) if rental_loan_balance else 0, "lo": 10, "hi": 30},
+        {"label": "Vacancy Rate", "value": round(vacancy_rate, 2), "lo": 7, "hi": 10},
+    ]
+    danger_count = sum(1 for f in risk_factors if f["value"] > f["hi"])
+    warn_count = sum(1 for f in risk_factors if f["lo"] < f["value"] <= f["hi"])
+    overall_risk = "high" if danger_count >= 2 else ("moderate" if danger_count == 1 or warn_count >= 2 else "low")
+
+    dashboard_model = {
+        "properties": rental_details,
+        "all_properties": properties_detail,
+        "filter_properties": [
+            {
+                "id": p.id,
+                "address": p.address,
+                "city": p.city,
+                "state": p.state,
+                "usage_type": p.usage_type or "Rental",
+                "notes": p.notes or "",
+            }
+            for p in all_props
+        ],
+        "primary_properties": primary_details,
+        "excluded_ids": sorted(excluded_id_set),
+        "excluded_count": len(excluded_id_set),
+        "total_properties": len(rental_details),
+        "total_market_value": round(selected_market_value, 2),
+        "total_loan_balance": round(selected_loan_balance, 2),
+        "total_equity": round(selected_equity, 2),
+        "total_purchase_price": round(selected_purchase_price, 2),
+        "total_appreciation_gain": round(selected_market_value - selected_purchase_price, 2),
+        "portfolio_ltv": round(portfolio_ltv, 2),
+        "portfolio_equity_pct": round(((rental_market_value - rental_loan_balance) / rental_market_value * 100) if rental_market_value else 0, 2),
+        "total_monthly_rent": round(rental_monthly_rent, 2),
+        "total_monthly_mortgage": round(rental_monthly_mortgage, 2),
+        "total_monthly_cash_flow": round(rental_monthly_cf, 2),
+        "total_annual_noi": round(rental_annual_noi, 2),
+        "annual_debt_service": round(rental_debt_service, 2),
+        "total_original_loan": round(rental_original_loan, 2),
+        "total_principal_paid": round(rental_principal_paid, 2),
+        "total_interest_paid": round(rental_interest_paid, 2),
+        "original_ltv": round(rental_original_loan / selected_purchase_price * 100, 2) if selected_purchase_price else 0,
+        "portfolio_dscr": portfolio_dscr,
+        "weighted_avg_rate": round(debt_weighted_rate, 2),
+        "has_primary": bool(primary_details),
+        "primary_equity": round(sum(p.get("equity") or 0 for p in primary_details), 2),
+        "primary_market_value": round(primary_market_value, 2),
+        "primary_loan_balance": round(primary_loan_balance, 2),
+        "primary_monthly_cost": round(sum(p.get("monthly_mortgage") or 0 for p in primary_details), 2),
+        "primary_ltv": round(primary_loan_balance / primary_market_value * 100, 2) if primary_market_value else 0,
+        "primary_appreciation": round(primary_market_value - primary_purchase_price, 2),
+        "ratios": {
+            "cash_flow_margin_pct": round(cf_margin_pct, 2),
+            "vacancy_rate": round(vacancy_rate, 2),
+            "occupancy_rate": round(occupancy_rate, 2),
+            "debt_weighted_rate": round(debt_weighted_rate, 2),
+            "arm_exposure": round(arm_balance / rental_loan_balance * 100, 2) if rental_loan_balance else 0,
+            "high_rate_exposure": round(high_rate_balance / rental_loan_balance * 100, 2) if rental_loan_balance else 0,
+            "appreciation_pct": round((selected_market_value - selected_purchase_price) / selected_purchase_price * 100, 2) if selected_purchase_price else None,
+        },
+        "risk_factors": risk_factors,
+        "overall_risk": overall_risk,
+        "cash_flow_data": [
+            {
+                "name": (p.get("address") or "").split(",")[0][:15],
+                "rent": round(p.get("effective_rent") or 0),
+                "mortgage": round(p.get("monthly_mortgage") or 0),
+                "cashFlow": round(p.get("monthly_cash_flow") or 0),
+            }
+            for p in rental_details
+        ],
+        "sparks": {
+            "market_value": sorted([p.get("market_value") or 0 for p in rental_details]),
+            "equity": sorted([p.get("equity") or 0 for p in rental_details]),
+            "rent": sorted([p.get("effective_rent") or 0 for p in rental_details]),
+            "cash_flow": sorted([p.get("monthly_cash_flow") or 0 for p in rental_details]),
+            "mortgage": sorted([p.get("monthly_mortgage") or 0 for p in rental_details]),
+            "debt": sorted([p.get("total_loan_balance") or 0 for p in rental_details]),
+            "noi": sorted([(p.get("annual_noi") or 0) / 12 for p in rental_details]),
+            "principal_paid": sorted([p.get("principal_paid") or 0 for p in rental_details]),
+            "interest_paid": sorted([p.get("interest_paid") or 0 for p in rental_details]),
+            "original_loan": sorted([p.get("original_loan_amount") or 0 for p in rental_details if (p.get("original_loan_amount") or 0) > 0]),
+            "rate": sorted([l.get("interest_rate") or 0 for l in rental_loans]),
+        },
+    }
+
     return {
+        "dashboard": dashboard_model,
         "total_properties": total_properties,
         "total_monthly_rent": round(total_monthly_rent, 2),
         "total_market_value": round(total_market_value, 2),

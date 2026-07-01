@@ -131,18 +131,111 @@ def extract_pdf_text(filepath: str) -> str:
     return '\n'.join(c for c in candidates if c) or ''
 
 
+def _norm_header(value) -> str:
+    return re.sub(r'[^a-z0-9]+', '', str(value or '').lower())
+
+
+SPREADSHEET_COLUMN_ALIASES = {
+    "property": "property_name",
+    "lender": "lender_name",
+    "residencytype": "residency_type",
+    "loanaccountnumber": "account_number",
+    "accountnumber": "account_number",
+    "loanoriginationmonth": "origination_date",
+    "begmonth": "period_start",
+    "beginningmonth": "period_start",
+    "endingmonth": "period_end",
+    "endmonth": "period_end",
+    "months": "months",
+    "calendaryear": "tax_year",
+    "year": "tax_year",
+    "mortgageinterestreceived": "mortgage_interest",
+    "mortgageinterest": "mortgage_interest",
+    "outstandingmortgageprincipal": "current_balance",
+    "mortgageinsurancepremiums": "mortgage_insurance",
+    "pointspaidonpurchaseofprincipalresidence": "points_paid",
+    "propertytaxespaid": "property_tax_amount",
+    "realestatetaxespaid": "property_tax_amount",
+    "homeinsurance": "home_insurance",
+    "yearendoutstandingbalance": "year_end_outstanding_balance",
+    "principalpaiddown": "principal_paid_down",
+    "cumprincipalpaiddown": "cumulative_principal_paid",
+    "cumulativeprincipalpaiddown": "cumulative_principal_paid",
+    "expectedprincipalpaiddown": "expected_principal_paid",
+    "expectedprincipalpaid": "expected_principal_paid",
+    "topup": "principal_topup_paid",
+    "topuppaid": "principal_topup_paid",
+    "extraprincipalpaid": "principal_topup_paid",
+}
+
+
+def _coerce_spreadsheet_value(key: str, value):
+    if value is None or value == "":
+        return None
+    if key in {
+        "mortgage_interest", "current_balance", "mortgage_insurance",
+        "points_paid", "property_tax_amount", "home_insurance",
+        "year_end_outstanding_balance", "principal_paid_down",
+        "cumulative_principal_paid", "expected_principal_paid",
+        "principal_topup_paid",
+    }:
+        if isinstance(value, (int, float)):
+            return round(float(value), 2)
+        return parse_currency(str(value))
+    if key in {"tax_year", "months"}:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _parse_spreadsheet_rows(rows: list) -> list:
+    for idx, row in enumerate(rows):
+        aliases = [SPREADSHEET_COLUMN_ALIASES.get(_norm_header(c)) for c in row]
+        if sum(1 for a in aliases if a) >= 4:
+            parsed = []
+            for raw in rows[idx + 1:]:
+                item = {}
+                for col, alias in enumerate(aliases):
+                    if not alias or col >= len(raw):
+                        continue
+                    val = _coerce_spreadsheet_value(alias, raw[col])
+                    if val is not None:
+                        item[alias] = val
+                if item:
+                    parsed.append(item)
+            return parsed
+    return []
+
+
 def extract_excel_data(filepath: str) -> Dict[str, Any]:
-    """Extract data from Excel file."""
+    """Extract raw sheets plus normalized mortgage/tax rows from Excel."""
     try:
         import openpyxl
         wb = openpyxl.load_workbook(filepath, data_only=True)
         data = {}
+        parsed_rows = []
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             rows = []
             for row in ws.iter_rows(values_only=True):
                 rows.append(list(row))
             data[sheet_name] = rows
+            parsed_rows.extend(_parse_spreadsheet_rows(rows))
+        if parsed_rows:
+            data["parsed_rows"] = parsed_rows
+            latest = parsed_rows[-1]
+            for key in (
+                "property_name", "lender_name", "residency_type",
+                "account_number", "origination_date", "tax_year",
+                "mortgage_interest", "current_balance",
+                "property_tax_amount", "year_end_outstanding_balance",
+                "principal_paid_down", "cumulative_principal_paid",
+                "expected_principal_paid", "principal_topup_paid",
+            ):
+                if latest.get(key) is not None:
+                    data[key] = latest[key]
         return data
     except Exception as e:
         return {"error": str(e)}
@@ -857,6 +950,8 @@ def parse_1098(text: str) -> Dict[str, Any]:
             data['property_tax_amount'] = boxes[10]
         if isinstance(boxes.get(3), str):
             data['origination_date'] = boxes[3]
+        if isinstance(boxes.get(11), str):
+            data['mortgage_acquisition_date'] = boxes[11]
     else:
         # pdfplumber sometimes splits "Mortgage" into "M ortgage" on these
         # forms, so anchor on the "interest received from" portion, which
@@ -887,15 +982,29 @@ def parse_1098(text: str) -> Dict[str, Any]:
         if v is not None:
             data['property_tax_amount'] = v
 
-        m = re.search(r'mortgage\s+origination\s+date[\s\S]{0,80}?(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
+        m = re.search(r'mortgage\s+origination\s+date[\s\S]{0,120}?(\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))', text, re.IGNORECASE)
         if m:
             data['origination_date'] = m.group(1)
+        m = re.search(r'mortgage\s+acquisition\s+date[\s\S]{0,120}?(\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))', text, re.IGNORECASE)
+        if m:
+            data['mortgage_acquisition_date'] = m.group(1)
+        if data.get('property_tax_amount') is None:
+            v = _money_after(text, r'property\s+tax(?:es)?', 40)
+            if v is not None:
+                data['property_tax_amount'] = v
 
-    m = re.search(
-        r'account\s+number(?:\s*\(see\s+instructions\))?[\s:]*\n+\s*([\dXx\*\-]{5,})',
-        text, re.IGNORECASE)
-    if m:
-        data['account_number'] = m.group(1).strip()
+        m = re.search(
+            r'account\s+number(?:\s*\(see\s+instructions\))?[\s:]*\n+\s*([\dXx\*\-]{5,})',
+            text, re.IGNORECASE)
+        if m:
+            data['account_number'] = m.group(1).strip()
+        else:
+            candidates = [
+                c for c in re.findall(r'\b(\d{8,12})\b', text)
+                if not c.startswith(('000000', '1545'))
+            ]
+            if candidates:
+                data['account_number'] = candidates[0]
 
     m = re.search(
         r"recipient'?s/lender'?s\s+name[\s\S]*?(?:telephone no\.?|postal code[^\n]*)\s*\n\s*([^\n]+)",
@@ -1246,6 +1355,19 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
         data['settlement_date']  = normed
         data['purchase_date']    = normed
         data['origination_date'] = normed
+        data['purchase_date_source'] = 'closing_or_settlement_date'
+
+    if not data.get('purchase_date') and re.search(r'\bpurpose\s+purchase\b', text, re.IGNORECASE):
+        m = re.search(
+            r'date\s+issued\s*:?\s*([A-Za-z]+\s+\d{1,2},?\s*\d{4}|\d{1,2}/\d{1,2}/\d{2,4})',
+            text,
+            re.IGNORECASE,
+        )
+        if m:
+            normed = _normalize_date(m.group(1).strip())
+            data['purchase_date'] = normed
+            data['origination_date'] = normed
+            data['purchase_date_source'] = 'date_issued_purchase_document'
 
     # ── Sale / Purchase price ─────────────────────────────────────────────────
     # CFPB: "Sale Price $655,000"   ALTA: "Sale Price of Property 675,200.00"
@@ -1537,7 +1659,7 @@ def to_markdown(category: str, data: Dict[str, Any]) -> str:
         ])
         section(display, 'Loan Terms', [
             ('interest_rate', 'Interest Rate'),
-            ('monthly_payment', 'Monthly P&I Payment'),
+            ('monthly_payment', 'Monthly Principal & Interest Payment'),
             ('loan_term_years', 'Loan Term (years)'),
             ('loan_type', 'Loan Type'),
             ('apr', 'APR'),
@@ -1573,13 +1695,14 @@ def to_markdown(category: str, data: Dict[str, Any]) -> str:
             ('property_address', 'Property Securing Mortgage'),
         ])
         section(display, 'Mortgage Interest (Form 1098)', [
-            ('mortgage_interest', 'Box 1 - Mortgage Interest Received'),
-            ('current_balance', 'Box 2 - Outstanding Principal'),
-            ('origination_date', 'Box 3 - Origination Date'),
-            ('mortgage_insurance', 'Box 5 - Mortgage Insurance Premiums'),
-            ('points_paid', 'Box 6 - Points Paid'),
-            ('property_tax_amount', 'Box 10 - Real Estate Taxes Paid'),
-        ])
+        ('mortgage_interest', 'Box 1 - Mortgage Interest Received'),
+        ('current_balance', 'Box 2 - Outstanding Principal'),
+        ('origination_date', 'Box 3 - Origination Date'),
+        ('mortgage_insurance', 'Box 5 - Mortgage Insurance Premiums'),
+        ('points_paid', 'Box 6 - Points Paid'),
+        ('property_tax_amount', 'Box 10 - Real Estate Taxes Paid'),
+        ('mortgage_acquisition_date', 'Box 11 - Mortgage Acquisition Date'),
+    ])
 
     # Raw key/value schema — what the app imports
     schema_rows = [

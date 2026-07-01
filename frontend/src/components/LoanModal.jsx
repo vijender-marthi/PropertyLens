@@ -76,7 +76,7 @@ export default function LoanModal({ propId, loan, onClose, onSaved }) {
             <F label="Current Balance ($)" k="current_balance" type="number" />
             <F label="Interest Rate (%)" k="interest_rate" type="number" step="0.001" />
             <F label="Rate Note (e.g. ARM intro period)" k="rate_note" />
-            <F label="Monthly P&I Payment ($)" k="monthly_payment" type="number" />
+            <F label="Monthly Principal & Interest Payment ($)" k="monthly_payment" type="number" />
             <F label="Loan Term (years)" k="loan_term_years" type="number" />
             <F label="Escrow/mo ($)" k="escrow_amount" type="number" />
             <F label="Down Payment ($)" k="down_payment" type="number" />

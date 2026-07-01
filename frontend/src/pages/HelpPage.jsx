@@ -196,7 +196,7 @@ const METRICS = [
     id: 'operating-expenses', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
     title: 'Monthly Operating Expenses',
     tags: [{ label: 'Expenses', color: 'amber' }],
-    description: 'All property-level expenses excluding mortgage P&I. Taxes and insurance are entered annually and divided by 12. All other fields are monthly.',
+    description: 'All property-level expenses excluding mortgage principal & interest. Taxes and insurance are entered annually and divided by 12. All other fields are monthly.',
     formula: 'Op Expenses = (Property Tax + Insurance) ÷ 12\n            + HOA + Maintenance + Mgmt Fee\n            + Utilities + Vacancy + CapEx + Other',
     search: 'operating expenses monthly property tax insurance hoa maintenance management',
     example: <>
@@ -247,10 +247,10 @@ const METRICS = [
   },
   {
     id: 'mortgage-payment', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Mortgage Payment (P&I)',
+    title: 'Mortgage Payment (Principal & Interest)',
     tags: [{ label: 'Debt Service', color: 'red' }],
-    description: 'Principal and interest portion only — the escrow portion (taxes/insurance collected by the lender) is excluded because those costs are already in Operating Expenses. This avoids double-counting.',
-    formula: 'Monthly P&I = Σ (Statement Payment − Escrow Amount) per loan\n            = Σ monthly_payment − Σ escrow_amount',
+    description: 'Principal and interest portion only. Escrow is counted under tax/insurance expenses when annual tax and insurance fields are missing or lower, avoiding double-counting.',
+    formula: 'Monthly Principal & Interest = Σ (Statement Payment − Escrow Amount) per loan\n            = Σ monthly_payment − Σ escrow_amount',
     search: 'mortgage payment principal interest escrow monthly loan debt service',
     example: <>
       <p>Loan statement: $3,847/mo PITI · Escrow: $647/mo</p>
@@ -262,8 +262,8 @@ const METRICS = [
     id: 'cash-flow', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
     title: 'Monthly Cash Flow',
     tags: [{ label: 'Bottom Line', color: 'blue' }],
-    description: 'Net cash remaining after all expenses and P&I payments. Positive means the property funds itself; negative means you top it up from other income.',
-    formula: 'Cash Flow = Effective Rent − Operating Expenses − Mortgage P&I',
+    description: 'Net cash remaining after all expenses and principal & interest payments. Positive means the property funds itself; negative means you top it up from other income.',
+    formula: 'Cash Flow = Effective Rent − Operating Expenses − Mortgage Principal & Interest',
     search: 'cash flow monthly bottom line profit loss',
     example: <>
       <p>Effective rent: $4,500</p>
@@ -387,8 +387,8 @@ const METRICS = [
     id: 'annual-debt-service', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
     title: 'Annual Debt Service',
     tags: [{ label: 'Debt Service', color: 'red' }],
-    description: 'Total annual P&I payments across all loans. Escrow is excluded — taxes and insurance are counted under Operating Expenses. Used as the denominator in DSCR.',
-    formula: 'Annual Debt Service = Σ(Monthly Payment − Escrow Amount) per loan × 12\n                     = Total Monthly P&I × 12',
+    description: 'Total annual principal & interest payments across all loans. Escrow is excluded — taxes and insurance are counted under Operating Expenses. Used as the denominator in DSCR.',
+    formula: 'Annual Debt Service = Σ(Monthly Payment − Escrow Amount) per loan × 12\n                     = Total Monthly Principal & Interest × 12',
     search: 'annual debt service mortgage yearly obligation piti escrow',
     example: <>
       <p>Total monthly P&amp;I across all loans: $18,300/mo</p>
@@ -835,15 +835,15 @@ const FIELD_SOURCES = {
   'noi':                    { variables: 'effective_rent, operating_expenses',             source: 'Derived: Effective Rent − Operating Expenses' },
   'cap-rate':               { variables: 'annual_noi, market_value',                      source: 'Derived: (NOI × 12) ÷ Market Value' },
   'gross-yield':            { variables: 'monthly_rent, market_value',                    source: 'Derived: (Monthly Rent × 12) ÷ Market Value' },
-  'mortgage-payment':       { variables: 'monthly_payment, escrow_amount',                source: 'Manual entry: Loan Details → Monthly P&I; or uploaded mortgage statement (PDF)' },
-  'cash-flow':              { variables: 'effective_rent, operating_expenses, monthly_payment', source: 'Derived: Effective Rent − Op Expenses − Mortgage P&I' },
+  'mortgage-payment':       { variables: 'monthly_payment, escrow_amount',                source: 'Manual entry: Loan Details → Monthly Principal & Interest; or uploaded mortgage statement (PDF)' },
+  'cash-flow':              { variables: 'effective_rent, operating_expenses, monthly_payment', source: 'Derived: Effective Rent − Op Expenses − Mortgage Principal & Interest' },
   'cf-margin':              { variables: 'monthly_cash_flow, effective_rent',              source: 'Derived: Cash Flow ÷ Effective Rent' },
   'original-loan':          { variables: 'original_loan_amount',                          source: 'Manual entry: Loan Details → Original Loan Amount; or uploaded mortgage statement' },
   'original-ltv':           { variables: 'original_loan_amount, purchase_price',          source: 'Manual entry: Loan Details → Original Loan Amount; Property Details → Purchase Price' },
   'principal-paid':         { variables: 'original_loan_amount, current_balance',         source: 'Manual entry: Loan Details → Original Loan Amount & Current Balance' },
   'interest-paid':          { variables: 'mortgage_interest (per year)',                  source: 'Uploaded tax returns (Schedule E) or 1098 forms — one entry per year' },
   'weighted-rate':          { variables: 'current_balance, interest_rate per loan',       source: 'Manual entry: Loan Details → Current Balance & Interest Rate; or uploaded statement' },
-  'annual-debt-service':    { variables: 'monthly_payment, escrow_amount per loan',       source: 'Manual entry: Loan Details → Monthly P&I; or uploaded mortgage statement (PDF)' },
+  'annual-debt-service':    { variables: 'monthly_payment, escrow_amount per loan',       source: 'Manual entry: Loan Details → Monthly Principal & Interest; or uploaded mortgage statement (PDF)' },
   'dscr':                   { variables: 'annual_noi, annual_debt_service',               source: 'Derived: Annual NOI ÷ Annual Debt Service' },
   'concentration':          { variables: 'largest_property_equity, total_equity',         source: 'Derived from market_value & current_balance per property' },
   'arm-exposure':           { variables: 'loan_type, current_balance',                    source: 'Manual entry: Loan Details → Loan Type (Fixed / ARM)' },
@@ -1028,8 +1028,8 @@ export default function HelpPage() {
                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-5 text-sm text-blue-700">
                       <p className="font-semibold text-blue-800 mb-1">How expenses flow into calculations</p>
                       <p><strong>NOI</strong> = Gross Rent − (Property Tax + Insurance + HOA + Maintenance + Mgmt + Utilities + Vacancy + CapEx + Other)</p>
-                      <p className="mt-1"><strong>Cash Flow</strong> = NOI − Mortgage Payment (P&amp;I + Escrow)</p>
-                      <p className="text-xs text-blue-500 mt-1">If your lender escrows taxes and insurance, only the non-escrowed portion is added separately to avoid double-counting.</p>
+                      <p className="mt-1"><strong>Cash Flow</strong> = Gross Rent − Mortgage P&amp;I − max(Tax/Insurance, Escrow) − Other Operating Expenses</p>
+                      <p className="text-xs text-blue-500 mt-1">If annual tax and insurance are missing or lower than lender escrow, escrow is used so monthly cost is still counted.</p>
                     </div>
                   </>
                 )}

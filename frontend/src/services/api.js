@@ -51,7 +51,7 @@ export const propAPI = {
   refreshValue: (id) => api.post(`/properties/${id}/refresh-value`),
   updateYearNote: (id, year, note) => api.patch(`/properties/${id}/year-note`, null, { params: { year, note } }),
   updateNotes: (id, note) => api.patch(`/properties/${id}/notes`, null, { params: { note } }),
-  dashboard: () => api.get('/properties/dashboard/summary'),
+  dashboard: (excludeIds = '') => api.get('/properties/dashboard/summary', { params: { exclude_ids: excludeIds } }),
   // Loans
   addLoan: (propId, data) => api.post(`/properties/${propId}/loans`, data),
   updateLoan: (propId, loanId, data) => api.put(`/properties/${propId}/loans/${loanId}`, data),
@@ -75,6 +75,7 @@ export const propAPI = {
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 export const docAPI = {
+  config: () => api.get('/documents/config'),
   upload: (formData) =>
     api.post('/documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

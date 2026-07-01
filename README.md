@@ -1,6 +1,8 @@
-# RentalProps
+# PropertyLens
 
 A personal real estate portfolio tracker that consolidates financial data across multiple rental properties. Upload tax returns and mortgage statements to automatically extract rent, interest, depreciation, and loan balances — then view the numbers in one place.
+
+Architecture rule: UI renders backend-provided values only; parsing, calculations, comparisons, and field mappings live in the backend. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -81,7 +83,7 @@ npm run dev
 ## Project Structure
 
 ```
-RentalProps/
+PropertyLens/
 ├── backend/
 │   ├── main.py                  # FastAPI app entry point
 │   ├── models.py                # SQLAlchemy ORM models

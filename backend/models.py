@@ -71,7 +71,6 @@ class Property(Base):
 
     # Depreciation
     land_value = Column(Float, default=0.0)  # excluded from depreciation
-    land_price = Column(Float, default=0.0)
     construction_price = Column(Float, default=0.0)
     depreciation_years = Column(Float, default=27.5)  # 27.5 for residential
 

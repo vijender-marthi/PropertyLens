@@ -17,7 +17,6 @@ MIGRATIONS = {
         "usage_type": "VARCHAR DEFAULT 'Rental'",
         "vacancy_allowance": "FLOAT DEFAULT 0.0",
         "capex_reserve": "FLOAT DEFAULT 0.0",
-        "land_price": "FLOAT DEFAULT 0.0",
         "construction_price": "FLOAT DEFAULT 0.0",
     },
     "documents": {
@@ -109,7 +108,7 @@ with engine.connect() as conn:
             conn.commit()
 
 app = FastAPI(
-    title="RentalProps API",
+    title="PropertyLens API",
     description="Real Estate Consolidation & Analytics Platform",
     version="1.0.0",
 )
@@ -130,7 +129,7 @@ app.include_router(sharing.router)
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "RentalProps API"}
+    return {"status": "ok", "service": "PropertyLens API"}
 
 
 # Serve production frontend

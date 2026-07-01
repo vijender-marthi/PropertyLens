@@ -50,7 +50,8 @@ export default function DashboardPage() {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef                   = useRef(null)
   const [editingNoteId, setEditingNoteId]   = useState(null)
-  const [noteInput, setNoteInput]           = useState('')
+  const [noteInput, setNoteInput]        = useState('')
+  const excludedKey = Array.from(excludedIds).sort((a, b) => a - b).join(',')
 
   const SECTIONS = [
     { id: 'portfolio', label: 'Portfolio & Equity', icon: TrendingUp },
@@ -60,11 +61,12 @@ export default function DashboardPage() {
   ]
 
   useEffect(() => {
-    propAPI.dashboard()
+    setLoading(true)
+    propAPI.dashboard(excludedKey)
       .then((r) => setData(r.data))
       .catch(() => toast.error('Failed to load dashboard'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [excludedKey])
 
   useEffect(() => {
     const handler = (e) => {
@@ -139,12 +141,12 @@ export default function DashboardPage() {
   const isPrimary = p => (p.usage_type || 'Rental').toLowerCase() === 'primary'
 
   // ── Filter ────────────────────────────────────────────────────────────────
-  const filteredProps = data.properties.filter(p => !excludedIds.has(p.id))
-  const excludedCount = excludedIds.size
+  const filteredProps = data.dashboard?.all_properties || data.properties.filter(p => !excludedIds.has(p.id))
+  const excludedCount = data.dashboard?.excluded_count ?? excludedIds.size
 
   // Separate primary residence from rental portfolio
-  const rentalProps  = filteredProps.filter(p => !isPrimary(p))
-  const primaryProps = filteredProps.filter(p =>  isPrimary(p))
+  const rentalProps  = data.dashboard?.properties || filteredProps.filter(p => !isPrimary(p))
+  const primaryProps = data.dashboard?.primary_properties || filteredProps.filter(p =>  isPrimary(p))
 
   // ── Net-worth aggregates (ALL properties) ─────────────────────────────────
   const d_mv  = filteredProps.reduce((s, p) => s + (p.market_value || 0), 0)
@@ -178,7 +180,7 @@ export default function DashboardPage() {
   const pm_mm  = primaryProps.reduce((s, p) => s + (p.monthly_mortgage || 0), 0)
   const pm_pp  = primaryProps.reduce((s, p) => s + (p.purchase_price || 0), 0)
 
-  const d = {
+  const d = data.dashboard || {
     properties:              rentalProps,     // rental properties only for analytics
     all_properties:          filteredProps,   // all for display purposes
     primary_properties:      primaryProps,
@@ -533,18 +535,18 @@ export default function DashboardPage() {
                     <button onClick={() => setExcludedIds(new Set())} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Show all</button>
                   )}
                 </div>
-                {data.properties.map(p => {
+              {(data.dashboard?.filter_properties || data.properties).map(p => {
                   const primary  = isPrimary(p)
                   const excluded = excludedIds.has(p.id)
                   return (
-                    <label key={p.id} className={`flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${excluded ? 'opacity-50' : ''}`}>
+<label key={p.id} className={`flex items-start gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${excluded ? 'opacity-50' : ''}`}>
                       <input type="checkbox" checked={!excluded}
                         onChange={() => setExcludedIds(prev => { const n = new Set(prev); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); return n })}
                         className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 cursor-pointer" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-medium text-gray-800 truncate">{p.address}</span>
-                          {primary && <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0"><Home className="w-2.5 h-2.5" />Primary</span>}
+<span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{p.address}</span>
+{primary && <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 shrink-0"><Home className="w-2.5 h-2.5" />Primary</span>}
                         </div>
                         <p className="text-[10px] text-gray-400 mt-0.5">{p.city}, {p.state}</p>
                       </div>
@@ -571,7 +573,7 @@ export default function DashboardPage() {
               good={d.total_equity > 0} info="Market value minus all outstanding loan balances." />
             <ExecKPI label="Monthly Cash Flow"  value={fmt(d.total_monthly_cash_flow)}
               trend={cfMarginPct > 0 ? `${cfMarginPct.toFixed(1)}% margin` : 'Negative margin'}
-              good={d.total_monthly_cash_flow >= 0} info="Rent minus operating costs and mortgage P&I." />
+              good={d.total_monthly_cash_flow >= 0} info="Rent minus operating costs and mortgage principal & interest." />
             <ExecKPI label="Portfolio LTV"      value={fmtPct(d.portfolio_ltv)}
               trend={d.portfolio_ltv < 65 ? 'Conservative leverage' : d.portfolio_ltv < 80 ? 'Moderate leverage' : 'Elevated leverage'}
               good={d.portfolio_ltv < 75} info="Total debt ÷ market value. Below 65% is strong." />
@@ -595,8 +597,8 @@ export default function DashboardPage() {
               <div className="flex items-start gap-3">
                 <Home className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1">
-                  <p className="text-xs font-bold uppercase tracking-wider text-amber-700 mb-1">Primary Residence — Excluded from Rental Metrics</p>
-                  <p className="text-xs text-amber-900 leading-relaxed mb-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300 mb-1">Primary Residence — Excluded from Rental Metrics</p>
+                  <p className="text-xs text-amber-950 dark:text-amber-100 leading-relaxed mb-4">
                     Your primary home is a personal liability, not a rental asset. Its mortgage is a living expense — not portfolio income or debt service.
                     It is excluded from all rental metrics above (cash flow, NOI, DSCR, LTV). It is tracked separately below for net worth purposes.
                   </p>
@@ -608,14 +610,14 @@ export default function DashboardPage() {
                       { label: 'Monthly Cost',    value: fmt(d.primary_monthly_cost) },
                     ].map(kv => (
                       <div key={kv.label} className="bg-white/70 dark:bg-gray-700/70 rounded-lg px-3 py-2.5">
-                        <p className="text-[10px] text-amber-600 font-semibold uppercase tracking-wider">{kv.label}</p>
-                        <p className="text-base font-bold text-amber-900 mt-0.5">{kv.value}</p>
+<p className="text-[10px] text-amber-700 dark:text-amber-300 font-semibold uppercase tracking-wider">{kv.label}</p>
+<p className="text-base font-bold text-amber-950 dark:text-amber-100 mt-0.5">{kv.value}</p>
                       </div>
                     ))}
                   </div>
                   <div className="bg-white/60 dark:bg-gray-700/60 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3">
-                    <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-2">What to Do with Your Primary Home</p>
-                    <div className="space-y-1.5 text-[11px] text-amber-900 leading-relaxed">
+<p className="text-[10px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider mb-2">What to Do with Your Primary Home</p>
+<div className="space-y-1.5 text-[11px] text-amber-950 dark:text-amber-100 leading-relaxed">
                       {d.primary_ltv < 70 && <p>• <strong>HELOC opportunity:</strong> At {fmtPct(d.primary_ltv)} LTV you likely qualify for a home equity line — a low-cost way to fund your next rental down payment.</p>}
                       {d.primary_ltv >= 70 && d.primary_ltv < 85 && <p>• <strong>Build equity first:</strong> Continue paying down your mortgage. At under 70% LTV, a HELOC becomes available for rental acquisition leverage.</p>}
                       {d.primary_ltv >= 85 && <p>• <strong>Focus on paydown:</strong> High LTV limits refinancing and HELOC options. Prioritize paying down below 80% before leveraging this asset.</p>}
@@ -919,11 +921,11 @@ export default function DashboardPage() {
               <div className="pt-4 border-t border-slate-100 dark:border-gray-700 space-y-2">
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500 dark:text-gray-400">Appreciation gain</span>
-                  <span className="font-semibold text-slate-800">{fmt(d.total_appreciation_gain)}</span>
+<span className="font-semibold text-slate-800 dark:text-gray-200">{fmt(d.total_appreciation_gain)}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500 dark:text-gray-400">Principal paid down</span>
-                  <span className="font-semibold text-slate-800">{fmt(d.total_principal_paid)}</span>
+<span className="font-semibold text-slate-800 dark:text-gray-200">{fmt(d.total_principal_paid)}</span>
                 </div>
                 <div className="flex justify-between text-xs border-t border-slate-100 dark:border-gray-700 pt-2">
                   <span className="text-slate-600 dark:text-gray-300 font-medium">Total equity built</span>
@@ -947,7 +949,7 @@ export default function DashboardPage() {
                         <Link to={`/properties/${p.id}`} className="text-xs font-medium text-slate-700 dark:text-gray-300 hover:text-blue-600 truncate max-w-[180px]">{p.address.split(',')[0]}</Link>
                         <div className="flex items-center gap-3 shrink-0 text-xs">
                           <span className="text-slate-400 dark:text-gray-500">{fmtPct(ltv)} LTV</span>
-                          <span className="font-semibold text-slate-800">{fmt(p.equity||0)}</span>
+<span className="font-semibold text-slate-800 dark:text-gray-200">{fmt(p.equity||0)}</span>
                         </div>
                       </div>
                       <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
@@ -992,7 +994,7 @@ export default function DashboardPage() {
                       <th className="px-3 py-2.5 text-center font-semibold">Type</th>
                       <th className="px-3 py-2.5 text-right font-semibold">Balance</th>
                       <th className="px-3 py-2.5 text-center font-semibold">Rate</th>
-                      <th className="px-3 py-2.5 text-right font-semibold">P&I / mo</th>
+                      <th className="px-3 py-2.5 text-right font-semibold">Principal & Interest / mo</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 dark:divide-gray-700/50">
@@ -1002,7 +1004,7 @@ export default function DashboardPage() {
                       return (
                         <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-gray-700/30">
                           <td className="px-5 py-2.5">
-                            <Link to={`/properties/${l.property.id}`} className="font-medium text-slate-800 hover:text-blue-600 truncate max-w-[140px] block">{l.property.address.split(',')[0]}</Link>
+<Link to={`/properties/${l.property.id}`} className="font-medium text-slate-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 truncate max-w-[140px] block">{l.property.address.split(',')[0]}</Link>
                           </td>
                           <td className="px-3 py-2.5 text-center">
                           <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${type === 'ARM' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400' : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'}`}>{type}</span>
@@ -1017,9 +1019,9 @@ export default function DashboardPage() {
                 </table>
               </div>
               <div className="px-5 py-3 border-t border-slate-100 dark:border-gray-700 grid grid-cols-3 gap-3 text-xs">
-                <div><p className="text-slate-400 dark:text-gray-500">Total debt</p><p className="font-semibold text-slate-800 mt-0.5">{fmt(d.total_loan_balance)}</p></div>
+<div><p className="text-slate-400 dark:text-gray-500">Total debt</p><p className="font-semibold text-slate-800 dark:text-gray-200 mt-0.5">{fmt(d.total_loan_balance)}</p></div>
                 <div><p className="text-slate-400 dark:text-gray-500">Avg. rate</p><p className="font-semibold mt-0.5" style={{ color: debtWeightedRate > 7 ? '#dc2626' : '#059669' }}>{fmtPct(debtWeightedRate)}</p></div>
-                <div><p className="text-slate-400 dark:text-gray-500">Monthly P&I</p><p className="font-semibold text-slate-800 mt-0.5">{fmt(d.total_monthly_mortgage)}</p></div>
+<div><p className="text-slate-400 dark:text-gray-500">Monthly Principal & Interest</p><p className="font-semibold text-slate-800 dark:text-gray-200 mt-0.5">{fmt(d.total_monthly_mortgage)}</p></div>
               </div>
             </div>
 
@@ -1494,7 +1496,7 @@ function CashFlowStack({ rent, noi, mortgage, cashFlow }) {
     <div className="space-y-3">
       <CashFlowBar label="Effective Rent" value={fmt(rent)} pct={100} color="#059669" />
       <CashFlowBar label="Net Operating Income" value={fmt(noi)} pct={noiPct} color="#0f766e" />
-      <CashFlowBar label="Mortgage P&I" value={fmt(mortgage)} pct={mortgagePct} color="#2563eb" />
+      <CashFlowBar label="Mortgage Principal & Interest" value={fmt(mortgage)} pct={mortgagePct} color="#2563eb" />
       <CashFlowBar label="Net Cash Flow" value={fmt(cashFlow)} pct={cashPct} color={cashColor} />
     </div>
   )
@@ -1722,10 +1724,10 @@ function Tile({ label, value, sub, accent = false, children }) {
     </div>
   )
   return (
-    <div style={{ ...base, background:'white', border: T_BORDER }}>
-      <p style={{ fontSize:12, color:'#6b7280', marginBottom:5, fontWeight:500 }}>{label}</p>
-      <p style={{ fontSize:28, fontWeight:500, color:'#111827', lineHeight:1.1, marginBottom:4 }}>{value}</p>
-      {sub && <p style={{ fontSize:12, color:'#9ca3af', lineHeight:1.4 }}>{sub}</p>}
+    <div className="bg-white dark:bg-gray-800 border border-slate-200 dark:border-gray-700" style={base}>
+      <p className="text-slate-500 dark:text-gray-400" style={{ fontSize:12, marginBottom:5, fontWeight:500 }}>{label}</p>
+      <p className="text-slate-900 dark:text-white" style={{ fontSize:28, fontWeight:500, lineHeight:1.1, marginBottom:4 }}>{value}</p>
+      {sub && <p className="text-slate-400 dark:text-gray-500" style={{ fontSize:12, lineHeight:1.4 }}>{sub}</p>}
       {children}
     </div>
   )
@@ -1744,10 +1746,10 @@ function RiskTile({ label, value, sub, detail, risk, lo, hi, marks }) {
     : 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
   return (
     <div className={tileCls} style={{ borderRadius: T_RADIUS, padding: T_PAD }}>
-      <p style={{ fontSize:12, color:'#6b7280', marginBottom:5, fontWeight:500 }}>{label}</p>
+      <p className="text-slate-600 dark:text-gray-300" style={{ fontSize:12, marginBottom:5, fontWeight:500 }}>{label}</p>
       <p style={{ fontSize:28, fontWeight:500, color:col, lineHeight:1.1, marginBottom:4 }}>{value}</p>
-      {sub    && <p style={{ fontSize:12, color:'#9ca3af', lineHeight:1.4 }}>{sub}</p>}
-      {detail && <p style={{ fontSize:11, color:'#6b7280', marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{detail}</p>}
+      {sub    && <p className="text-slate-500 dark:text-gray-400" style={{ fontSize:12, lineHeight:1.4 }}>{sub}</p>}
+      {detail && <p className="text-slate-600 dark:text-gray-300" style={{ fontSize:11, marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{detail}</p>}
       <FillBar value={risk} max={100} color={col} />
       <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:3 }}>
         {marks.map((m, i) => (
@@ -1857,14 +1859,14 @@ function LTVBar({ ltv, loan, equity, mv }) {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1 }}>
             <div style={{ width: 8, height: 8, borderRadius: 2, background: debtColor }} />
-            <span style={{ fontSize: 10, color: '#6b7280' }}>Debt {fmtPct(debtPct)}</span>
+<span className="text-slate-500 dark:text-gray-400" style={{ fontSize: 10 }}>Debt {fmtPct(debtPct)}</span>
           </div>
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#111827' }}>{fmt(loan)}</span>
+<span className="text-slate-900 dark:text-white" style={{ fontSize: 12, fontWeight: 600 }}>{fmt(loan)}</span>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 1, justifyContent: 'flex-end' }}>
             <div style={{ width: 8, height: 8, borderRadius: 2, background: eqColor }} />
-            <span style={{ fontSize: 10, color: '#6b7280' }}>Equity {fmtPct(eqPct)}</span>
+<span className="text-slate-500 dark:text-gray-400" style={{ fontSize: 10 }}>Equity {fmtPct(eqPct)}</span>
           </div>
           <span style={{ fontSize: 12, fontWeight: 600, color: eqColor }}>{fmt(equity)}</span>
         </div>

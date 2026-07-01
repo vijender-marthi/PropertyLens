@@ -1,11 +1,11 @@
 #!/bin/bash
-# RentalProps - Start script
+# PropertyLens - Start script
 # Usage: ./start.sh
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "🏠 RentalProps — RE Consolidation Tool"
+echo "🏠 PropertyLens — RE Consolidation Tool"
 echo "======================================="
 
 # ── Backend ───────────────────────────────────────────────────────────────────

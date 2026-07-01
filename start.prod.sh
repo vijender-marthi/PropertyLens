@@ -1,11 +1,11 @@
 #!/bin/bash
-# RentalProps - Production start script
+# PropertyLens - Production start script
 # Usage: ./start.prod.sh
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "RentalProps — Production Mode"
+echo "PropertyLens — Production Mode"
 echo "============================="
 
 # ── Build Frontend ────────────────────────────────────────────────────────────

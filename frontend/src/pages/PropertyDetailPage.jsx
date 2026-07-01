@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { propAPI, docAPI } from '../services/api'
 import {
@@ -365,8 +365,7 @@ const DETAIL_SECTIONS = [
     title: 'Depreciation',
     rows: [
       { label: 'Land Value',             key: 'land_value',         type: 'number', dollar: true },
-      { label: 'Land Price',             key: 'land_price',         type: 'number', dollar: true },
-      { label: 'Construction Price',     key: 'construction_price', type: 'number', dollar: true },
+      { label: 'Construction Cost',      key: 'construction_price', type: 'number', dollar: true },
       { label: 'Depreciation Period',    key: 'depreciation_years', type: 'number', suffix: 'yrs' },
     ],
   },
@@ -573,6 +572,7 @@ function PerformanceTab({ propId }) {
                 <th className="pb-2 px-2 font-medium text-right">Interest</th>
                 <th className="pb-2 px-2 font-medium text-right">Taxes</th>
                 <th className="pb-2 px-2 font-medium text-right">Principal</th>
+                <th className="pb-2 px-2 font-medium text-right">Topup</th>
                 <th className="pb-2 px-2 font-medium text-right">Cash Flow</th>
                 <th className="pb-2 px-2 font-medium text-right">Taxable Income</th>
                 <th className="pb-2 px-2 font-medium text-right">Depreciation</th>
@@ -601,7 +601,8 @@ function PerformanceTab({ propId }) {
                   <td className="py-2 px-2 text-right text-red-500">{fmt(y.operating_expenses)}</td>
                   <td className="py-2 px-2 text-right text-red-500">{fmt(y.interest_paid)}</td>
                   <td className="py-2 px-2 text-right text-orange-500">{fmt(y.taxes_paid)}</td>
-                  <td className="py-2 px-2 text-right text-blue-600">{fmt(y.principal_paid)}</td>
+                <td className="py-2 px-2 text-right text-blue-600">{fmt(y.principal_paid)}</td>
+                <td className="py-2 px-2 text-right text-indigo-600 dark:text-indigo-400">{fmt(y.principal_topup_paid)}</td>
                   <td className={`py-2 px-2 text-right font-medium ${y.cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {fmt(y.cash_flow)}
                   </td>
@@ -647,9 +648,10 @@ function PerformanceTab({ propId }) {
                 <td className="pt-2 px-2 text-right">{fmt(perf.totals.rental_income)}</td>
                 <td className="pt-2 px-2 text-right text-red-500">{fmt(perf.totals.operating_expenses)}</td>
                 <td className="pt-2 px-2 text-right text-red-500">{fmt(perf.totals.interest_paid)}</td>
-                <td className="pt-2 px-2 text-right text-orange-500">{fmt(perf.totals.taxes_paid)}</td>
-                <td className="pt-2 px-2 text-right text-blue-600">{fmt(perf.totals.principal_paid)}</td>
-                <td className={`pt-2 px-2 text-right ${perf.totals.cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <td className="pt-2 px-2 text-right text-orange-500">{fmt(perf.totals.taxes_paid)}</td>
+              <td className="pt-2 px-2 text-right text-blue-600">{fmt(perf.totals.principal_paid)}</td>
+              <td className="pt-2 px-2 text-right text-indigo-600 dark:text-indigo-400">{fmt(perf.totals.principal_topup_paid)}</td>
+              <td className={`pt-2 px-2 text-right ${perf.totals.cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {fmt(perf.totals.cash_flow)}
                 </td>
                 <td className={`pt-2 px-2 text-right ${perf.totals.taxable_income < 0 ? 'text-purple-600' : 'text-gray-900 dark:text-white'}`}>
@@ -1460,13 +1462,21 @@ function RentalForm({ propId, period, onClose, onSaved }) {
 
 function RawDataTab({ propId, prop }) {
   const [data, setData]       = useState(null)
+  const [lifetimeData, setLifetimeData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [selYear, setSelYear] = useState('all')
 
   useEffect(() => {
-    propAPI.rawdata(propId)
-      .then((r) => setData(r.data))
-      .catch(() => toast.error('Failed to load raw data'))
+    setLoading(true)
+    Promise.all([
+      propAPI.rawdata(propId),
+      propAPI.lifetime(propId),
+    ])
+      .then(([raw, lifetime]) => {
+        setData(raw.data)
+        setLifetimeData(lifetime.data)
+      })
+      .catch(() => toast.error('Failed to load verification data'))
       .finally(() => setLoading(false))
   }, [propId])
 
@@ -1477,14 +1487,21 @@ function RawDataTab({ propId, prop }) {
   )
   if (!data) return null
 
-  const { tax_entries, docs_1098, docs_1098_detail, docs_balance,
+  const { tax_entries, docs_1098, docs_1098_detail, docs_balance, docs_balance_logic = {},
           stmt_annual, tax_docs, lease_rent, irs_annual_depreciation,
           snapshots, loans } = data
+  const lifetime = lifetimeData?.lifetime || {}
+  const yearly = lifetimeData?.yearly || []
+ const principalTopupPaid = lifetime.total_principal_topup_paid ?? lifetime.principal_topup_paid
+  const topupRows = yearly.filter(y => (y.principal_topup_paid || 0) > 0)
+  const expectedPrincipalPaid = lifetime.total_expected_principal_paid ?? lifetime.expected_principal_paid
+  const scheduledLoanBalance = lifetime.scheduled_loan_balance
 
   // Build sorted set of all years across all sources
   const allYears = Array.from(new Set([
     ...tax_entries.map(e => e.tax_year),
     ...Object.keys(docs_1098).map(Number),
+    ...Object.keys(docs_balance).map(Number),
     ...Object.keys(stmt_annual).map(Number),
     ...Object.keys(lease_rent).map(Number),
     ...Object.keys(tax_docs).map(Number),
@@ -1684,13 +1701,24 @@ function RawDataTab({ propId, prop }) {
         <tbody>
           {years.map(yr => {
             const doc1098Bal  = docs_balance[yr] || null
+            const balanceLogic = docs_balance_logic[yr] || null
+            const selectedDate = balanceLogic?.selected_acquisition_date || balanceLogic?.selected_origination_date
             const stmtBal     = stmt_annual[yr]?.avg_balance || null
             const stmtPrin    = stmt_annual[yr]?.principal_annual || null
             const disc        = discLevel(doc1098Bal, stmtBal)
             return (
               <tr key={yr} className={`border-b border-gray-100 dark:border-gray-700 text-sm ${DISC_STYLE[disc]}`}>
                 <td className="py-2 font-semibold text-gray-700 dark:text-gray-300">{yr}</td>
-                <td className="py-2 px-2 text-right text-blue-600"><Val v={doc1098Bal} /></td>
+              <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-400">
+                <Val v={doc1098Bal} />
+                {balanceLogic && (
+                  <div className="mt-1 text-[10px] leading-snug text-gray-400 dark:text-gray-500">
+                    {balanceLogic.mode === 'active_parallel_loans' ? 'summed active loans' : 'latest loan balance'}
+                    {selectedDate ? ` · date ${selectedDate}` : ''}
+                    {balanceLogic.selected_account ? ` · ${balanceLogic.selected_account}` : ''}
+                  </div>
+                )}
+              </td>
                 <td className="py-2 px-2 text-right text-gray-600"><Val v={stmtBal} /></td>
                 <td className="py-2 px-2 text-right text-green-600"><Val v={stmtPrin} /></td>
                 <td className="py-2 pl-2 text-right">
@@ -1840,11 +1868,13 @@ function RawDataTab({ propId, prop }) {
           : "Every uploaded 1098, deduplicated by account for each tax year."}>
         <thead>
           <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2">Year</th>
-            <th className="text-left py-2">File</th>
-            <th className="text-left py-2">Account</th>
-            <th className="text-right py-2">Mortgage Interest</th>
-            <th className="text-right py-2">Outstanding Principal</th>
+              <th className="text-left py-2">Year</th>
+              <th className="text-left py-2">File</th>
+              <th className="text-left py-2">Account</th>
+              <th className="text-left py-2">Origination</th>
+              <th className="text-left py-2">Acquisition</th>
+              <th className="text-right py-2">Mortgage Interest</th>
+              <th className="text-right py-2">Outstanding Principal</th>
             <th className="text-left py-2 pl-3">Status</th>
           </tr>
         </thead>
@@ -1852,9 +1882,13 @@ function RawDataTab({ propId, prop }) {
           {[...docs_1098_detail].sort((a, b) => b.year - a.year).map((d, i) => (
             <tr key={i} className={`border-b text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 ${d.is_duplicate ? 'bg-amber-50 dark:bg-amber-900/20' : ''}`}>
               <td className="py-2 font-medium text-gray-700 dark:text-gray-300">{d.year}</td>
-              <td className="py-2 px-2 text-blue-600 text-xs truncate max-w-xs" title={d.filename}>{d.filename}</td>
-              <td className="py-2 px-2 text-gray-400 dark:text-gray-500 text-xs">{d.account_number || '—'}</td>
-              <td className={`py-2 px-2 text-right ${d.is_duplicate ? 'text-gray-300 line-through' : 'text-orange-600'}`}>
+            <td className="py-2 px-2 text-blue-600 text-xs truncate max-w-xs" title={d.filename}>{d.filename}</td>
+            <td className="py-2 px-2 text-gray-400 dark:text-gray-500 text-xs">{d.account_number || '—'}</td>
+            <td className="py-2 px-2 text-gray-500 dark:text-gray-400 text-xs">{d.origination_date || '—'}</td>
+                <td className="py-2 px-2 text-gray-500 dark:text-gray-400 text-xs">
+                  {d.mortgage_acquisition_date || <span className="text-gray-300 dark:text-gray-600">Not reported</span>}
+                </td>
+            <td className={`py-2 px-2 text-right ${d.is_duplicate ? 'text-gray-300 line-through' : 'text-orange-600'}`}>
                 {d.mortgage_interest ? fmt(d.mortgage_interest) : '—'}
               </td>
               <td className={`py-2 pl-2 text-right ${d.is_duplicate ? 'text-gray-300 line-through' : 'text-blue-600'}`}>
@@ -2075,6 +2109,7 @@ function SummaryTab({ propId, prop, metrics }) {
   if (!data) return null
 
   const { lifetime, yearly } = data
+  const topupRows = (yearly || []).filter(y => (y.principal_topup_paid || 0) > 0)
 
   // ── Derived metrics ──────────────────────────────────────────────────────────
   const appreciation = (lifetime.market_value || 0) - (lifetime.purchase_price || 0)
@@ -2090,6 +2125,8 @@ function SummaryTab({ propId, prop, metrics }) {
   const totalDebt        = lifetime.total_interest_paid + lifetime.total_principal_paid
   const interestRatioPct = totalDebt > 0 ? lifetime.total_interest_paid / totalDebt * 100 : 0
   const payoffProgress   = originalLoan > 0 ? lifetime.total_principal_paid / originalLoan * 100 : 0
+  const expectedPrincipalPaid = lifetime.total_expected_principal_paid ?? lifetime.expected_principal_paid
+  const principalTopupPaid = lifetime.total_principal_topup_paid ?? lifetime.principal_topup_paid
   const taxableIncomePct  = lifetime.total_rental_income > 0
     ? lifetime.total_taxable_income / lifetime.total_rental_income * 100 : 0
   // Cash-on-cash: lifetime CF / approximate down payment
@@ -2189,8 +2226,8 @@ function SummaryTab({ propId, prop, metrics }) {
 
   // ── Export ────────────────────────────────────────────────────────────────────
   const exportXLS = () => {
-    const header = ['Year', 'Rent', 'Expenses', 'Interest', 'Principal', 'Cash Flow', 'Taxable Income', 'Depreciation']
-    const rows = yearly.map(y => [y.year, y.rental_income, y.operating_expenses, y.interest_paid, y.principal_paid, y.cash_flow, y.taxable_income, y.depreciation])
+    const header = ['Year', 'Rent', 'Expenses', 'Interest', 'Principal', 'Topup', 'Cash Flow', 'Taxable Income', 'Depreciation']
+    const rows = yearly.map(y => [y.year, y.rental_income, y.operating_expenses, y.interest_paid, y.principal_paid, y.principal_topup_paid, y.cash_flow, y.taxable_income, y.depreciation])
     const ws = utils.aoa_to_sheet([header, ...rows])
     const wb = utils.book_new()
     utils.book_append_sheet(wb, ws, 'Summary')
@@ -2287,6 +2324,7 @@ function SummaryTab({ propId, prop, metrics }) {
             <div className="flex justify-between border-t pt-2"><span className="font-semibold text-gray-900 dark:text-white">Current Equity</span><span className="font-bold text-blue-600">{fmt(lifetime.equity)}</span></div>
             <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Appreciation</span><span className={appreciation >= 0 ? 'text-green-600' : 'text-red-500'}>{fmt(appreciation)} ({appPct.toFixed(1)}%)</span></div>
             <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Loan Paydown</span><span className="text-blue-600">{fmt(lifetime.total_principal_paid)}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Topup Paid</span><span className="text-indigo-600 dark:text-indigo-400">{fmt(principalTopupPaid)}</span></div>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 italic border-t pt-3">{equityVerdict}</p>
         </div>
@@ -2325,6 +2363,16 @@ function SummaryTab({ propId, prop, metrics }) {
             <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Total Principal Paid</span>
               <span className={lifetime.total_principal_paid > 0 ? 'text-blue-600' : 'text-gray-400 dark:text-gray-500'}>
                 {lifetime.total_principal_paid > 0 ? fmt(lifetime.total_principal_paid) : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Scheduled Principal</span>
+              <span className={expectedPrincipalPaid > 0 ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}>
+                {expectedPrincipalPaid > 0 ? fmt(expectedPrincipalPaid) : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Topup Paid</span>
+              <span className={principalTopupPaid > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-gray-500'}>
+                {principalTopupPaid > 0 ? fmt(principalTopupPaid) : '—'}
               </span>
             </div>
             {lifetime.total_principal_paid > 0 && (
@@ -2373,6 +2421,45 @@ function SummaryTab({ propId, prop, metrics }) {
         </div>
       </div>
 
+      {topupRows.length > 0 && (
+        <div className="card">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h3 className="font-semibold text-gray-900 dark:text-white">Lifetime Topup Paid by Year</h3>
+              <p className="text-xs text-gray-400 dark:text-gray-500">Extra principal paid above scheduled amortization.</p>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-400 dark:text-gray-500">Total Topup</div>
+              <div className="font-bold text-indigo-600 dark:text-indigo-400">{fmt(principalTopupPaid)}</div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-gray-500 dark:text-gray-400 border-b">
+                  <th className="text-left py-2 font-medium">Year</th>
+                  <th className="text-right py-2 px-3 font-medium">Principal Paid</th>
+                  <th className="text-right py-2 px-3 font-medium">Scheduled Principal</th>
+                  <th className="text-right py-2 px-3 font-medium">Topup Paid</th>
+                  <th className="text-right py-2 pl-3 font-medium">Cumulative Topup</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topupRows.map((y) => (
+                  <tr key={`topup-${y.year}`} className="border-b border-gray-100 dark:border-gray-700/50">
+                    <td className="py-2 font-medium text-gray-900 dark:text-white">{y.year}</td>
+                    <td className="py-2 px-3 text-right text-blue-600">{fmt(y.principal_paid)}</td>
+                    <td className="py-2 px-3 text-right text-gray-600 dark:text-gray-300">{fmt(y.expected_principal_paid)}</td>
+                    <td className="py-2 px-3 text-right text-indigo-600 dark:text-indigo-400">{fmt(y.principal_topup_paid)}</td>
+                    <td className="py-2 pl-3 text-right font-semibold text-indigo-700 dark:text-indigo-300">{fmt(y.principal_topup_cumulative)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* 6. Yearly Performance */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
@@ -2397,8 +2484,8 @@ function SummaryTab({ propId, prop, metrics }) {
             </thead>
             <tbody>
               {yearly.map((y) => (
-                <>
-                  <tr key={y.year}
+                <Fragment key={y.year}>
+                  <tr
                     onClick={() => setExpandedYear(expandedYear === y.year ? null : y.year)}
                     className="border-b cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                     <td className="py-2 pr-2 font-medium">
@@ -2411,20 +2498,21 @@ function SummaryTab({ propId, prop, metrics }) {
                     <td className="py-2 pl-2 text-right text-gray-600">{y.occupancy != null ? fmtPct(y.occupancy) : '—'}</td>
                   </tr>
                   {expandedYear === y.year && (
-                    <tr key={`${y.year}-detail`} className="bg-blue-50">
+                      <tr key={`${y.year}-detail`} className="bg-blue-50 dark:bg-blue-950/30">
                       <td colSpan={5} className="py-3 px-4">
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
                           <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Expenses</div><div className="font-medium">{fmt(y.operating_expenses)}</div></div>
-                          <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Interest</div><div className="font-medium text-orange-600">{fmt(y.interest_paid)}</div></div>
-                          <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Principal</div><div className="font-medium text-blue-600">{fmt(y.principal_paid)}</div></div>
-                          <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Taxes</div><div className="font-medium">{fmt(y.taxes_paid)}</div></div>
+                        <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Interest</div><div className="font-medium text-orange-600">{fmt(y.interest_paid)}</div></div>
+                        <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Principal</div><div className="font-medium text-blue-600">{fmt(y.principal_paid)}</div></div>
+                        <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Topup</div><div className="font-medium text-indigo-600 dark:text-indigo-400">{fmt(y.principal_topup_paid)}</div></div>
+                        <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Taxes</div><div className="font-medium">{fmt(y.taxes_paid)}</div></div>
                           <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Depreciation</div><div className="font-medium text-purple-600">{fmt(y.depreciation)}</div></div>
                           <div><div className="text-gray-500 dark:text-gray-400 mb-0.5">Data Source</div><div className="font-medium capitalize text-gray-600">{y.source || '—'}</div></div>
                         </div>
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
             <tfoot>

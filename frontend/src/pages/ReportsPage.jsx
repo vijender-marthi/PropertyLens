@@ -346,7 +346,7 @@ export default function ReportsPage() {
                     <th className="py-2 text-right pr-4 font-semibold">Original</th>
                     <th className="py-2 text-right pr-4 font-semibold">Balance</th>
                     <th className="py-2 text-right pr-4 font-semibold">Rate</th>
-                    <th className="py-2 text-right font-semibold">P&I / mo</th>
+                    <th className="py-2 text-right font-semibold">Principal & Interest / mo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

@@ -50,6 +50,13 @@ from database import get_db
 from routers.auth import get_current_user
 from routers.properties import import_tax_return
 from services.document_parser import parse_document
+from services.document_config import (
+    DOCUMENT_TYPE_CONFIG,
+    config_as_dict,
+    extraction_schema,
+    get_document_config,
+    mapped_loan_fields,
+)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -75,6 +82,19 @@ DOC_CATEGORIES = [
     "property_tax",
     "other",
 ]
+
+
+@router.get("/config")
+def get_document_configs(
+    current_user: models.User = Depends(get_current_user),
+):
+    return {
+        "categories": DOC_CATEGORIES,
+        "document_types": {
+            key: config_as_dict(key)
+            for key in DOCUMENT_TYPE_CONFIG.keys()
+        },
+    }
 
 # Extracted keys that map onto Loan columns when a document is applied
 LOAN_FIELDS = {
@@ -113,7 +133,7 @@ def _norm_address(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', (s or '').lower())
 
 
-def _apply_extracted(db, prop, data) -> dict:
+def _apply_extracted(db, prop, data, category=None) -> dict:
     """Apply extracted document fields to a property and its loan.
 
     Matches loans by account_number when available, otherwise uses the first loan.
@@ -121,7 +141,8 @@ def _apply_extracted(db, prop, data) -> dict:
     """
     applied = {}
     account_number = (data.get("account_number") or "").strip()
-    loan_updates = {k: v for k, v in data.items() if k in LOAN_FIELDS and v is not None}
+    allowed_loan_fields = mapped_loan_fields(category) or LOAN_FIELDS
+    loan_updates = {k: v for k, v in data.items() if k in allowed_loan_fields and v is not None}
     borrowers = "; ".join(
         data[k] for k in ("borrower_1", "borrower_2", "borrower_3", "borrower_4")
         if data.get(k)
@@ -285,7 +306,7 @@ async def upload_document(
                     status_code=400,
                     detail="No property address found in the document. Select a property and try again.",
                 )
-        auto_applied = _apply_extracted(db, prop, extracted)
+        auto_applied = _apply_extracted(db, prop, extracted, category)
         if auto_applied:
             db.flush()
 
@@ -295,11 +316,12 @@ async def upload_document(
     if prop and loan_account_number and statement_year:
         duplicate_doc = (
             db.query(models.Document)
-            .filter(
-                models.Document.property_id == prop.id,
-                models.Document.loan_account_number == loan_account_number,
-                models.Document.statement_year == statement_year,
-            )
+                .filter(
+                    models.Document.property_id == prop.id,
+                    models.Document.doc_category == category,
+                    models.Document.loan_account_number == loan_account_number,
+                    models.Document.statement_year == statement_year,
+                )
             .first()
         )
         if duplicate_doc:
@@ -354,6 +376,8 @@ async def upload_document(
         "category": doc.doc_category,
         "file_size": doc.file_size,
         "extracted_data": extracted,
+        "document_config": config_as_dict(doc.doc_category),
+        "extraction_schema": extraction_schema(doc.doc_category, extracted),
         "loan_account_number": doc.loan_account_number,
         "statement_year": doc.statement_year,
         "period_type": doc.period_type,
@@ -390,6 +414,8 @@ def list_all_documents(
             "doc_category": d.doc_category,
             "file_size": d.file_size,
             "extracted_data": json.loads(d.extracted_data) if d.extracted_data else {},
+            "document_config": config_as_dict(d.doc_category),
+            "extraction_schema": extraction_schema(d.doc_category, json.loads(d.extracted_data) if d.extracted_data else {}),
             "loan_account_number": d.loan_account_number,
             "statement_year": d.statement_year,
             "period_type": d.period_type,
@@ -462,6 +488,8 @@ def reparse_document(
         "id": doc.id,
         "category": category,
         "extracted_data": extracted,
+        "document_config": config_as_dict(category),
+        "extraction_schema": extraction_schema(category, extracted),
         "has_markdown": bool(doc.markdown_file),
     }
 
@@ -558,16 +586,32 @@ def apply_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     if not doc.property:
-        return {"applied": {}, "message": "Common documents (tax returns) apply to all properties automatically"}
+        data = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        return {
+            "applied": {},
+            "document_config": config_as_dict(doc.doc_category),
+            "extraction_schema": extraction_schema(doc.doc_category, data),
+            "message": "Common documents (tax returns) apply to all properties automatically",
+        }
 
     data = json.loads(doc.extracted_data) if doc.extracted_data else {}
-    applied = _apply_extracted(db, doc.property, data)
+    applied = _apply_extracted(db, doc.property, data, doc.doc_category)
 
     if not applied:
-        return {"applied": {}, "message": "No applicable fields found in this document"}
+        return {
+            "applied": {},
+            "document_config": config_as_dict(doc.doc_category),
+            "extraction_schema": extraction_schema(doc.doc_category, data),
+            "message": "No applicable fields found in this document",
+        }
 
     db.commit()
-    return {"applied": applied, "message": f"Applied {len(applied)} field(s)"}
+    return {
+        "applied": applied,
+        "document_config": config_as_dict(doc.doc_category),
+        "extraction_schema": extraction_schema(doc.doc_category, data),
+        "message": f"Applied {len(applied)} field(s)",
+    }
 
 
 @router.get("/property/{property_id}")
@@ -604,6 +648,8 @@ def list_documents(
             "doc_category": d.doc_category,
             "file_size": d.file_size,
             "extracted_data": json.loads(d.extracted_data) if d.extracted_data else {},
+            "document_config": config_as_dict(d.doc_category),
+            "extraction_schema": extraction_schema(d.doc_category, json.loads(d.extracted_data) if d.extracted_data else {}),
             "loan_account_number": d.loan_account_number,
             "statement_year": d.statement_year,
             "period_type": d.period_type,

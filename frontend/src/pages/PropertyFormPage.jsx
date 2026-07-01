@@ -35,8 +35,7 @@ const FIELDS = {
   ],
 'Depreciation': [
 { key: 'land_value', label: 'Land Value ($)', type: 'number' },
-{ key: 'land_price', label: 'Land Price ($)', type: 'number' },
-{ key: 'construction_price', label: 'Construction Price ($)', type: 'number' },
+{ key: 'construction_price', label: 'Construction Cost ($)', type: 'number' },
 { key: 'depreciation_years', label: 'Depreciation Period (yrs)', type: 'number' },
 ],
 }
@@ -49,7 +48,7 @@ const DEFAULTS = {
   property_tax: 0, insurance: 0, hoa_fee: 0,
   maintenance: 0, property_management_fee: 0,
 utilities: 0, vacancy_allowance: 0, capex_reserve: 0, other_expenses: 0,
-land_value: 0, land_price: 0, construction_price: 0, depreciation_years: 27.5,
+land_value: 0, construction_price: 0, depreciation_years: 27.5,
 }
 
 export default function PropertyFormPage() {

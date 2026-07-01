@@ -159,7 +159,7 @@ export default function UploadsPage() {
       // Property details (update anytime)
       'Market Value', 'Purchase Price', 'Monthly Rent',
       // Loan details (first/primary loan)
-      'Original Loan Amount', 'Current Balance', 'Interest Rate (%)', 'Loan Type (Fixed/ARM)', 'Monthly P&I',
+      'Original Loan Amount', 'Current Balance', 'Interest Rate (%)', 'Loan Type (Fixed/ARM)', 'Monthly Principal & Interest',
       // Annual tax-year financials (one row per year)
       'Tax Year', 'Rental Income', 'Mortgage Interest', 'Property Taxes',
       'Depreciation', 'Total Expenses', 'Net Income', 'Notes',
@@ -298,11 +298,11 @@ export default function UploadsPage() {
 
       {/* ── No properties tip ── */}
       {properties.length === 0 && (
-        <div className="rounded-xl bg-blue-50 border border-blue-100 p-4 flex items-start gap-3">
+        <div className="rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-4 flex items-start gap-3">
           <Building2 className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-800">
+          <div className="text-sm text-blue-800 dark:text-blue-200">
             <p className="font-semibold">No properties yet.</p>
-            <p className="text-blue-600 mt-0.5">Upload a mortgage statement and the property + loan are created automatically from the document address.</p>
+            <p className="text-blue-700 dark:text-blue-300 mt-0.5">Upload a mortgage statement and the property + loan are created automatically from the document address.</p>
           </div>
         </div>
       )}
@@ -313,9 +313,9 @@ export default function UploadsPage() {
           const active = mode === m.id
           return (
             <button key={m.id} onClick={() => switchMode(m.id)}
-className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none bg-white dark:bg-gray-800"
+        className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none bg-white dark:bg-gray-800 font-medium"
               style={active
-                ? { borderColor: m.accent, background: m.bg }
+                ? { borderColor: m.accent }
 : { borderColor: '#e2e8f0' }
               }
             >
@@ -331,7 +331,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                 )}
               </div>
               <p className="font-semibold text-slate-900 dark:text-white text-sm">{m.title}</p>
-              <p className="text-[11px] font-medium mt-0.5 mb-2" style={{ color: active ? m.accent : '#94a3b8' }}>{m.badge}</p>
+                    <p className={`text-[11px] font-semibold mt-0.5 mb-2 ${active ? 'text-slate-700 dark:text-gray-300' : 'text-slate-400 dark:text-gray-500'}`}>{m.badge}</p>
               <p className="text-xs text-slate-500 dark:text-gray-400 leading-relaxed">{m.desc}</p>
             </button>
           )
@@ -340,13 +340,13 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
 
       {/* ── Success state ── */}
       {result && (
-        <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-6 flex items-start gap-4">
+        <div className="rounded-xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-6 flex items-start gap-4">
           <CheckCircle2 className="w-8 h-8 text-emerald-500 shrink-0 mt-0.5" />
           <div className="flex-1">
             {result.type === 'upload' && (
               <>
-                <p className="font-semibold text-emerald-900 text-lg">Upload complete</p>
-                <p className="text-sm text-emerald-700 mt-0.5">
+                <p className="font-semibold text-emerald-900 dark:text-emerald-100 text-lg">Upload complete</p>
+                <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
                   {result.count} file{result.count > 1 ? 's' : ''} uploaded
                   {result.created > 0 && ` · ${result.created} new propert${result.created > 1 ? 'ies' : 'y'} created`}
                 </p>
@@ -354,16 +354,16 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
             )}
             {result.type === 'manual' && (
               <>
-                <p className="font-semibold text-emerald-900 text-lg">{result.year} data saved</p>
-                <p className="text-sm text-emerald-700 mt-0.5">{result.prop}</p>
+                <p className="font-semibold text-emerald-900 dark:text-emerald-100 text-lg">{result.year} data saved</p>
+                <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">{result.prop}</p>
               </>
             )}
             <div className="flex items-center gap-3 mt-4">
-              <Link to="/dashboard" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 hover:text-emerald-900">
+              <Link to="/dashboard" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 dark:hover:text-emerald-100">
                 View Dashboard <ArrowRight className="w-4 h-4" />
               </Link>
               <button onClick={() => setResult(null)}
-                className="text-sm text-emerald-600 hover:text-emerald-800 flex items-center gap-1">
+                className="text-sm text-emerald-600 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-100 flex items-center gap-1">
                 <RotateCcw className="w-3.5 h-3.5" /> Import more
               </button>
             </div>
@@ -376,8 +376,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
       <div className="rounded-xl border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
 
         {/* Panel header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100 dark:border-gray-700"
-          style={{ background: activeMethod.bg }}>
+<div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100 dark:border-gray-700 bg-slate-50 dark:bg-gray-700/50">
           <div className="rounded-lg p-2" style={{ background: activeMethod.accent }}>
             <activeMethod.Icon className="w-4 h-4 text-white" />
           </div>
@@ -396,7 +395,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 dark:text-gray-300 mb-1.5">Property</label>
                   <select
-                    className="w-full rounded-lg border border-slate-200 dark:border-gray-600 px-3 py-2 text-sm text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                    className="w-full rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
                     value={isTaxReturn ? '' : propertyId}
                     onChange={(e) => setPropertyId(e.target.value)}
                     disabled={isTaxReturn}
@@ -418,7 +417,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 dark:text-gray-300 mb-1.5">Document Type</label>
                   <select
-                    className="w-full rounded-lg border border-slate-200 dark:border-gray-600 px-3 py-2 text-sm text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     value={category} onChange={(e) => setCategory(e.target.value)}
                   >
                     {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -432,12 +431,12 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                 onDragLeave={() => setDragOver(false)}
                 className={`rounded-xl border-2 border-dashed p-12 text-center cursor-pointer transition-colors ${
-                  dragOver ? 'border-blue-400 bg-blue-50' : 'border-slate-200 dark:border-gray-600 hover:border-blue-300 hover:bg-slate-50 dark:hover:bg-gray-700/50'
+dragOver ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-gray-600 hover:border-blue-300 hover:bg-slate-50 dark:hover:bg-gray-700/50'
                 }`}
               >
                 <Upload className="w-10 h-10 text-slate-300 dark:text-gray-600 mx-auto mb-4" />
                 {uploading
-                  ? <p className="text-sm font-semibold text-blue-600 animate-pulse">Uploading…</p>
+                ? <p className="text-sm font-semibold text-blue-600 dark:text-blue-400 animate-pulse">Uploading…</p>
                   : <>
                       <p className="text-sm font-semibold text-slate-700 dark:text-gray-300">Drop files here or click to browse</p>
                       <p className="text-xs text-slate-400 dark:text-gray-500 mt-1">PDF, XLSX, XLS, CSV · Max 20 MB · Multiple files supported</p>
@@ -447,7 +446,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                   onChange={(e) => { handleUpload([...e.target.files]); e.target.value = '' }} />
               </div>
 
-              <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-100 px-4 py-3 flex items-start gap-2 text-xs text-amber-800">
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-800 px-4 py-3 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
                 <p>If a document can't be parsed automatically, try the Spreadsheet or Manual Entry options instead.</p>
               </div>
@@ -468,7 +467,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                     Open it in Excel or Google Sheets and fill in the financial figures.
                   </p>
                   <button onClick={downloadTemplate}
-                    className="inline-flex items-center gap-2 rounded-lg border-2 border-emerald-600 bg-emerald-600 text-white text-sm font-semibold px-4 py-2 hover:bg-emerald-700 transition-colors">
+                  className="inline-flex items-center gap-2 rounded-lg border-2 border-emerald-600 bg-emerald-600 text-white text-sm font-semibold px-4 py-2 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 transition-colors">
                     <Download className="w-4 h-4" /> Download Template CSV
                   </button>
                 </div>
@@ -493,7 +492,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                     ['Current Balance', 'Outstanding loan balance'],
                     ['Interest Rate (%)', 'Annual rate e.g. 6.75'],
                     ['Loan Type (Fixed/ARM)', '"Fixed" or "ARM"'],
-                    ['Monthly P&I', 'Principal + interest payment'],
+                    ['Monthly Principal & Interest', 'Principal + interest payment'],
                   ].map(([col, hint]) => (
                     <div key={col} className="px-4 py-2.5">
                       <p className="text-xs font-semibold text-slate-700 dark:text-gray-300">{col}</p>
@@ -537,12 +536,12 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                     onDragLeave={() => setDragOver(false)}
                     className={`rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
-                      dragOver ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 dark:border-gray-600 hover:border-emerald-300 hover:bg-slate-50 dark:hover:bg-gray-700/50'
+dragOver ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-gray-600 hover:border-emerald-300 hover:bg-slate-50 dark:hover:bg-gray-700/50'
                     }`}
                   >
                     <FileSpreadsheet className="w-9 h-9 text-slate-300 dark:text-gray-600 mx-auto mb-3" />
                     {uploading
-                      ? <p className="text-sm font-semibold text-emerald-600 animate-pulse">Uploading…</p>
+                ? <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-300 animate-pulse">Uploading…</p>
                       : <>
                           <p className="text-sm font-semibold text-slate-700 dark:text-gray-300">Drop your filled CSV / XLSX here</p>
                           <p className="text-xs text-slate-400 dark:text-gray-500 mt-1">CSV or XLSX · Max 20 MB</p>
@@ -564,7 +563,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
               <div>
                 <label className="block text-xs font-semibold text-slate-600 dark:text-gray-300 mb-1.5">Property <span className="text-red-500">*</span></label>
                 <select
-                  className="w-full rounded-lg border border-slate-200 dark:border-gray-600 px-3 py-2 text-sm text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
                   value={mPropId} onChange={(e) => setMPropId(e.target.value)}
                 >
                   <option value="">Select a property…</option>
@@ -622,7 +621,7 @@ className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none b
                   {[
                     { key: 'original_loan_amount', label: 'Original Loan Amount', hint: 'Amount at origination',      prefix: '$', type: 'number' },
                     { key: 'current_balance',       label: 'Current Balance',      hint: 'Outstanding loan balance',   prefix: '$', type: 'number' },
-                    { key: 'monthly_payment',        label: 'Monthly P&I',          hint: 'Principal + interest only',  prefix: '$', type: 'number' },
+                    { key: 'monthly_payment',        label: 'Monthly Principal & Interest',          hint: 'Principal + interest only',  prefix: '$', type: 'number' },
                     { key: 'interest_rate',          label: 'Interest Rate',         hint: 'Annual rate (e.g. 6.75)',    prefix: '%', type: 'number', required: true },
                   ].map(({ key, label, hint, prefix, type, required }) => (
                     <div key={key}>
@@ -800,8 +799,8 @@ function DocRow({ doc, onDelete, onApply, onReparse }) {
           <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{doc.original_filename}</p>
           <div className="flex items-center gap-2 flex-wrap mt-0.5">
             {doc.property_id
-              ? <Link to={`/properties/${doc.property_id}`} className="text-xs text-blue-600 hover:text-blue-800 hover:underline">{doc.property_address}</Link>
-              : <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-600">Common</span>
+? <Link to={`/properties/${doc.property_id}`} className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline">{doc.property_address}</Link>
+: <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300">Common</span>
             }
             <span className="text-xs text-slate-400 dark:text-gray-500">·</span>
             <span className="text-xs text-slate-500 dark:text-gray-400">{catLabel(doc.doc_category)}</span>
@@ -812,28 +811,28 @@ function DocRow({ doc, onDelete, onApply, onReparse }) {
         <div className="flex items-center gap-1 shrink-0">
           {hasData && (
             <button onClick={() => { setExpanded(!expanded); setShowMarkdown(false) }}
-              className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50 transition-colors">
+className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors">
               Data <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
             </button>
           )}
           {doc.has_markdown && (
             <button onClick={toggleMarkdown}
-              className="text-xs text-violet-500 hover:text-violet-700 px-2 py-1 rounded hover:bg-violet-50 transition-colors">
+className="text-xs text-violet-500 dark:text-violet-300 hover:text-violet-700 dark:hover:text-violet-200 px-2 py-1 rounded hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-colors">
               {showMarkdown ? 'Hide' : 'MD'}
             </button>
           )}
           <button onClick={onReparse} title="Re-parse with latest parser"
-            className="p-1.5 rounded text-slate-400 dark:text-gray-500 hover:text-slate-700 dark:text-gray-300 hover:bg-slate-100 transition-colors">
+className="p-1.5 rounded text-slate-400 dark:text-gray-500 hover:text-slate-700 dark:hover:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-700 transition-colors">
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
           {applicable && (
             <button onClick={onApply} title="Apply extracted data to property"
-              className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-800 px-2 py-1 rounded hover:bg-emerald-50 transition-colors">
+className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-100 px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors">
               <Wand2 className="w-3.5 h-3.5" /> Apply
             </button>
           )}
           <button onClick={onDelete}
-            className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 hover:bg-red-50 transition-colors">
+className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
