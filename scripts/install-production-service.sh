@@ -98,3 +98,17 @@ systemctl restart "$SERVICE_NAME"
 echo ""
 echo "PropertyLens service installed and started."
 systemctl status "$SERVICE_NAME" --no-pager
+
+echo ""
+echo "Waiting for PropertyLens health check..."
+for attempt in $(seq 1 30); do
+  if curl -fsS "http://${PROPERTYLENS_HOST}:${PROPERTYLENS_PORT}/api/health" >/dev/null; then
+    echo "PropertyLens is healthy on http://${PROPERTYLENS_HOST}:${PROPERTYLENS_PORT}"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "PropertyLens did not become healthy on http://${PROPERTYLENS_HOST}:${PROPERTYLENS_PORT}" >&2
+journalctl -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+exit 1

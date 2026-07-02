@@ -35,4 +35,13 @@ jobs:
               scripts/install-production-service.sh
 
             sudo systemctl reload nginx
-            curl -f http://127.0.0.1:8100/api/health
+            for attempt in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8100/api/health >/dev/null; then
+                echo "PropertyLens health check passed"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            sudo journalctl -u propertylens -n 80 --no-pager
+            exit 1
