@@ -8,6 +8,7 @@ sessions) share the same in-memory database.
 """
 import sys
 import os
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -122,6 +123,8 @@ def prop(db, user) -> models.Property:
     """A basic rental property with one loan — no documents, no tax entries."""
     p = models.Property(
         owner_id=user.id,
+        property_uid=str(uuid.uuid4()),
+        name="Test Property",
         address="123 Test St",
         city="Testville",
         state="TX",
@@ -132,6 +135,11 @@ def prop(db, user) -> models.Property:
         occupancy_rate=100.0,
         property_tax=6_000.0,   # annual
         insurance=1_200.0,      # annual
+        hoa_history="[]",
+        hoa_special_assessment=0.0,
+        solar_ownership="None",
+        solar_monthly_payment=0.0,
+        solar_purchase_price=0.0,
         land_value=80_000.0,
         depreciation_years=27.5,
         usage_type="Rental",

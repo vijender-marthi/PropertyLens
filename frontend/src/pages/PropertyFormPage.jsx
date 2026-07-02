@@ -8,6 +8,7 @@ const PROPERTY_TYPES = ['Single Family', 'Multi Family', 'Condo', 'Townhouse', '
 
 const FIELDS = {
   'Basic Info': [
+    { key: 'name', label: 'Property Name', required: true, colSpan: 2 },
     { key: 'address', label: 'Street Address', required: true, colSpan: 2 },
     { key: 'city', label: 'City' },
     { key: 'state', label: 'State' },
@@ -26,12 +27,18 @@ const FIELDS = {
     { key: 'property_tax', label: 'Annual Property Tax ($)', type: 'number' },
     { key: 'insurance', label: 'Annual Insurance ($)', type: 'number' },
     { key: 'hoa_fee', label: 'HOA Fee/mo ($)', type: 'number' },
+    { key: 'hoa_special_assessment', label: 'HOA Special Assessment ($)', type: 'number' },
     { key: 'maintenance', label: 'Repairs & Maintenance/mo ($)', type: 'number' },
     { key: 'property_management_fee', label: 'Property Mgmt/mo ($)', type: 'number' },
     { key: 'utilities', label: 'Utilities/mo ($)', type: 'number' },
     { key: 'vacancy_allowance', label: 'Vacancy Allowance/mo ($)', type: 'number' },
     { key: 'capex_reserve', label: 'CapEx Reserve/mo ($)', type: 'number' },
     { key: 'other_expenses', label: 'Other Expenses/mo ($)', type: 'number' },
+  ],
+  'Solar': [
+    { key: 'solar_ownership', label: 'Solar Ownership', type: 'select', options: ['None', 'Leased', 'Purchased', 'Included in Purchase'] },
+    { key: 'solar_monthly_payment', label: 'Solar Lease/mo ($)', type: 'number' },
+    { key: 'solar_purchase_price', label: 'Solar Purchase Price ($)', type: 'number' },
   ],
 'Depreciation': [
 { key: 'land_value', label: 'Land Value ($)', type: 'number' },
@@ -41,15 +48,35 @@ const FIELDS = {
 }
 
 const DEFAULTS = {
-  address: '', city: '', state: '', zip_code: '',
+  name: '', address: '', city: '', state: '', zip_code: '',
   property_type: 'Single Family', usage_type: 'Rental', purchase_date: '',
   purchase_price: 0, market_value: 0,
   monthly_rent: 0, occupancy_rate: 100,
-  property_tax: 0, insurance: 0, hoa_fee: 0,
+  property_tax: 0, insurance: 0, hoa_fee: 0, hoa_history: '[]', hoa_special_assessment: 0,
+  solar_ownership: 'None', solar_monthly_payment: 0, solar_purchase_price: 0,
   maintenance: 0, property_management_fee: 0,
 utilities: 0, vacancy_allowance: 0, capex_reserve: 0, other_expenses: 0,
-land_value: 0, construction_price: 0, depreciation_years: 27.5,
+  land_value: 0, construction_price: 0, depreciation_years: 27.5,
 }
+
+const parseHoaHistory = (value) => {
+  if (Array.isArray(value)) return value
+  try {
+    const rows = JSON.parse(value || '[]')
+    return Array.isArray(rows) ? rows : []
+  } catch {
+    return []
+  }
+}
+
+const serializeHoaHistory = (rows) => JSON.stringify(
+  rows
+    .map((r) => ({
+      year: parseInt(r.year, 10),
+      monthly_fee: parseFloat(r.monthly_fee) || 0,
+    }))
+    .filter((r) => r.year && r.monthly_fee >= 0)
+)
 
 export default function PropertyFormPage() {
   const { id } = useParams()
@@ -70,7 +97,9 @@ export default function PropertyFormPage() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
-    const payload = form.usage_type === 'Primary' ? { ...form, monthly_rent: 0 } : form
+  const payload = form.usage_type === 'Primary'
+    ? { ...form, monthly_rent: 0, hoa_history: serializeHoaHistory(parseHoaHistory(form.hoa_history)) }
+    : { ...form, hoa_history: serializeHoaHistory(parseHoaHistory(form.hoa_history)) }
     try {
       if (isEdit) {
         await propAPI.update(id, payload)
@@ -89,6 +118,8 @@ export default function PropertyFormPage() {
   }
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }))
+  const hoaRows = parseHoaHistory(form.hoa_history)
+  const setHoaRows = (rows) => set('hoa_history', JSON.stringify(rows))
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -131,8 +162,58 @@ export default function PropertyFormPage() {
                 </div>
               ))}
             </div>
+            </div>
+          ))}
+
+        <div className="card">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="font-semibold text-gray-900 dark:text-white">HOA History</h2>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => setHoaRows([...hoaRows, { year: new Date().getFullYear(), monthly_fee: form.hoa_fee || 0 }])}
+            >
+              Add Year
+            </button>
           </div>
-        ))}
+          <div className="space-y-3">
+            {hoaRows.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500">No HOA history yet.</p>
+            ) : hoaRows.map((row, idx) => (
+              <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-3">
+                <input
+                  type="number"
+                  className="input"
+                  placeholder="Year"
+                  value={row.year || ''}
+                  onChange={(e) => {
+                    const next = [...hoaRows]
+                    next[idx] = { ...next[idx], year: e.target.value }
+                    setHoaRows(next)
+                  }}
+                />
+                <input
+                  type="number"
+                  className="input"
+                  placeholder="Monthly HOA"
+                  value={row.monthly_fee || ''}
+                  onChange={(e) => {
+                    const next = [...hoaRows]
+                    next[idx] = { ...next[idx], monthly_fee: e.target.value }
+                    setHoaRows(next)
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary px-3"
+                  onClick={() => setHoaRows(hoaRows.filter((_, i) => i !== idx))}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="flex gap-3">
           <button type="submit" className="btn-primary px-8" disabled={loading}>

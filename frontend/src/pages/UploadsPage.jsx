@@ -7,6 +7,7 @@ import {
   ArrowRight, AlertCircle, X, RotateCcw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 
 const CATEGORIES = [
   { value: 'auto',               label: 'Auto-detect' },
@@ -157,7 +158,7 @@ export default function UploadsPage() {
   const downloadTemplate = () => {
     const headers = [
       // Property identification
-      'Property Address', 'City', 'State', 'Zip Code',
+      'Property Name', 'Property ID', 'City', 'State', 'Zip Code',
       // Property details (update anytime)
       'Market Value', 'Purchase Price', 'Monthly Rent',
       // Loan details (first/primary loan)
@@ -173,7 +174,7 @@ export default function UploadsPage() {
         const loan = p.loans?.[0]
         for (const yr of years) {
           rows.push([
-            p.address.split(',')[0], p.city || '', p.state || '', p.zip_code || '',
+            propertyLabel(p), p.property_uid || '', p.city || '', p.state || '', p.zip_code || '',
             p.market_value   || '', p.purchase_price || '', p.monthly_rent || '',
             loan?.original_loan_amount || '', loan?.current_balance || '',
             loan?.interest_rate || '', loan?.loan_type || 'Fixed', loan?.monthly_payment || '',
@@ -258,7 +259,7 @@ export default function UploadsPage() {
       await propAPI.upsertYearEntry(mPropId, payload)
       toast.success(`${mYear} data saved successfully`)
       setMFields({ rents_received:'', mortgage_interest:'', property_taxes:'', depreciation:'', total_expenses:'', net_income:'' })
-      setResult({ type: 'manual', year: mYear, prop: properties.find(p => String(p.id) === String(mPropId))?.address || '' })
+      setResult({ type: 'manual', year: mYear, prop: propertyLabel(properties.find(p => String(p.id) === String(mPropId))) })
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Save failed')
     } finally {
@@ -403,10 +404,10 @@ export default function UploadsPage() {
                     disabled={isTaxReturn}
                   >
                     {isTaxReturn
-                      ? <option value="">Common — linked via Schedule E addresses</option>
+                      ? <option value="">Common — linked via Schedule E</option>
                       : <>
                           <option value="">Auto-detect from document</option>
-                          {properties.map((p) => <option key={p.id} value={p.id}>{p.address}</option>)}
+                      {properties.map((p) => <option key={p.id} value={p.id}>{propertyLabel(p)} · ID {shortPropertyUid(p)}</option>)}
                         </>
                     }
                   </select>
@@ -485,7 +486,8 @@ dragOver ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-0 divide-y divide-slate-100 border-b border-slate-200 dark:border-gray-600">
                   {[
-                    ['Property Address', 'Street address (must match existing)'],
+                    ['Property Name', 'Friendly name shown in the app'],
+                    ['Property ID', 'Unique ID for matching'],
                     ['City / State / Zip', 'Location fields'],
                     ['Market Value', 'Current estimated value'],
                     ['Purchase Price', 'Original acquisition price'],
@@ -569,7 +571,7 @@ dragOver ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-s
                   value={mPropId} onChange={(e) => setMPropId(e.target.value)}
                 >
                   <option value="">Select a property…</option>
-                  {properties.map((p) => <option key={p.id} value={p.id}>{p.address}</option>)}
+                  {properties.map((p) => <option key={p.id} value={p.id}>{propertyLabel(p)} · ID {shortPropertyUid(p)}</option>)}
                 </select>
               </div>
 
@@ -710,7 +712,7 @@ dragOver ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-s
                     {mYear} data for{' '}
                     <span className="font-medium text-slate-600 dark:text-gray-300">
                       {mPropId && properties.find(p => String(p.id) === String(mPropId))
-                        ? properties.find(p => String(p.id) === String(mPropId)).address.split(',')[0]
+                        ? propertyLabel(properties.find(p => String(p.id) === String(mPropId)))
                         : 'selected property'}
                     </span>
                     . Existing entry will be updated.
@@ -752,7 +754,7 @@ dragOver ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-s
         ) : (
           <div className="divide-y divide-slate-50">
             {docs.map((doc) => (
-              <DocRow key={doc.id} doc={doc}
+              <DocRow key={doc.id} doc={doc} properties={properties}
                 onDelete={() => handleDelete(doc.id)}
                 onApply={() => handleApply(doc.id)}
                 onReparse={() => handleReparse(doc.id)} />
@@ -765,12 +767,13 @@ dragOver ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-s
 }
 
 // ── Doc row ────────────────────────────────────────────────────────────────────
-function DocRow({ doc, onDelete, onApply, onReparse }) {
+function DocRow({ doc, properties = [], onDelete, onApply, onReparse }) {
   const [expanded, setExpanded]       = useState(false)
   const [showMarkdown, setShowMarkdown] = useState(false)
   const [markdown, setMarkdown]       = useState(null)
 
   const data       = doc.extracted_data || {}
+  const linkedProperty = properties.find((p) => String(p.id) === String(doc.property_id))
   const hasData    = Object.keys(data).length > 0 && !data.parse_error
   const applicable = hasData && !data.raw_text_preview
 
@@ -801,7 +804,7 @@ function DocRow({ doc, onDelete, onApply, onReparse }) {
           <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{doc.original_filename}</p>
           <div className="flex items-center gap-2 flex-wrap mt-0.5">
             {doc.property_id
-? <Link to={`/properties/${doc.property_id}`} className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline">{doc.property_address}</Link>
+? <Link to={`/properties/${doc.property_id}`} className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline">{propertyLabel(linkedProperty, `ID ${doc.property_id}`)}</Link>
 : <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300">Common</span>
             }
             <span className="text-xs text-slate-400 dark:text-gray-500">·</span>

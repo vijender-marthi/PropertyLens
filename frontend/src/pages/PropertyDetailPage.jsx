@@ -17,6 +17,7 @@ import DocumentUpload from '../components/DocumentUpload'
 import LoanCard from '../components/LoanCard'
 import LoanModal from '../components/LoanModal'
 import AmortizationModal from '../components/AmortizationModal'
+import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 
 const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0)
 const fmtPct = (n) => `${(n || 0).toFixed(2)}%`
@@ -33,6 +34,7 @@ export default function PropertyDetailPage() {
   const [showAmortization, setShowAmortization] = useState(null)
   const [refreshingValue, setRefreshingValue] = useState(false)
   const [activeTab, setActiveTab] = useState('summary')
+  const [showAddress, setShowAddress] = useState(false)
 
   const loadData = async () => {
     try {
@@ -62,7 +64,8 @@ export default function PropertyDetailPage() {
       ['PropertyLens — Property Export'],
       [],
       ['PROPERTY DETAILS'],
-      ['Address',           prop.address],
+      ['Property Name',     propertyLabel(prop)],
+      ['Property ID',       prop.property_uid],
       ['City',              prop.city],
       ['State',             prop.state],
       ['ZIP',               prop.zip_code],
@@ -83,6 +86,10 @@ export default function PropertyDetailPage() {
       ['Property Tax (annual)', prop.property_tax],
       ['Insurance (annual)', prop.insurance],
       ['HOA Fee',           prop.hoa_fee],
+      ['HOA Special Assessment', prop.hoa_special_assessment],
+      ['Solar Ownership',   prop.solar_ownership],
+      ['Solar Lease/mo',    prop.solar_monthly_payment],
+      ['Solar Purchase Price', prop.solar_purchase_price],
       ['Maintenance',       prop.maintenance],
       ['Property Mgmt Fee', prop.property_management_fee],
       ['Utilities',         prop.utilities],
@@ -120,7 +127,7 @@ export default function PropertyDetailPage() {
       utils.book_append_sheet(wb, ws2, 'Loans')
     }
 
-    const addr = prop.address.replace(/[^a-z0-9]/gi, '_').slice(0, 20)
+    const addr = propertyLabel(prop).replace(/[^a-z0-9]/gi, '_').slice(0, 20)
     writeFile(wb, `propertylens_${addr}.xlsx`)
   }
 
@@ -159,13 +166,25 @@ export default function PropertyDetailPage() {
           <button onClick={() => navigate('/properties')} className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm mb-2">
             <ChevronLeft className="w-4 h-4" /> Properties
           </button>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{prop.address}</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{propertyLabel(prop)}</h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-0.5">
-            {prop.city}, {prop.state} {prop.zip_code} · {prop.property_type} ·{' '}
+            ID {shortPropertyUid(prop)} · {prop.city}, {prop.state} · {prop.property_type} ·{' '}
             <span className={prop.usage_type === 'Primary' ? 'badge-yellow' : 'badge-green'}>
               {prop.usage_type === 'Primary' ? 'Primary Home' : 'Rental'}
             </span>
           </p>
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setShowAddress((v) => !v)}
+              className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              {showAddress ? 'Hide address' : 'Show address'}
+            </button>
+            {showAddress ? (
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{prop.address}</p>
+            ) : null}
+          </div>
         </div>
         <div className="flex gap-2 shrink-0 flex-wrap">
           <button onClick={exportPropertyXLS} className="btn-secondary flex items-center gap-1.5 text-sm">
@@ -353,12 +372,21 @@ const DETAIL_SECTIONS = [
       { label: 'Annual Property Tax',        key: 'property_tax',            type: 'number', dollar: true },
       { label: 'Annual Insurance',           key: 'insurance',               type: 'number', dollar: true },
       { label: 'HOA Fee / mo',               key: 'hoa_fee',                 type: 'number', dollar: true },
+      { label: 'HOA Special Assessment',     key: 'hoa_special_assessment',  type: 'number', dollar: true },
       { label: 'Repairs & Maintenance / mo', key: 'maintenance',             type: 'number', dollar: true },
       { label: 'Property Mgmt / mo',         key: 'property_management_fee', type: 'number', dollar: true },
       { label: 'Utilities / mo',             key: 'utilities',               type: 'number', dollar: true },
       { label: 'Vacancy Allowance / mo',     key: 'vacancy_allowance',       type: 'number', dollar: true },
       { label: 'CapEx Reserve / mo',         key: 'capex_reserve',           type: 'number', dollar: true },
       { label: 'Other Expenses / mo',        key: 'other_expenses',          type: 'number', dollar: true },
+    ],
+  },
+  {
+    title: 'Solar',
+    rows: [
+      { label: 'Solar Ownership', key: 'solar_ownership', type: 'select', options: ['None', 'Leased', 'Purchased', 'Included in Purchase'] },
+      { label: 'Solar Lease / mo', key: 'solar_monthly_payment', type: 'number', dollar: true },
+      { label: 'Solar Purchase Price', key: 'solar_purchase_price', type: 'number', dollar: true },
     ],
   },
   {
@@ -944,7 +972,7 @@ function TaxesTab({ propId, property }) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `tax_return_${property?.address?.replace(/\s+/g, '_') || propId}.csv`
+    a.download = `tax_return_${propertyLabel(property).replace(/\s+/g, '_') || propId}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -1085,7 +1113,9 @@ function TaxComparison({ comparison, currentPropId }) {
                 {yr.entries.map((e) => (
                   <tr key={e.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 ${e.property_id === currentPropId ? 'bg-blue-50/50' : ''}`}>
                     <td className="py-2 pr-2">
-                      <span className="font-medium text-gray-900 dark:text-white">{e.address || '—'}</span>
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      {e.property_name || (e.property_uid ? `ID ${e.property_uid.slice(0, 8).toUpperCase()}` : 'Unlinked property')}
+                    </span>
                       {e.property_kind === 'primary' && (
                         <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600">primary</span>
                       )}

@@ -1,4 +1,5 @@
 import json
+import uuid
 import re
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +16,12 @@ from services.loan_calculator import (
 from services.property_valuation import get_property_value
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
+
+PROPERTY_CODE_NAMES = [
+    "Palermo", "Electra", "Syrah", "Valencia", "Meridian", "Solara",
+    "Cypress", "Juniper", "Sierra", "Atlas", "Nova", "Laurel",
+    "Haven", "Orion", "Saffron", "Monaco",
+]
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -54,6 +61,7 @@ class LoanOut(LoanBase):
 
 
 class PropertyBase(BaseModel):
+    name: Optional[str] = None
     address: str
     city: Optional[str] = None
     state: Optional[str] = None
@@ -67,6 +75,11 @@ class PropertyBase(BaseModel):
     property_tax: float = 0.0
     insurance: float = 0.0
     hoa_fee: float = 0.0
+    hoa_history: str = "[]"
+    hoa_special_assessment: float = 0.0
+    solar_ownership: str = "None"
+    solar_monthly_payment: float = 0.0
+    solar_purchase_price: float = 0.0
     maintenance: float = 0.0
     property_management_fee: float = 0.0
     utilities: float = 0.0
@@ -86,6 +99,7 @@ class PropertyCreate(PropertyBase):
 
 class PropertyOut(PropertyBase):
     id: int
+    property_uid: str
     owner_id: int
     loans: List[LoanOut] = []
     market_value_updated: Optional[str] = None
@@ -96,6 +110,8 @@ class PropertyOut(PropertyBase):
 
 class PropertySummary(BaseModel):
     id: int
+    property_uid: str
+    name: str
     address: str
     city: Optional[str]
     state: Optional[str]
@@ -132,6 +148,8 @@ class RentalPeriodOut(RentalPeriodBase):
 class TaxEntryOut(BaseModel):
     id: int
     property_id: Optional[int]
+    property_uid: Optional[str] = None
+    property_name: Optional[str] = None
     tax_year: int
     address: Optional[str]
     property_kind: str
@@ -192,8 +210,13 @@ def compute_property_metrics(prop: models.Property) -> dict:
     insurance_monthly = (prop.insurance or 0) / 12
     escrow_expense = max(monthly_escrow - property_tax_monthly - insurance_monthly, 0)
     tax_ins_monthly = property_tax_monthly + insurance_monthly + escrow_expense
+    solar_monthly = (
+        getattr(prop, "solar_monthly_payment", 0) or 0
+        if (getattr(prop, "solar_ownership", "None") or "").lower() == "leased"
+        else 0
+    )
     other_operating = (
-        prop.hoa_fee + prop.maintenance +
+        prop.hoa_fee + solar_monthly + prop.maintenance +
         prop.property_management_fee + prop.utilities +
         prop.vacancy_allowance + prop.capex_reserve +
         prop.other_expenses
@@ -217,6 +240,7 @@ def compute_property_metrics(prop: models.Property) -> dict:
         "insurance_monthly":     round(insurance_monthly, 2),
         "escrow_expense":        round(escrow_expense, 2),
         "tax_ins_monthly":       round(tax_ins_monthly, 2),
+        "solar_monthly":         round(solar_monthly, 2),
         "monthly_expenses":      round(monthly_expenses, 2),
         "effective_rent":        round(effective_rent, 2),
         "monthly_cash_flow":     round(monthly_cash_flow, 2),
@@ -228,6 +252,14 @@ def compute_property_metrics(prop: models.Property) -> dict:
         "cap_rate":  round(annual_noi / prop.market_value * 100, 2) if prop.market_value else 0,
         "gross_yield": round((effective_rent * 12) / prop.market_value * 100, 2) if prop.market_value else 0,
     }
+
+
+def _default_property_name(address: str, prop_id: Optional[int] = None) -> str:
+    if prop_id:
+        base = PROPERTY_CODE_NAMES[(prop_id - 1) % len(PROPERTY_CODE_NAMES)]
+        cycle = (prop_id - 1) // len(PROPERTY_CODE_NAMES)
+        return base if cycle == 0 else f"{base} {cycle + 1}"
+    return "Property"
 
 
 # ── Shared-access helper ──────────────────────────────────────────────────────
@@ -274,6 +306,8 @@ def list_properties(
         m = compute_property_metrics(p)
         return PropertySummary(
             id=p.id,
+            property_uid=p.property_uid,
+            name=p.name or _default_property_name(p.address, p.id),
             address=p.address,
             city=p.city,
             state=p.state,
@@ -301,12 +335,17 @@ def create_property(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    data = prop_in.model_dump(exclude={"loans"})
+    data["property_uid"] = str(uuid.uuid4())
+    data["name"] = data.get("name") or None
     prop = models.Property(
         owner_id=current_user.id,
-        **prop_in.model_dump(exclude={"loans"})
+        **data
     )
     db.add(prop)
     db.flush()
+    if not prop.name:
+        prop.name = _default_property_name(prop.address, prop.id)
 
     for loan_data in (prop_in.loans or []):
         loan = models.Loan(property_id=prop.id, **loan_data.model_dump())
@@ -339,7 +378,9 @@ def update_property(
     ).first()
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
-    for k, v in prop_in.model_dump().items():
+    data = prop_in.model_dump()
+    data["name"] = data.get("name") or _default_property_name(data.get("address"), prop.id)
+    for k, v in data.items():
         setattr(prop, k, v)
     db.commit()
     db.refresh(prop)
@@ -1938,15 +1979,23 @@ def tax_return_comparison(
         models.TaxReturnEntry.owner_id.in_(owner_ids)
     ).order_by(models.TaxReturnEntry.tax_year.desc()).all()
 
+    prop_lookup = {
+        p.id: p for p in db.query(models.Property).filter(
+            models.Property.owner_id.in_(owner_ids)
+        ).all()
+    }
     years = {}
     for e in entries:
-        years.setdefault(e.tax_year, []).append(TaxEntryOut.model_validate(e))
+        row = TaxEntryOut.model_validate(e).model_dump()
+        prop = prop_lookup.get(e.property_id)
+        if prop:
+            row["property_uid"] = prop.property_uid
+            row["property_name"] = prop.name or _default_property_name(prop.address, prop.id)
+        years.setdefault(e.tax_year, []).append(row)
     result = []
     for year in sorted(years, reverse=True):
         rows = years[year]
-        totals = {
-            f: round(sum(getattr(r, f) for r in rows), 2) for f in TAX_ENTRY_FIELDS
-        }
+        totals = {f: round(sum(r.get(f) or 0 for r in rows), 2) for f in TAX_ENTRY_FIELDS}
         result.append({"tax_year": year, "entries": rows, "totals": totals})
     return {"years": result}
 
@@ -2193,12 +2242,20 @@ def dashboard_summary(
         prop_principal_paid = sum(l.original_amount - (l.current_balance or 0) for l in _orig_loans)
         properties_detail.append({
             "id": p.id,
+            "property_uid": p.property_uid,
+            "name": p.name or _default_property_name(p.address, p.id),
             "address": p.address,
             "city": p.city,
             "state": p.state,
             "property_type": p.property_type,
             "usage_type": p.usage_type or "Rental",
             **m,
+            "hoa_fee": p.hoa_fee or 0,
+            "hoa_history": p.hoa_history or "[]",
+            "hoa_special_assessment": p.hoa_special_assessment or 0,
+            "solar_ownership": p.solar_ownership or "None",
+            "solar_monthly_payment": p.solar_monthly_payment or 0,
+            "solar_purchase_price": p.solar_purchase_price or 0,
             "monthly_rent": p.monthly_rent,
             "market_value": p.market_value,
             "purchase_price": p.purchase_price or 0,

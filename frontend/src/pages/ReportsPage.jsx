@@ -9,6 +9,7 @@ import {
 import { propAPI, docAPI } from '../services/api'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
+import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 
 const fmt = (n) => {
   if (n == null) return '—'
@@ -123,7 +124,8 @@ export default function ReportsPage() {
     if (!data) return
     const props = data.properties || []
     const rows = props.map(p => ({
-      'Address':         p.address,
+      'Property Name':   propertyLabel(p),
+      'Property ID':     p.property_uid || '',
       'Type':            isPrimary(p) ? 'Primary Residence' : 'Rental',
       'Market Value':    p.market_value || 0,
       'Purchase Price':  p.purchase_price || 0,
@@ -134,6 +136,11 @@ export default function ReportsPage() {
       'Monthly Rent':    p.effective_rent || 0,
       'Monthly Mortgage':p.monthly_mortgage || 0,
       'Monthly Cash Flow':p.monthly_cash_flow || 0,
+      'HOA/mo':          p.hoa_fee || 0,
+      'HOA Assessment':  p.hoa_special_assessment || 0,
+      'Solar Ownership': p.solar_ownership || 'None',
+      'Solar Lease/mo':  p.solar_monthly_payment || 0,
+      'Solar Purchase':  p.solar_purchase_price || 0,
       'Annual NOI':      p.annual_noi || 0,
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
@@ -234,7 +241,7 @@ export default function ReportsPage() {
               <p className="text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider mb-2">Primary Residence(s) — Excluded from Rental Metrics</p>
               {primaryProps.map(p => (
               <div key={p.id} className="flex items-center justify-between text-xs text-amber-950 dark:text-amber-100 py-1">
-                  <span className="font-medium">{p.address}</span>
+                  <span className="font-medium">{propertyLabel(p)}</span>
                   <span>Equity {fmt(p.equity||0)} · LTV {p.market_value>0?fmtPct((p.total_loan_balance||0)/p.market_value*100):'—'} · Monthly cost {fmt(p.monthly_mortgage||0)}</span>
                 </div>
               ))}
@@ -263,7 +270,7 @@ export default function ReportsPage() {
                   return (
                     <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-gray-700/50">
                       <td className="py-2.5 pr-4">
-                        <p className="font-medium text-slate-800 dark:text-gray-200">{p.address.split(',')[0]}</p>
+                        <p className="font-medium text-slate-800 dark:text-gray-200">{propertyLabel(p)}</p>
                         <p className="text-slate-400 dark:text-gray-500">{p.city}, {p.state}</p>
                       </td>
                       <td className="py-2.5 pr-4 text-right text-slate-700 dark:text-gray-300 font-medium">{fmt(p.market_value)}</td>
@@ -352,7 +359,7 @@ export default function ReportsPage() {
                 <tbody className="divide-y divide-slate-100">
                   {rentalProps.flatMap(p => (p.loans||[]).map(l => ({ ...l, prop: p }))).map((l, i) => (
                     <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-700/50">
-                      <td className="py-2 pr-4 font-medium text-slate-700 dark:text-gray-300">{l.prop.address.split(',')[0]}</td>
+                      <td className="py-2 pr-4 font-medium text-slate-700 dark:text-gray-300">{propertyLabel(l.prop)}</td>
                       <td className="py-2 pr-4 text-center">
                         <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold"
                           style={{ background:(l.loan_type||'Fixed').toUpperCase()==='ARM'?'#fff7ed':'#f0fdf4', color:(l.loan_type||'Fixed').toUpperCase()==='ARM'?'#c2410c':'#15803d' }}>
@@ -402,7 +409,7 @@ export default function ReportsPage() {
               className="text-xs border border-slate-200 dark:border-gray-600 rounded-lg px-3 py-2 text-slate-700 dark:text-gray-300 bg-white dark:bg-gray-800 shadow-sm">
               <option value="all">Portfolio (no property)</option>
               {(data.properties||[]).map(p => (
-                <option key={p.id} value={p.id}>{p.address.split(',')[0]}{isPrimary(p) ? ' (Primary)' : ''}</option>
+                <option key={p.id} value={p.id}>{propertyLabel(p)}{isPrimary(p) ? ' (Primary)' : ''}</option>
               ))}
             </select>
             <button

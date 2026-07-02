@@ -45,6 +45,8 @@ class Property(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     # Basic info
+    property_uid = Column(String, unique=True, index=True)
+    name = Column(String)
     address = Column(String, nullable=False)
     city = Column(String)
     state = Column(String)
@@ -62,6 +64,11 @@ class Property(Base):
     property_tax = Column(Float, default=0.0)
     insurance = Column(Float, default=0.0)
     hoa_fee = Column(Float, default=0.0)
+    hoa_history = Column(Text, default="[]")  # JSON: [{year, monthly_fee}]
+    hoa_special_assessment = Column(Float, default=0.0)
+    solar_ownership = Column(String, default="None")  # None | Leased | Purchased | Included in Purchase
+    solar_monthly_payment = Column(Float, default=0.0)
+    solar_purchase_price = Column(Float, default=0.0)
     maintenance = Column(Float, default=0.0)
     property_management_fee = Column(Float, default=0.0)
     utilities = Column(Float, default=0.0)

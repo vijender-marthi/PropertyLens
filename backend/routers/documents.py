@@ -67,6 +67,14 @@ class BatchDeleteRequest(BaseModel):
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+
+def _discard_uploaded_source(path: Path) -> None:
+    """Remove the original uploaded file after extracting durable data."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".csv"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
@@ -82,6 +90,18 @@ DOC_CATEGORIES = [
     "property_tax",
     "other",
 ]
+
+PROPERTY_CODE_NAMES = [
+    "Palermo", "Electra", "Syrah", "Valencia", "Meridian", "Solara",
+    "Cypress", "Juniper", "Sierra", "Atlas", "Nova", "Laurel",
+    "Haven", "Orion", "Saffron", "Monaco",
+]
+
+
+def _default_property_name(prop_id: int) -> str:
+    base = PROPERTY_CODE_NAMES[(prop_id - 1) % len(PROPERTY_CODE_NAMES)]
+    cycle = (prop_id - 1) // len(PROPERTY_CODE_NAMES)
+    return base if cycle == 0 else f"{base} {cycle + 1}"
 
 
 @router.get("/config")
@@ -233,6 +253,8 @@ def _find_or_create_property(db, user, extracted):
 
     prop = models.Property(
         owner_id=user.id,
+        property_uid=str(uuid.uuid4()),
+        name=None,
         address=addr,
         city=extracted.get("property_city"),
         state=extracted.get("property_state"),
@@ -241,6 +263,7 @@ def _find_or_create_property(db, user, extracted):
     )
     db.add(prop)
     db.flush()
+    prop.name = prop.name or _default_property_name(prop.id)
     return prop, True
 
 
@@ -276,7 +299,7 @@ async def upload_document(
         category = "other" if category == "auto" else category
         extracted = {"parse_error": str(e)}
         if category == "tax_return":
-            os.remove(save_path)
+            _discard_uploaded_source(save_path)
             raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
 
     markdown_name = None
@@ -302,7 +325,7 @@ async def upload_document(
         else:
             prop, property_created = _find_or_create_property(db, current_user, extracted)
             if prop is None:
-                os.remove(save_path)
+                _discard_uploaded_source(save_path)
                 if markdown_name:
                     (UPLOAD_DIR / markdown_name).unlink(missing_ok=True)
                 raise HTTPException(
@@ -328,7 +351,7 @@ async def upload_document(
             .first()
         )
         if duplicate_doc:
-            os.remove(save_path)
+            _discard_uploaded_source(save_path)
             if markdown_name:
                 (UPLOAD_DIR / markdown_name).unlink(missing_ok=True)
             raise HTTPException(
@@ -375,6 +398,8 @@ async def upload_document(
             tax_entries_imported = 0
             tax_import_error = str(e)
 
+    _discard_uploaded_source(save_path)
+
     return {
         "id": doc.id,
         "original_filename": doc.original_filename,
@@ -394,6 +419,7 @@ async def upload_document(
         "property_created": property_created,
         "auto_applied": auto_applied,
         "has_markdown": bool(markdown_name),
+        "source_file_retained": False,
         "tax_entries_imported": tax_entries_imported,
         "tax_import_error": tax_import_error,
     }
@@ -467,7 +493,10 @@ def reparse_document(
         raise HTTPException(status_code=404, detail="Document not found")
     path = UPLOAD_DIR / doc.filename
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Stored file missing")
+        raise HTTPException(
+            status_code=410,
+            detail="Original uploaded file was discarded after parsing. Upload the document again to reparse it.",
+        )
 
     try:
         category, extracted, markdown = parse_document(str(path), "auto")
@@ -527,7 +556,11 @@ def reprocess_all_documents(
     for doc in docs:
         path = UPLOAD_DIR / doc.filename
         if not path.exists():
-            errors.append({"id": doc.id, "file": doc.original_filename, "error": "stored file missing"})
+            errors.append({
+                "id": doc.id,
+                "file": doc.original_filename,
+                "error": "original uploaded file discarded after parsing",
+            })
             continue
         try:
             category, extracted, markdown = parse_document(str(path), "auto")

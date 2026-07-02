@@ -10,6 +10,7 @@ import { Building2, DollarSign, TrendingUp, ArrowUpRight, Shield, Landmark, Chev
          AlertCircle, ArrowRight, CheckCircle, FileText, Lightbulb } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useTheme } from '../hooks/useTheme'
+import { propertyLabel } from '../utils/propertyDisplay'
 
 const fmt = (n) => {
   const value = n || 0
@@ -218,7 +219,7 @@ export default function DashboardPage() {
 
   // ── Chart data (rental properties only) ──────────────────────────────────
   const cashFlowData = rentalProps.map((p) => ({
-    name: truncate(p.address.split(',')[0]),
+    name: truncate(propertyLabel(p)),
     rent: Math.round(p.effective_rent),
     mortgage: Math.round(p.monthly_mortgage),
     cashFlow: Math.round(p.monthly_cash_flow),
@@ -297,7 +298,7 @@ export default function DashboardPage() {
   const rankedByEquity = [...d.properties]
     .sort((a, b) => (b.equity || 0) - (a.equity || 0))
     .slice(0, 5)
-    .map(p => ({ id: p.id, name: truncate(p.address.split(',')[0], 15), value: fmt(p.equity || 0) }))
+    .map(p => ({ id: p.id, name: truncate(propertyLabel(p), 15), value: fmt(p.equity || 0) }))
 
   // ── Risk factor constants (used in Risk section) ───────────────────────────
   const riskFactors = [
@@ -401,7 +402,7 @@ export default function DashboardPage() {
     rentalProps.filter(p => (p.monthly_cash_flow || 0) < 0).forEach(p => {
       recs.push({
         type: 'danger',
-        title: `Negative cash flow: ${p.address.split(',')[0]}`,
+        title: `Negative cash flow: ${propertyLabel(p)}`,
         why: `Generating ${fmt(p.monthly_cash_flow)}/mo. A rent increase or expense reduction could restore profitability.`,
         action: 'Review Property', link: `/properties/${p.id}`,
       })
@@ -455,10 +456,10 @@ export default function DashboardPage() {
     const ins = []
     const byMCF = [...d.properties].sort((a,b) => (b.monthly_cash_flow||0) - (a.monthly_cash_flow||0))
     if (byMCF[0]?.monthly_cash_flow > 0)
-      ins.push({ color: '#15803d', text: `Best cash flow: ${byMCF[0].address.split(',')[0]} at ${fmt(byMCF[0].monthly_cash_flow)}/mo` })
+      ins.push({ color: '#15803d', text: `Best cash flow: ${propertyLabel(byMCF[0])} at ${fmt(byMCF[0].monthly_cash_flow)}/mo` })
     const worst = byMCF[byMCF.length - 1]
     if (worst?.monthly_cash_flow < 0)
-      ins.push({ color: '#b91c1c', text: `Needs attention: ${worst.address.split(',')[0]} at ${fmt(worst.monthly_cash_flow)}/mo` })
+ins.push({ color: '#b91c1c', text: `Needs attention: ${propertyLabel(worst)} at ${fmt(worst.monthly_cash_flow)}/mo` })
     const byAppPct = [...d.properties].filter(p => p.purchase_price > 0).sort((a,b) => {
       const ag = (b.market_value-b.purchase_price)/b.purchase_price
       const bg = (a.market_value-a.purchase_price)/a.purchase_price
@@ -467,11 +468,11 @@ export default function DashboardPage() {
     if (byAppPct[0]) {
       const p = byAppPct[0]
       const pct = (p.market_value - p.purchase_price) / p.purchase_price * 100
-      ins.push({ color: '#2563eb', text: `Highest appreciation: ${p.address.split(',')[0]} +${pct.toFixed(1)}%` })
+ins.push({ color: '#2563eb', text: `Highest appreciation: ${propertyLabel(p)} +${pct.toFixed(1)}%` })
     }
     const byEq = [...d.properties].sort((a,b) => (b.equity||0) - (a.equity||0))
     if (byEq[0])
-      ins.push({ color: '#7c3aed', text: `Largest equity position: ${byEq[0].address.split(',')[0]} — ${fmt(byEq[0].equity||0)}` })
+ins.push({ color: '#7c3aed', text: `Largest equity position: ${propertyLabel(byEq[0])} — ${fmt(byEq[0].equity||0)}` })
     if (rentYoY?.pct != null) {
       const up = rentYoY.pct >= 0
       ins.push({ color: up ? '#15803d' : '#b91c1c', text: `Rental income ${up ? 'up' : 'down'} ${Math.abs(rentYoY.pct).toFixed(1)}% vs ${rentYoY.previousYear}` })
@@ -545,7 +546,7 @@ export default function DashboardPage() {
                         className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 cursor-pointer" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
-<span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{p.address}</span>
+<span className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">{propertyLabel(p)}</span>
 {primary && <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 shrink-0"><Home className="w-2.5 h-2.5" />Primary</span>}
                         </div>
                         <p className="text-[10px] text-gray-400 mt-0.5">{p.city}, {p.state}</p>
@@ -734,7 +735,7 @@ export default function DashboardPage() {
                       <tr key={p.id} className="bg-amber-50/40 dark:bg-amber-900/20">
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-2">
-                            <Link to={`/properties/${p.id}`} className="font-medium text-slate-900 dark:text-white hover:text-blue-600 transition-colors block">{p.address.split(',')[0]}</Link>
+<Link to={`/properties/${p.id}`} className="font-medium text-slate-900 dark:text-white hover:text-blue-600 transition-colors block">{propertyLabel(p)}</Link>
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300"><Home className="w-2.5 h-2.5" />Primary</span>
                           </div>
                           <span className="text-[10px] text-slate-400 dark:text-gray-500">{p.city}, {p.state}</span>
@@ -767,7 +768,7 @@ export default function DashboardPage() {
                     return (
                       <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-gray-700/30 transition-colors">
                         <td className="px-5 py-3.5">
-                          <Link to={`/properties/${p.id}`} className="font-medium text-slate-900 dark:text-white hover:text-blue-600 transition-colors block">{p.address.split(',')[0]}</Link>
+<Link to={`/properties/${p.id}`} className="font-medium text-slate-900 dark:text-white hover:text-blue-600 transition-colors block">{propertyLabel(p)}</Link>
                           <span className="text-[10px] text-slate-400 dark:text-gray-500">{p.city}, {p.state}</span>
                         </td>
                         <td className="px-4 py-3.5 text-center">
@@ -946,7 +947,7 @@ export default function DashboardPage() {
                   return (
                     <div key={p.id}>
                       <div className="flex items-center justify-between mb-1.5 gap-2">
-                        <Link to={`/properties/${p.id}`} className="text-xs font-medium text-slate-700 dark:text-gray-300 hover:text-blue-600 truncate max-w-[180px]">{p.address.split(',')[0]}</Link>
+<Link to={`/properties/${p.id}`} className="text-xs font-medium text-slate-700 dark:text-gray-300 hover:text-blue-600 truncate max-w-[180px]">{propertyLabel(p)}</Link>
                         <div className="flex items-center gap-3 shrink-0 text-xs">
                           <span className="text-slate-400 dark:text-gray-500">{fmtPct(ltv)} LTV</span>
 <span className="font-semibold text-slate-800 dark:text-gray-200">{fmt(p.equity||0)}</span>
@@ -1004,7 +1005,7 @@ export default function DashboardPage() {
                       return (
                         <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-gray-700/30">
                           <td className="px-5 py-2.5">
-<Link to={`/properties/${l.property.id}`} className="font-medium text-slate-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 truncate max-w-[140px] block">{l.property.address.split(',')[0]}</Link>
+<Link to={`/properties/${l.property.id}`} className="font-medium text-slate-800 dark:text-gray-200 hover:text-blue-600 dark:hover:text-blue-400 truncate max-w-[140px] block">{propertyLabel(l.property)}</Link>
                           </td>
                           <td className="px-3 py-2.5 text-center">
                           <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${type === 'ARM' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400' : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'}`}>{type}</span>
@@ -1033,7 +1034,7 @@ export default function DashboardPage() {
                 ? <p className="text-xs text-slate-400 dark:text-gray-500">No rate data. Add loan details to see rates.</p>
                 : d_loans.filter(l => l.interest_rate).map((l, i) => {
                     const p = d.properties.find(pr => pr.loans?.some(ll => ll.id === l.id))
-                    const name = p ? truncate(p.address.split(',')[0], 18) : `Loan ${i+1}`
+const name = p ? truncate(propertyLabel(p), 18) : `Loan ${i+1}`
                     const rCol = l.interest_rate > 7 ? '#dc2626' : l.interest_rate > 5.5 ? '#f59e0b' : '#059669'
                     return (
                       <div key={i} className="mb-4">
@@ -2049,7 +2050,7 @@ function PropPerfTable({ properties }) {
               <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
                 onClick={() => navigate(`/properties/${p.id}`)}>
                 <td className="py-3 pr-4">
-                  <p className="font-medium text-slate-800 whitespace-nowrap">{p.address.split(',')[0]}</p>
+<p className="font-medium text-slate-800 whitespace-nowrap">{propertyLabel(p)}</p>
                   <p className="text-[10px] text-slate-400 dark:text-gray-500 mt-0.5">{p.city}, {p.state}</p>
                 </td>
                 <td className="py-3 pl-6">
@@ -2144,7 +2145,7 @@ function NetIncomeHeatmap({ rawTrends, properties, selectedIds }) {
           <tbody>
             {shownProps.map(p => (
               <tr key={p.id}>
-                <td className="pr-4 py-0.5 text-slate-700 dark:text-gray-300 font-medium whitespace-nowrap">{p.address.split(',')[0].slice(0, 24)}</td>
+<td className="pr-4 py-0.5 text-slate-700 dark:text-gray-300 font-medium whitespace-nowrap">{propertyLabel(p).slice(0, 24)}</td>
                 {years.map(y => {
                   const v     = grid[p.id]?.[y] ?? null
                   const short = v != null ? `${v < 0 ? '-' : ''}$${(Math.abs(v) / 1000).toFixed(0)}k` : '—'
@@ -2152,7 +2153,7 @@ function NetIncomeHeatmap({ rawTrends, properties, selectedIds }) {
                     <td key={y} className="py-0.5">
                       <div className="rounded flex items-center justify-center text-[10px] font-semibold cursor-default"
                         style={{ width: 56, height: 30, background: cellBg(v), color: cellFg(v) }}
-                        title={v != null ? `${p.address.split(',')[0]} · ${y}: ${fmt(v)} net income` : 'No data'}>
+                        title={v != null ? `${propertyLabel(p)} · ${y}: ${fmt(v)} net income` : 'No data'}>
                         {short}
                       </div>
                     </td>

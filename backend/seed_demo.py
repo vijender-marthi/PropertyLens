@@ -6,6 +6,8 @@ Safe to re-run — exits early if demo user already exists.
 """
 
 import sys, os
+import json
+import uuid
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import SessionLocal, engine, Base
@@ -17,6 +19,8 @@ db = SessionLocal()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 DEMO_EMAIL = "demo@propertylens.com"
+
+PROPERTY_CODE_NAMES = ["Palermo", "Electra", "Syrah", "Valencia", "Meridian"]
 
 # ── Guard: skip if already seeded ─────────────────────────────────────────────
 if db.query(User).filter(User.email == DEMO_EMAIL).first():
@@ -151,6 +155,8 @@ prop_objs = []
 for p in PROPS:
     obj = Property(
         owner_id=uid,
+        property_uid=str(uuid.uuid4()),
+        name=PROPERTY_CODE_NAMES[len(prop_objs) % len(PROPERTY_CODE_NAMES)],
         address=p["address"], city=p["city"], state=p["state"], zip_code=p["zip_code"],
         property_type=p["property_type"], usage_type=p["usage_type"],
         purchase_date=p["purchase_date"], purchase_price=p["purchase_price"],
@@ -158,7 +164,16 @@ for p in PROPS:
         land_value=p["land_value"], depreciation_years=27.5,
         monthly_rent=p["monthly_rent"], occupancy_rate=p["occupancy_rate"],
         property_tax=p["property_tax"], insurance=p["insurance"],
-        hoa_fee=p["hoa_fee"], maintenance=p["maintenance"],
+        hoa_fee=p["hoa_fee"],
+        hoa_history=json.dumps([
+            {"year": 2023, "monthly_fee": round((p["hoa_fee"] or 0) * 0.95, 2)},
+            {"year": 2024, "monthly_fee": p["hoa_fee"] or 0},
+        ]) if p["hoa_fee"] else "[]",
+        hoa_special_assessment=0,
+        solar_ownership="None",
+        solar_monthly_payment=0,
+        solar_purchase_price=0,
+        maintenance=p["maintenance"],
         property_management_fee=p["property_management_fee"],
         utilities=p["utilities"], vacancy_allowance=p["vacancy_allowance"],
         capex_reserve=p["capex_reserve"], other_expenses=p["other_expenses"],

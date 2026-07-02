@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 from sqlalchemy import text
+import uuid
 import models
 from database import engine
 from routers import auth, properties, documents, sharing
@@ -11,10 +12,29 @@ from routers import auth, properties, documents, sharing
 # Create tables
 models.Base.metadata.create_all(bind=engine)
 
+PROPERTY_CODE_NAMES = [
+    "Palermo", "Electra", "Syrah", "Valencia", "Meridian", "Solara",
+    "Cypress", "Juniper", "Sierra", "Atlas", "Nova", "Laurel",
+    "Haven", "Orion", "Saffron", "Monaco",
+]
+
+
+def _default_property_name(prop_id: int) -> str:
+    base = PROPERTY_CODE_NAMES[(prop_id - 1) % len(PROPERTY_CODE_NAMES)]
+    cycle = (prop_id - 1) // len(PROPERTY_CODE_NAMES)
+    return base if cycle == 0 else f"{base} {cycle + 1}"
+
 # Lightweight migrations for columns added after the initial schema
 MIGRATIONS = {
     "properties": {
+        "property_uid": "VARCHAR",
+        "name": "VARCHAR",
         "usage_type": "VARCHAR DEFAULT 'Rental'",
+        "hoa_history": "TEXT DEFAULT '[]'",
+        "hoa_special_assessment": "FLOAT DEFAULT 0.0",
+        "solar_ownership": "VARCHAR DEFAULT 'None'",
+        "solar_monthly_payment": "FLOAT DEFAULT 0.0",
+        "solar_purchase_price": "FLOAT DEFAULT 0.0",
         "vacancy_allowance": "FLOAT DEFAULT 0.0",
         "capex_reserve": "FLOAT DEFAULT 0.0",
         "construction_price": "FLOAT DEFAULT 0.0",
@@ -47,6 +67,26 @@ with engine.connect() as conn:
         for col, ddl in columns.items():
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+    conn.commit()
+
+with engine.connect() as conn:
+    rows = conn.execute(text("""
+        SELECT id, address, property_uid, name
+        FROM properties
+        WHERE property_uid IS NULL OR property_uid = '' OR name IS NULL OR name = ''
+           OR name = address
+           OR name = substr(address, 1, instr(address || ',', ',') - 1)
+    """)).fetchall()
+    for row in rows:
+        property_uid = row.property_uid or str(uuid.uuid4())
+        name = _default_property_name(row.id)
+        conn.execute(
+            text("UPDATE properties SET property_uid = :property_uid, name = :name WHERE id = :id"),
+            {"property_uid": property_uid, "name": name, "id": row.id},
+        )
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_properties_property_uid ON properties(property_uid)"
+    ))
     conn.commit()
 
 # Migration: make documents.property_id nullable and add owner_id.
@@ -110,7 +150,7 @@ with engine.connect() as conn:
 app = FastAPI(
     title="PropertyLens API",
     description="Real Estate Consolidation & Analytics Platform",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.add_middleware(

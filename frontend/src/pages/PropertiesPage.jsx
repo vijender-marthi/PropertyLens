@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Building2, Home, MapPin, Plus, TrendingDown, TrendingUp, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { propAPI } from '../services/api'
+import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-US', {
@@ -140,11 +141,14 @@ function PropertyCard({ property: p }) {
     >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-semibold text-gray-900 dark:text-white">{p.address}</h3>
+          <h3 className="truncate font-semibold text-gray-900 dark:text-white">{propertyLabel(p)}</h3>
           <p className="mt-1 flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400">
             <MapPin className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{[p.city, p.state].filter(Boolean).join(', ') || 'Location not set'}</span>
           </p>
+          {p.property_uid ? (
+            <p className="mt-1 text-xs font-medium text-gray-400 dark:text-gray-500">ID {shortPropertyUid(p)}</p>
+          ) : null}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className="badge-blue">{p.property_type || 'Property'}</span>
