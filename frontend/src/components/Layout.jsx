@@ -2,11 +2,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import {
-  Home, Building2, Upload, Settings, LogOut,
+  Building2, Upload, Settings, LogOut,
   BarChart3, Menu, X, HelpCircle, Wrench, FileText,
   Sun, Moon,
 } from 'lucide-react'
 import { useState } from 'react'
+import BrandLogo from './BrandLogo'
 
 const MAIN_NAV = [
   { to: '/dashboard',  icon: BarChart3,  label: 'Dashboard' },
@@ -47,15 +48,7 @@ function SidebarContent({ user, onLogout, onClose }) {
 
       {/* Logo */}
       <div className="flex items-center justify-between px-3.5 py-4 border-b border-gray-100 dark:border-gray-700 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-[30px] h-[30px] rounded-lg bg-slate-800 dark:bg-blue-600 flex items-center justify-center shrink-0">
-            <Home className="w-[14px] h-[14px] text-white" />
-          </div>
-          <div>
-            <p className="font-bold text-[13px] text-gray-900 dark:text-white leading-tight">PropertyLens</p>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500">Property Intelligence</p>
-          </div>
-        </div>
+        <BrandLogo markClassName="h-[30px] w-[30px]" textClassName="text-[13px] text-gray-900 dark:text-white" subtitleClassName="text-[10px] text-gray-400 dark:text-gray-500" />
         {/* Close button (mobile only) */}
         {onClose && (
           <button onClick={onClose} className="lg:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1">
@@ -172,7 +165,7 @@ export default function Layout({ children }) {
           <button onClick={() => setMobileOpen(true)} className="text-gray-500 dark:text-gray-400 p-1">
             <Menu className="w-5 h-5" />
           </button>
-          <span className="text-sm font-semibold text-gray-900 dark:text-white">PropertyLens</span>
+          <BrandLogo markClassName="h-7 w-7" textClassName="text-sm text-gray-900 dark:text-white" subtitleClassName="hidden" />
           {/* Theme toggle on mobile top bar */}
           <button onClick={toggle} className="text-gray-500 dark:text-gray-400 p-1">
             {dark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}

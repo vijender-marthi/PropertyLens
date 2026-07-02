@@ -110,7 +110,7 @@ with engine.connect() as conn:
 app = FastAPI(
     title="PropertyLens API",
     description="Real Estate Consolidation & Analytics Platform",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(

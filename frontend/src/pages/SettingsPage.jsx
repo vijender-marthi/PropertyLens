@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { authAPI, sharingAPI } from '../services/api'
 import toast from 'react-hot-toast'
 import { User, Key, Info, Share2, X, UserCheck, UserPlus, ArrowRight, ArrowLeft, Home } from 'lucide-react'
+import { APP_VERSION } from '../version'
 
 export default function SettingsPage() {
   const { user } = useAuth()
@@ -67,7 +68,7 @@ export default function SettingsPage() {
         <div className="text-sm text-gray-500 dark:text-gray-400 space-y-1">
           <p><span className="font-medium text-gray-700 dark:text-gray-300">App:</span> PropertyLens — Property Intelligence Platform</p>
           <p><span className="font-medium text-gray-700 dark:text-gray-300">Stack:</span> FastAPI + React + SQLite</p>
-          <p><span className="font-medium text-gray-700 dark:text-gray-300">Version:</span> 1.0.0</p>
+          <p><span className="font-medium text-gray-700 dark:text-gray-300">Code Version:</span> {APP_VERSION}</p>
         </div>
       </div>
     </div>

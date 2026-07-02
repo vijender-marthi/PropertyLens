@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { Home } from 'lucide-react'
 import toast from 'react-hot-toast'
+import BrandLogo from '../components/BrandLogo'
 
 export default function RegisterPage() {
   const { register } = useAuth()
@@ -45,15 +45,7 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
-              <Home className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="font-bold text-xl text-gray-900">PropertyLens</h1>
-              <p className="text-xs text-gray-400">Property Intelligence Platform</p>
-            </div>
-          </div>
+          <BrandLogo className="mb-8" markClassName="h-11 w-11" textClassName="text-xl text-gray-900" subtitleClassName="text-gray-400" />
 
           <h2 className="text-2xl font-semibold text-gray-900 mb-1">Create account</h2>
           <p className="text-gray-500 text-sm mb-6">Start managing your property portfolio</p>

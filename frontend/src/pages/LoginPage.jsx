@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { Home, Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff } from 'lucide-react'
 import toast from 'react-hot-toast'
+import BrandLogo from '../components/BrandLogo'
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -29,15 +30,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 sm:p-8">
           {/* Logo */}
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
-              <Home className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="font-bold text-xl text-gray-900">PropertyLens</h1>
-              <p className="text-xs text-gray-400">Property Intelligence Platform</p>
-            </div>
-          </div>
+          <BrandLogo className="mb-8" markClassName="h-11 w-11" textClassName="text-xl text-gray-900 dark:text-white" subtitleClassName="text-gray-400" />
 
           <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-1">Welcome back</h2>
           <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">Sign in to your account</p>
