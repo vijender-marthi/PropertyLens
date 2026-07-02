@@ -3,21 +3,21 @@
   <desc id="desc">A house inside an analytics lens.</desc>
   <defs>
     <linearGradient id="pl-bg" x1="10" y1="8" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0F172A"/>
-      <stop offset="0.52" stop-color="#134E4A"/>
-      <stop offset="1" stop-color="#0D9488"/>
+      <stop stop-color="#302C28"/>
+      <stop offset="0.55" stop-color="#5A524A"/>
+      <stop offset="1" stop-color="#EF7D22"/>
     </linearGradient>
     <linearGradient id="pl-line" x1="18" y1="18" x2="48" y2="49" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#F8FAFC"/>
-      <stop offset="0.6" stop-color="#A7F3D0"/>
-      <stop offset="1" stop-color="#38BDF8"/>
+      <stop stop-color="#FFF7ED"/>
+      <stop offset="0.6" stop-color="#FED7AA"/>
+      <stop offset="1" stop-color="#FB923C"/>
     </linearGradient>
   </defs>
   <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#pl-bg)"/>
   <path d="M18 33.5L31.9 21.5L46 33.5" stroke="url(#pl-line)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M22.5 32.5V45.5H41.5V32.5" stroke="#E0F2FE" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M30.5 45V37H36V45" stroke="#A7F3D0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="41" cy="23" r="7.5" fill="#F8FAFC" fill-opacity="0.16" stroke="#A7F3D0" stroke-width="3"/>
-  <path d="M46.3 28.4L52 34.1" stroke="#A7F3D0" stroke-width="3.5" stroke-linecap="round"/>
-  <path d="M16 50H48" stroke="#67E8F9" stroke-width="3" stroke-linecap="round" stroke-opacity="0.82"/>
+  <path d="M22.5 32.5V45.5H41.5V32.5" stroke="#FFF7ED" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M30.5 45V37H36V45" stroke="#FDBA74" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="41" cy="23" r="7.5" fill="#FFF7ED" fill-opacity="0.16" stroke="#FDBA74" stroke-width="3"/>
+  <path d="M46.3 28.4L52 34.1" stroke="#FDBA74" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M16 50H48" stroke="#FED7AA" stroke-width="3" stroke-linecap="round" stroke-opacity="0.86"/>
 </svg>
