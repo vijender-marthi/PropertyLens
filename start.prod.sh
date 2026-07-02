@@ -1,37 +1,20 @@
-#!/bin/bash
-# PropertyLens - Production start script
-# Usage: ./start.prod.sh
+#!/usr/bin/env bash
+# PropertyLens production runtime entrypoint.
+# Build/install is handled by scripts/install-production-service.sh.
+set -euo pipefail
 
-set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HOST="${PROPERTYLENS_HOST:-127.0.0.1}"
+PORT="${PROPERTYLENS_PORT:-8100}"
+DB_PATH="${PROPERTYLENS_DB_PATH:-/var/lib/propertylens/propertylens.db}"
 
-echo "PropertyLens — Production Mode"
-echo "============================="
+export PROPERTYLENS_DB_PATH="$DB_PATH"
 
-# ── Build Frontend ────────────────────────────────────────────────────────────
-echo ""
-echo "Building frontend..."
-cd "$SCRIPT_DIR/frontend"
-if [ ! -d "node_modules" ]; then
-  npm install
-fi
-npm run build
-echo "  Frontend built"
-
-# ── Backend ──────────────────────────────────────────────────────────────────
-echo ""
-echo "Setting up Python backend..."
 cd "$SCRIPT_DIR/backend"
 
-if [ ! -d "venv" ]; then
-  python3 -m venv venv
-  echo "  Created virtual environment"
+if [ ! -x "venv/bin/uvicorn" ]; then
+  echo "Missing backend virtualenv. Run scripts/install-production-service.sh first." >&2
+  exit 1
 fi
 
-source venv/bin/activate
-pip install -q -r requirements.txt
-echo "  Dependencies installed"
-
-echo ""
-echo "Starting server on http://localhost:8000"
-uvicorn main:app --host 0.0.0.0 --port 8000
+exec "$SCRIPT_DIR/backend/venv/bin/uvicorn" main:app --host "$HOST" --port "$PORT"
