@@ -68,7 +68,7 @@ UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".csv"}
-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 DOC_CATEGORIES = [
     "auto",
@@ -261,7 +261,7 @@ async def upload_document(
 
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File too large (max 20MB)")
+        raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 
     unique_name = f"{uuid.uuid4().hex}{suffix}"
     save_path = UPLOAD_DIR / unique_name
@@ -275,6 +275,9 @@ async def upload_document(
     except Exception as e:
         category = "other" if category == "auto" else category
         extracted = {"parse_error": str(e)}
+        if category == "tax_return":
+            os.remove(save_path)
+            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
 
     markdown_name = None
     if markdown:
@@ -363,12 +366,14 @@ async def upload_document(
     db.refresh(doc)
 
     tax_entries_imported = 0
+    tax_import_error = None
     if is_tax_return:
         try:
             tax_entries_imported = import_tax_return(
                 db, current_user.id, doc.id, str(save_path))
-        except Exception:
+        except Exception as e:
             tax_entries_imported = 0
+            tax_import_error = str(e)
 
     return {
         "id": doc.id,
@@ -390,6 +395,7 @@ async def upload_document(
         "auto_applied": auto_applied,
         "has_markdown": bool(markdown_name),
         "tax_entries_imported": tax_entries_imported,
+        "tax_import_error": tax_import_error,
     }
 
 

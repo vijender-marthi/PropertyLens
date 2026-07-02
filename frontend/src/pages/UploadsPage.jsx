@@ -138,7 +138,9 @@ export default function UploadsPage() {
         const { data } = await docAPI.upload(fd)
         uploaded++
         if (data.property_created) created++
-        if (data.tax_entries_imported > 0)
+        if (data.tax_import_error)
+          toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
+        else if (data.tax_entries_imported > 0)
           toast.success(`${data.tax_entries_imported} propert${data.tax_entries_imported === 1 ? 'y' : 'ies'} updated from tax return`, { duration: 5000 })
         else
           toast.success(`Uploaded: ${data.original_filename} (${catLabel(data.category)})`)

@@ -41,7 +41,10 @@ export default function DocumentUpload({ propertyId, docs, onUploaded }) {
     setUploading(true)
     try {
       const { data } = await docAPI.upload(fd)
-      toast.success(`Uploaded: ${data.original_filename}`)
+      if (data.tax_import_error)
+        toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
+      else
+        toast.success(`Uploaded: ${data.original_filename}`)
       onUploaded()
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Upload failed')

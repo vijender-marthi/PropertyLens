@@ -1,0 +1,37 @@
+name: Deploy PropertyLens
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to DigitalOcean droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          port: ${{ secrets.DO_PORT || '22' }}
+          script: |
+            set -euo pipefail
+
+            cd /opt/propertylens/PropertyLens
+            git fetch origin
+            git checkout main
+            git pull --ff-only origin main
+
+            sudo env \
+              APP_USER=fluxtrade \
+              APP_GROUP=fluxtrade \
+              PROPERTYLENS_HOST=127.0.0.1 \
+              PROPERTYLENS_PORT=8100 \
+              scripts/install-production-service.sh
+
+            sudo systemctl reload nginx
+            curl -f http://127.0.0.1:8100/api/health
