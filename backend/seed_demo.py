@@ -1,6 +1,6 @@
 """
 Demo user seed script.
-Creates user demo@rentalprops.com / finNumbers with 5 properties (4 rentals + 1 primary),
+Creates user demo@propertylens.com / finNumbers with 5 properties (4 rentals + 1 primary),
 6 years of tax return entries, rental periods, and document records.
 Safe to re-run — exits early if demo user already exists.
 """
@@ -16,7 +16,7 @@ Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-DEMO_EMAIL = "demo@rentalprops.com"
+DEMO_EMAIL = "demo@propertylens.com"
 
 # ── Guard: skip if already seeded ─────────────────────────────────────────────
 if db.query(User).filter(User.email == DEMO_EMAIL).first():

@@ -2095,9 +2095,13 @@ function SummaryTab({ propId, prop, metrics }) {
   const [expandedYear, setExpandedYear] = useState(null)
 
   useEffect(() => {
+    setLoading(true)
     propAPI.lifetime(propId)
       .then((r) => setData(r.data))
-      .catch(() => toast.error('Failed to load lifetime summary'))
+      .catch((err) => {
+        const detail = err.response?.data?.detail
+        toast.error(detail ? `Failed to load lifetime summary: ${detail}` : 'Failed to load lifetime summary')
+      })
       .finally(() => setLoading(false))
   }, [propId])
 

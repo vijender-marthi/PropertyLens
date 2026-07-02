@@ -86,7 +86,7 @@ def client():
 # ---------------------------------------------------------------------------
 # Auth helpers — sub must be the user's email (matches auth.get_current_user)
 # ---------------------------------------------------------------------------
-SECRET_KEY = "rentalprops-secret-key-change-in-production"
+SECRET_KEY = "propertylens-secret-key-change-in-production"
 ALGORITHM  = "HS256"
 
 
