@@ -21,6 +21,7 @@ jobs:
           script: |
             set -euo pipefail
 
+            sudo chown -R "$(whoami):$(id -gn)" /opt/propertylens/PropertyLens
             cd /opt/propertylens/PropertyLens
             git fetch origin
             git checkout main
