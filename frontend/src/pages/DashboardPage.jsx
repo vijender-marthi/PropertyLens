@@ -403,8 +403,8 @@ export default function DashboardPage() {
       recs.push({
         type: 'danger',
         title: `Negative cash flow: ${propertyLabel(p)}`,
-        why: `Generating ${fmt(p.monthly_cash_flow)}/mo. A rent increase or expense reduction could restore profitability.`,
-        action: 'Review Property', link: `/properties/${p.id}`,
+        why: `Generating ${fmt(p.monthly_cash_flow)}/mo. You may want to explore rent, expenses, or financing assumptions.`,
+        action: 'Explore Property', link: `/properties/${p.id}`,
       })
     })
     const highRateLoans = d_loans.filter(l => (l.interest_rate || 0) > 7)
@@ -412,40 +412,40 @@ export default function DashboardPage() {
       recs.push({
         type: 'warning',
         title: `Refinancing opportunity — ${highRateLoans.length} high-rate loan${highRateLoans.length > 1 ? 's' : ''}`,
-        why: `Rate${highRateLoans.length > 1 ? 's' : ''} above 7%. Refinancing may meaningfully reduce monthly debt service.`,
-        action: 'View Loans', link: '/properties',
+        why: `Rate${highRateLoans.length > 1 ? 's' : ''} above 7%. It may be worth comparing refinance scenarios before making a decision.`,
+        action: 'Explore Loans', link: '/properties',
       })
     }
     if (vacancyRate > 10) {
       recs.push({
         type: 'warning',
         title: 'Vacancy rate above benchmark',
-        why: `Portfolio vacancy at ${fmtPct(vacancyRate)} is reducing income by ${fmt((scheduledRent - d.total_monthly_rent) * 12)}/yr. Review pricing and marketing.`,
-        action: 'Review Properties', link: '/properties',
+        why: `Portfolio vacancy at ${fmtPct(vacancyRate)} is reducing income by about ${fmt((scheduledRent - d.total_monthly_rent) * 12)}/yr. Pricing and marketing may be worth a closer look.`,
+        action: 'Explore Properties', link: '/properties',
       })
     }
     if (d.portfolio_dscr != null && d.portfolio_dscr < 1.25) {
       recs.push({
         type: 'warning',
         title: 'Debt coverage ratio below 1.25× target',
-        why: `DSCR of ${d.portfolio_dscr.toFixed(2)}× means income has limited buffer above debt service. Reduce expenses or increase rent.`,
-        action: 'Review Financing', link: '/properties',
+        why: `DSCR of ${d.portfolio_dscr.toFixed(2)}× suggests a limited buffer above debt service. You may want to compare expense, rent, or financing scenarios.`,
+        action: 'Explore Financing', link: '/properties',
       })
     }
     if (armExposure > 30) {
       recs.push({
         type: 'warning',
         title: `High ARM exposure — ${fmtPct(armExposure)} variable-rate debt`,
-        why: 'Variable-rate loans increase risk if rates rise. Consider converting to fixed-rate for stability.',
-        action: 'View Loans', link: '/properties',
+        why: 'Variable-rate loans can add risk if rates rise. A fixed-rate comparison may be useful.',
+        action: 'Explore Loans', link: '/properties',
       })
     }
     if (d.portfolio_ltv < 60 && d.total_monthly_cash_flow > 0 && d.total_properties > 0) {
       recs.push({
         type: 'opportunity',
         title: 'Strong position to acquire another property',
-        why: `Conservative LTV of ${fmtPct(d.portfolio_ltv)} and positive cash flow indicate available borrowing capacity.`,
-        action: 'Add Property', link: '/properties/new',
+        why: `Conservative LTV ${fmtPct(d.portfolio_ltv)} and positive cash flow may support another acquisition if that fits your plan.`,
+        action: 'Explore Add', link: '/properties/new',
       })
     }
     return recs.slice(0, 5)
@@ -632,10 +632,25 @@ ins.push({ color: '#7c3aed', text: `Largest equity position: ${propertyLabel(byE
           )}
         </section>
 
-        {/* ══ 2. ACTION CENTER ═══════════════════════════════════════════ */}
+        {/* ══ 2. PORTFOLIO INSIGHTS ══════════════════════════════════════ */}
+        {insights.length > 0 && (
+          <section>
+            <DashSectionHeader icon={Lightbulb} title="Portfolio Insights" sub="Automated observations across your portfolio" />
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {insights.map((ins, i) => (
+                <div key={i} className="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-xl border border-slate-100 dark:border-gray-700 px-4 py-3.5 shadow-sm">
+                  <div className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: ins.color }} />
+                  <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed">{ins.text}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ══ 3. ACTION CENTER ═══════════════════════════════════════════ */}
         {actions.length > 0 && (
           <section>
-            <DashSectionHeader icon={AlertCircle} title="Action Center" sub="Highest-impact recommendations for your portfolio" />
+            <DashSectionHeader icon={AlertCircle} title="Action Center" sub="Suggested options to consider for your portfolio" />
             <div className="mt-6 space-y-3">
               {actions.map((a, i) => {
                 const cfg = a.type === 'danger'
@@ -667,7 +682,7 @@ ins.push({ color: '#7c3aed', text: `Largest equity position: ${propertyLabel(byE
           </section>
         )}
 
-        {/* ══ 3. PORTFOLIO HEALTH ════════════════════════════════════════ */}
+        {/* ══ 4. PORTFOLIO HEALTH ════════════════════════════════════════ */}
         <section>
           <DashSectionHeader icon={Shield} title="Portfolio Health" sub="How healthy is my overall portfolio?" link="/properties" linkLabel="All Properties" />
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1133,20 +1148,6 @@ const name = p ? truncate(propertyLabel(p), 18) : `Loan ${i+1}`
           )}
         </section>
 
-        {/* ══ 9. PORTFOLIO INSIGHTS ══════════════════════════════════════ */}
-        {insights.length > 0 && (
-          <section>
-            <DashSectionHeader icon={Lightbulb} title="Portfolio Insights" sub="Automated observations across your portfolio" />
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {insights.map((ins, i) => (
-                <div key={i} className="flex items-start gap-3 bg-white dark:bg-gray-800 rounded-xl border border-slate-100 dark:border-gray-700 px-4 py-3.5 shadow-sm">
-                  <div className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: ins.color }} />
-                  <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed">{ins.text}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
 
       </div>
     </div>
@@ -1208,7 +1209,7 @@ function HealthKPI({ label, value, good, warn, trend, explanation, recommendatio
       {trend && <p className="text-[11px] text-slate-500 dark:text-gray-400">{trend}</p>}
       <p className="text-[11px] text-slate-500 dark:text-gray-400 leading-relaxed border-t border-slate-100 dark:border-gray-700 pt-3">{explanation}</p>
       <div className={`rounded-lg px-3 py-2 ${cls.rec}`}>
-        <p className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 ${cls.text}`}>Recommended Action</p>
+        <p className={`text-[10px] font-semibold uppercase tracking-wide mb-0.5 ${cls.text}`}>Suggested Option</p>
         <p className={`text-[11px] leading-snug ${cls.text}`}>{recommendation}</p>
       </div>
     </div>

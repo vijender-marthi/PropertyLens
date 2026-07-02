@@ -156,7 +156,7 @@ export default function PropertyDetailPage() {
     </div>
   )
 
-  const TABS = ['summary', 'details', 'loans', 'rental', 'taxes', 'documents', 'verify', 'scenarios']
+  const TABS = ['summary', 'details', 'loans', 'rental', 'taxes', 'documents', 'raw data', 'verify', 'scenarios']
 
   return (
 <div className="max-w-5xl mx-auto space-y-6">
@@ -280,6 +280,10 @@ export default function PropertyDetailPage() {
         <DocumentUpload propertyId={id} docs={docs} onUploaded={loadData} />
       )}
 
+      {activeTab === 'raw data' && (
+        <ExtractedRawDataTab propId={id} prop={prop} docs={docs} />
+      )}
+
       {/* Scenarios */}
       {activeTab === 'scenarios' && (
         <ScenariosTab prop={prop} propId={id} />
@@ -327,6 +331,241 @@ function PLRow({ label, value, neg, bold, color }) {
     <div className="flex justify-between text-sm">
       <span className={bold ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}>{label}</span>
       <span className={`${bold ? 'font-semibold' : ''} ${color || (neg ? 'text-red-500' : 'text-gray-900 dark:text-white')}`}>{value}</span>
+    </div>
+  )
+}
+
+
+const RAW_FIELD_LABELS = {
+  tax_year: 'Tax Year',
+  statement_year: 'Statement Year',
+  statement_date: 'Statement Date',
+  property_address: 'Property Address',
+  property_city: 'Property City',
+  property_state: 'Property State',
+  property_zip: 'Property ZIP',
+  account_number: 'Account Number',
+  lender_name: 'Lender',
+  current_balance: 'Current Balance',
+  original_amount: 'Original Amount',
+  interest_rate: 'Interest Rate',
+  monthly_payment: 'Monthly Payment',
+  escrow_amount: 'Escrow Amount',
+  mortgage_interest: 'Mortgage Interest',
+  property_tax_amount: 'Property Tax Amount',
+  year_end_outstanding_balance: 'Year-End Outstanding Balance',
+  rents_received: 'Rents Received',
+  property_taxes: 'Property Taxes',
+  depreciation: 'Depreciation',
+  total_expenses: 'Total Expenses',
+  net_income: 'Net Income',
+  days_rented: 'Days Rented',
+  personal_use_days: 'Personal Use Days',
+}
+
+const DOCUMENT_TYPE_LABELS = {
+  mortgage_statement: 'Mortgage Statement',
+  closing_statement: 'Closing Statement',
+  tax_return: 'Tax Return',
+  '1098': '1098',
+  '1099': '1099',
+  loan_disclosure: 'Loan Disclosure',
+  bank_statement: 'Bank Statement',
+  property_tax: 'Property Tax',
+  other: 'Other',
+}
+
+function rawFieldLabel(key) {
+  return RAW_FIELD_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function rawDocumentType(category) {
+  return DOCUMENT_TYPE_LABELS[category] || rawFieldLabel(category || 'document')
+}
+
+function rawYear(doc, data = {}) {
+  const value = doc.statement_year || data.statement_year || data.tax_year
+  if (value) return String(value)
+  const dateValue = data.statement_date || data.period_end || doc.period_end || doc.period_start
+  const match = String(dateValue || '').match(/\b(19|20)\d{2}\b/)
+  return match ? match[0] : '—'
+}
+
+function rawValue(value) {
+  if (value == null || value === '') return '—'
+  if (typeof value === 'number') return Math.abs(value) >= 1000 ? fmt(value) : String(value)
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function flattenExtractedData(data) {
+  return Object.entries(data || {})
+    .filter(([key]) => !['raw_text_preview', 'parse_error'].includes(key))
+    .map(([field, value]) => ({ field, value }))
+}
+
+function ExtractedRawDataTab({ propId, prop, docs }) {
+  const [taxEntries, setTaxEntries] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    propAPI.rawdata(propId)
+      .then((res) => setTaxEntries(res.data?.tax_entries || []))
+      .catch(() => setTaxEntries([]))
+      .finally(() => setLoading(false))
+  }, [propId])
+
+  const documentRows = (docs || []).map((doc) => {
+    const data = doc.extracted_data || {}
+    return {
+      key: `doc-${doc.id}`,
+      documentType: rawDocumentType(doc.doc_category),
+      year: rawYear(doc, data),
+      source: doc.original_filename || `Document ${doc.id}`,
+      fields: Object.fromEntries(
+        Object.entries(data).filter(([key]) => !['raw_text_preview', 'parse_error'].includes(key))
+      ),
+    }
+  })
+
+  const taxRows = taxEntries.map((entry) => ({
+    key: `tax-${entry.id}`,
+    documentType: 'Tax Return Schedule E',
+    year: String(entry.tax_year),
+    source: entry.property_kind === 'primary' ? 'Schedule A / Primary' : 'Schedule E',
+    fields: {
+      rents_received: entry.rents_received,
+      mortgage_interest: entry.mortgage_interest,
+      property_taxes: entry.property_taxes,
+      depreciation: entry.depreciation,
+      total_expenses: entry.total_expenses,
+      net_income: entry.net_income,
+      days_rented: entry.days_rented,
+      personal_use_days: entry.personal_use_days,
+    },
+  }))
+
+  const rows = [...documentRows, ...taxRows].sort((a, b) => {
+    const byYear = String(b.year).localeCompare(String(a.year))
+    if (byYear) return byYear
+    return a.documentType.localeCompare(b.documentType) || a.source.localeCompare(b.source)
+  })
+
+  const preferredFields = [
+    'statement_year',
+    'tax_year',
+    'statement_date',
+    'period_start',
+    'period_end',
+    'account_number',
+    'lender_name',
+    'property_address',
+    'property_city',
+    'property_state',
+    'property_zip',
+    'original_amount',
+    'current_balance',
+    'year_end_outstanding_balance',
+    'interest_rate',
+    'monthly_payment',
+    'escrow_amount',
+    'mortgage_interest',
+    'property_tax_amount',
+    'rents_received',
+    'property_taxes',
+    'depreciation',
+    'total_expenses',
+    'net_income',
+    'days_rented',
+    'personal_use_days',
+  ]
+
+  const fieldColumns = Array.from(new Set(rows.flatMap((row) => Object.keys(row.fields || {}))))
+    .sort((a, b) => {
+      const ai = preferredFields.indexOf(a)
+      const bi = preferredFields.indexOf(b)
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+      return rawFieldLabel(a).localeCompare(rawFieldLabel(b))
+    })
+
+  const exportXLSX = () => {
+    const exportRows = rows.map((row) => {
+      const out = {
+        'Property ID': prop?.property_uid || propId,
+        'Property Name': propertyLabel(prop),
+        'Document Type': row.documentType,
+        Year: row.year,
+        Source: row.source,
+      }
+      fieldColumns.forEach((field) => {
+        out[rawFieldLabel(field)] = rawValue(row.fields[field])
+      })
+      return out
+    })
+    const ws = utils.json_to_sheet(exportRows)
+    ws['!cols'] = Object.keys(exportRows[0] || { 'Document Type': '', Year: '', Source: '' }).map((key) => ({
+      wch: Math.min(Math.max(String(key).length + 4, 14), 28),
+    }))
+    const wb = utils.book_new()
+    utils.book_append_sheet(wb, ws, 'Raw Data')
+    writeFile(wb, `propertylens_raw_data_${propId}.xlsx`)
+  }
+
+  return (
+    <div className="card">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className="font-semibold text-gray-900 dark:text-white">Raw Extracted Data</h3>
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            Spreadsheet view: one row per document or tax year, with each extracted field as a column.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-gray-400 dark:text-gray-500">{rows.length} rows · {fieldColumns.length} fields</div>
+          <button type="button" className="btn-secondary flex items-center gap-1.5 text-xs" onClick={exportXLSX} disabled={rows.length === 0}>
+            <Download className="h-3.5 w-3.5" /> Export XLSX
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="py-10 text-center text-sm text-gray-400">Loading raw data…</div>
+      ) : rows.length === 0 ? (
+        <div className="py-10 text-center text-sm text-gray-400">No extracted raw data yet.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                <th className="sticky left-0 z-10 bg-white py-2 pr-3 font-medium dark:bg-gray-800">Document Type</th>
+                <th className="py-2 px-3 font-medium">Year</th>
+                <th className="py-2 px-3 font-medium">Source</th>
+                {fieldColumns.map((field) => (
+                  <th key={field} className="whitespace-nowrap py-2 px-3 font-medium">{rawFieldLabel(field)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+              {rows.map((row) => (
+                <tr key={row.key} className="hover:bg-gray-50 dark:hover:bg-gray-700/40">
+                  <td className="sticky left-0 z-10 whitespace-nowrap bg-white py-2 pr-3 align-top font-medium text-gray-900 dark:bg-gray-800 dark:text-white">
+                    {row.documentType}
+                  </td>
+                  <td className="whitespace-nowrap py-2 px-3 align-top text-gray-600 dark:text-gray-300">{row.year}</td>
+                  <td className="max-w-[220px] truncate whitespace-nowrap py-2 px-3 align-top text-gray-500 dark:text-gray-400">{row.source}</td>
+                  {fieldColumns.map((field) => (
+                    <td key={field} className="whitespace-nowrap py-2 px-3 align-top text-gray-800 dark:text-gray-200">
+                      {rawValue(row.fields[field])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
