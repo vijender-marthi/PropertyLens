@@ -7,7 +7,7 @@ import {
 } from 'recharts'
 import {
   ChevronLeft, ChevronDown, Pencil, Trash2, Plus, Upload,
-  FileText, RefreshCw, Calculator, Building2, Home, X, Download, Info
+  FileText, RefreshCw, Calculator, Building2, Home, X, Download, Info, CheckCircle2, AlertTriangle
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { jsPDF } from 'jspdf'
@@ -156,7 +156,7 @@ export default function PropertyDetailPage() {
     </div>
   )
 
-  const TABS = ['summary', 'details', 'loans', 'rental', 'taxes', 'documents', 'raw data', 'verify', 'scenarios']
+  const TABS = ['summary', 'details', 'loans', 'rental', 'taxes', 'depreciation', 'documents', 'checklist', 'raw data', 'verify', 'scenarios']
 
   return (
 <div className="max-w-5xl mx-auto space-y-6">
@@ -275,14 +275,22 @@ export default function PropertyDetailPage() {
         <TaxesTab propId={id} property={prop} />
       )}
 
-      {/* Documents */}
-      {activeTab === 'documents' && (
-        <DocumentUpload propertyId={id} docs={docs} onUploaded={loadData} />
+      {activeTab === 'depreciation' && (
+        <DepreciationTab propId={id} prop={prop} />
       )}
 
-      {activeTab === 'raw data' && (
-        <ExtractedRawDataTab propId={id} prop={prop} docs={docs} />
-      )}
+      {/* Documents */}
+{activeTab === 'documents' && (
+<DocumentUpload propertyId={id} docs={docs} onUploaded={loadData} />
+)}
+
+{activeTab === 'checklist' && (
+<DocumentChecklist prop={prop} docs={docs} propId={id} onUploadRequest={() => setActiveTab('documents')} />
+)}
+
+{activeTab === 'raw data' && (
+<ExtractedRawDataTab propId={id} prop={prop} docs={docs} />
+)}
 
       {/* Scenarios */}
       {activeTab === 'scenarios' && (
@@ -327,13 +335,215 @@ function KPI({ label, value, color, action }) {
 }
 
 function PLRow({ label, value, neg, bold, color }) {
-  return (
-    <div className="flex justify-between text-sm">
-      <span className={bold ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}>{label}</span>
-      <span className={`${bold ? 'font-semibold' : ''} ${color || (neg ? 'text-red-500' : 'text-gray-900 dark:text-white')}`}>{value}</span>
-    </div>
-  )
+return (
+<div className="flex justify-between text-sm">
+<span className={bold ? 'font-semibold text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}>{label}</span>
+<span className={`${bold ? 'font-semibold' : ''} ${color || (neg ? 'text-red-500' : 'text-gray-900 dark:text-white')}`}>{value}</span>
+</div>
+)
 }
+
+function ChecklistStatus({ status }) {
+const styles = {
+present: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
+missing: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
+expired: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800',
+}
+const label = status === 'present' ? 'Uploaded' : status === 'expired' ? 'Overdue' : 'Missing'
+return <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${styles[status]}`}>{label}</span>
+}
+
+function ChecklistDot({ status }) {
+const styles = {
+present: 'bg-emerald-500',
+missing: 'bg-amber-400',
+expired: 'bg-red-500',
+}
+const title = status === 'present' ? 'Uploaded' : status === 'expired' ? 'Overdue' : 'Missing'
+return <span title={title} className={`inline-block h-2.5 w-2.5 rounded-full ${styles[status]}`} />
+}
+
+function pivotByLabelYear(items) {
+const labels = [...new Set(items.map((i) => i.label))]
+const years = [...new Set(items.map((i) => i.year))].sort((a, b) => a - b)
+const cell = (label, year) => items.find((i) => i.label === label && i.year === year)
+return { labels, years, cell }
+}
+
+function pivotMonthly(items) {
+const labels = [...new Set(items.map((i) => i.label))]
+const rows = labels.map((label) => ({
+label,
+years: [...new Set(items.filter((i) => i.label === label).map((i) => i.year))].sort((a, b) => a - b),
+}))
+const cell = (label, year, month) => items.find((i) => i.label === label && i.year === year && i.month === month)
+return { rows, cell }
+}
+
+function DocumentChecklist({ prop, docs, propId, onUploadRequest }) {
+const [checklist, setChecklist] = useState(null)
+const [loading, setLoading] = useState(true)
+
+useEffect(() => {
+setLoading(true)
+propAPI.checklist(propId)
+.then((res) => setChecklist(res.data))
+.catch(() => setChecklist(null))
+.finally(() => setLoading(false))
+}, [propId, docs])
+
+const requestUpload = (item) => {
+toast(`Go to Documents to upload: ${item.label}${item.year ? ` — ${item.month_label ? `${item.month_label} ` : ''}${item.year}` : ''}`, { icon: '📄' })
+onUploadRequest?.()
+}
+
+if (loading) return <div className="card py-10 text-center text-sm text-gray-400">Loading checklist...</div>
+if (!checklist) return <div className="card py-10 text-center text-sm text-gray-400">Couldn't load the checklist.</div>
+
+const { required, missing, completion_pct: completionPct, groups } = checklist
+const annualPivot = pivotByLabelYear(groups.annual)
+const monthlyPivot = pivotMonthly(groups.monthly)
+const missingSorted = [...missing].sort((a, b) =>
+(a.year || 0) - (b.year || 0) || (a.month || 0) - (b.month || 0)
+)
+
+return (
+<div className="space-y-4">
+<div className="card">
+<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+<div>
+<h3 className="font-semibold text-gray-900 dark:text-white">Property Document Checklist</h3>
+<p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+{missing.length} of {required.length} required documents missing.
+</p>
+</div>
+<div className="flex items-center gap-3">
+<div className="h-2 w-40 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+<div className="h-full rounded-full bg-emerald-500" style={{ width: `${completionPct}%` }} />
+</div>
+<span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{completionPct}%</span>
+</div>
+</div>
+</div>
+
+{missing.length > 0 && (
+<div className="card border-amber-200 dark:border-amber-800">
+<div className="mb-3 flex items-center gap-2">
+<AlertTriangle className="h-4 w-4 text-amber-500" />
+<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Missing ({missing.length})</h4>
+</div>
+<div className="divide-y divide-gray-50 dark:divide-gray-700/50">
+{missingSorted.map((item) => (
+<div key={item.key} className="flex items-center justify-between gap-3 py-2">
+<div className="min-w-0">
+<div className="flex items-center gap-2">
+<span className="truncate text-sm font-medium text-gray-900 dark:text-white">{item.label}</span>
+<ChecklistStatus status={item.status} />
+{item.year && (
+<span className="text-xs text-gray-400">{item.month_label ? `${item.month_label} ` : ''}{item.year}</span>
+)}
+</div>
+<p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.detail}</p>
+</div>
+<button
+type="button"
+onClick={() => requestUpload(item)}
+className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700/40"
+>
+<Upload className="h-3 w-3" /> Upload
+</button>
+</div>
+))}
+</div>
+</div>
+)}
+
+<div className="card">
+<h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">One-Time</h4>
+<div className="divide-y divide-gray-50 dark:divide-gray-700/50">
+{groups.one_time.map((item) => (
+<div key={item.key} className="flex items-center justify-between gap-3 py-2">
+<div className="min-w-0">
+<div className="flex items-center gap-2">
+<span className="truncate text-sm font-medium text-gray-900 dark:text-white">{item.label}</span>
+<ChecklistStatus status={item.status} />
+</div>
+<p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.detail}</p>
+</div>
+<span className="shrink-0 text-xs text-gray-400">{item.source}</span>
+</div>
+))}
+</div>
+</div>
+
+<div className="card">
+<div className="mb-3 flex items-center justify-between">
+<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Annual</h4>
+<span className="text-xs text-gray-400">Tax returns are portfolio-wide (common) and satisfy every property at once.</span>
+</div>
+<div className="overflow-x-auto">
+<table className="min-w-full text-sm">
+<thead>
+<tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+<th className="py-2 pr-3 font-medium">Document</th>
+{annualPivot.years.map((year) => (
+<th key={year} className="py-2 px-3 text-center font-medium">{year}</th>
+))}
+</tr>
+</thead>
+<tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+{annualPivot.labels.map((label) => (
+<tr key={label}>
+<td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">{label}</td>
+{annualPivot.years.map((year) => {
+const item = annualPivot.cell(label, year)
+return (
+<td key={year} className="py-2 px-3 text-center" title={item?.detail}>
+{item ? <ChecklistDot status={item.status} /> : <span className="text-gray-300">—</span>}
+</td>
+)
+})}
+</tr>
+))}
+</tbody>
+</table>
+</div>
+</div>
+
+<div className="card">
+<div className="mb-3 flex items-center justify-between">
+<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Monthly</h4>
+<span className="text-xs text-gray-400">Last 24 months of ownership</span>
+</div>
+<div className="space-y-4">
+{monthlyPivot.rows.map(({ label, years }) => (
+<div key={label} className="overflow-x-auto">
+<div className="mb-1 text-xs font-semibold text-gray-700 dark:text-gray-300">{label}</div>
+{years.map((year) => (
+<div key={year} className="mb-1 flex items-center gap-2 text-xs">
+<span className="w-12 shrink-0 text-gray-400">{year}</span>
+<div className="flex gap-1">
+{MONTH_ABBR.map((monthLabel, idx) => {
+const item = monthlyPivot.cell(label, year, idx + 1)
+return (
+<span key={monthLabel} title={item ? `${monthLabel} ${year}: ${item.status}` : undefined} className="flex flex-col items-center gap-0.5">
+<span className="text-[10px] text-gray-400">{monthLabel[0]}</span>
+{item ? <ChecklistDot status={item.status} /> : <span className="inline-block h-2.5 w-2.5 rounded-full bg-gray-100 dark:bg-gray-700" />}
+</span>
+)
+})}
+</div>
+</div>
+))}
+</div>
+))}
+</div>
+</div>
+</div>
+)
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 
 const RAW_FIELD_LABELS = {
@@ -361,6 +571,20 @@ const RAW_FIELD_LABELS = {
   net_income: 'Net Income',
   days_rented: 'Days Rented',
   personal_use_days: 'Personal Use Days',
+  expense_breakdown: 'Expense Breakdown',
+  depreciation_detail: 'Depreciation Detail',
+  source_refs: 'Source References',
+  unresolved_fields: 'Unresolved Fields',
+  confidence: 'Confidence',
+  schedule1_line5_total: 'Schedule 1 Line 5 Total',
+  schedule1_line5_delta: 'Schedule 1 Line 5 Delta',
+  cash_noi: 'Cash NOI',
+  tax_pl: 'Tax P&L',
+  depreciable_basis: 'Depreciable Basis',
+  accumulated_depreciation: 'Accumulated Depreciation',
+  remaining_depreciable_basis: 'Remaining Depreciable Basis',
+  years_remaining: 'Years Remaining',
+  annual_straight_line_depreciation: 'Annual Straight-Line Depreciation',
 }
 
 const DOCUMENT_TYPE_LABELS = {
@@ -391,23 +615,69 @@ function rawYear(doc, data = {}) {
   return match ? match[0] : '—'
 }
 
-function rawValue(value) {
+function rawValue(value, field) {
   if (value == null || value === '') return '—'
-  if (typeof value === 'number') return Math.abs(value) >= 1000 ? fmt(value) : String(value)
+  if (typeof value === 'number') {
+    const plainNumberFields = new Set([
+      'statement_year', 'tax_year', 'year', 'days_rented', 'personal_use_days',
+      'loan_term_years', 'months',
+    ])
+    const percentFields = new Set(['interest_rate', 'original_ltv', 'occupancy_rate'])
+    if (plainNumberFields.has(field)) return String(value)
+    if (percentFields.has(field)) return `${value}%`
+    return Math.abs(value) >= 1000 ? fmt(value) : String(value)
+  }
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
 
+function rawComparable(value, field) {
+  if (value == null || value === '') return ''
+  if (typeof value === 'boolean') return value ? 1 : 0
+  if (typeof value === 'number') return value
+  const text = String(value).trim()
+  if (['statement_year', 'tax_year', 'year'].includes(field)) {
+    const year = Number(text)
+    return Number.isNaN(year) ? text : year
+  }
+  const numeric = text.replace(/[$,%]/g, '')
+  if (numeric !== '' && !Number.isNaN(Number(numeric))) return Number(numeric)
+  return text.toLowerCase()
+}
+
 function flattenExtractedData(data) {
-  return Object.entries(data || {})
-    .filter(([key]) => !['raw_text_preview', 'parse_error'].includes(key))
-    .map(([field, value]) => ({ field, value }))
+    return Object.entries(data || {})
+        .filter(([key]) => !['raw_text_preview', 'parse_error'].includes(key))
+        .map(([field, value]) => ({ field, value }))
+}
+
+function rawRowDedupeKey(row) {
+    const fields = Object.entries(row.fields || {})
+        .filter(([, value]) => value !== null && value !== undefined && value !== '')
+        .sort(([a], [b]) => a.localeCompare(b))
+    return JSON.stringify({
+        documentType: row.documentType,
+        year: row.year,
+        source: row.source,
+        fields,
+    })
+}
+
+function dedupeRawRows(rawRows) {
+    const seen = new Set()
+    return rawRows.filter((row) => {
+        const key = rawRowDedupeKey(row)
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+    })
 }
 
 function ExtractedRawDataTab({ propId, prop, docs }) {
-  const [taxEntries, setTaxEntries] = useState([])
-  const [loading, setLoading] = useState(true)
+const [taxEntries, setTaxEntries] = useState([])
+const [loading, setLoading] = useState(true)
+const [sortConfig, setSortConfig] = useState({ key: 'year', direction: 'desc', type: 'base' })
 
   useEffect(() => {
     setLoading(true)
@@ -417,6 +687,10 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
       .finally(() => setLoading(false))
   }, [propId])
 
+  // Raw JSON-blob fields — not readable in a spreadsheet-style table, so
+  // they're excluded from every row rather than shown as stringified JSON.
+  const JSON_BLOB_FIELDS = ['expense_breakdown', 'depreciation_detail', 'source_refs', 'unresolved_fields', 'properties']
+
   const documentRows = (docs || []).map((doc) => {
     const data = doc.extracted_data || {}
     return {
@@ -425,7 +699,11 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
       year: rawYear(doc, data),
       source: doc.original_filename || `Document ${doc.id}`,
       fields: Object.fromEntries(
-        Object.entries(data).filter(([key]) => !['raw_text_preview', 'parse_error'].includes(key))
+        Object.entries(data).filter(([key, value]) =>
+          !['raw_text_preview', 'parse_error'].includes(key) &&
+          !JSON_BLOB_FIELDS.includes(key) &&
+          typeof value !== 'object'
+        )
       ),
     }
   })
@@ -442,16 +720,26 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
       depreciation: entry.depreciation,
       total_expenses: entry.total_expenses,
       net_income: entry.net_income,
-      days_rented: entry.days_rented,
-      personal_use_days: entry.personal_use_days,
-    },
-  }))
+        days_rented: entry.days_rented,
+        personal_use_days: entry.personal_use_days,
+        confidence: entry.confidence,
+        schedule1_line5_total: entry.schedule1_line5_total,
+        schedule1_line5_delta: entry.schedule1_line5_delta,
+        cash_noi: entry.cash_noi,
+        tax_pl: entry.tax_pl,
+        depreciable_basis: entry.depreciable_basis,
+        accumulated_depreciation: entry.accumulated_depreciation,
+        remaining_depreciable_basis: entry.remaining_depreciable_basis,
+        years_remaining: entry.years_remaining,
+        annual_straight_line_depreciation: entry.annual_straight_line_depreciation,
+      },
+    }))
 
-  const rows = [...documentRows, ...taxRows].sort((a, b) => {
-    const byYear = String(b.year).localeCompare(String(a.year))
-    if (byYear) return byYear
-    return a.documentType.localeCompare(b.documentType) || a.source.localeCompare(b.source)
-  })
+    const rows = dedupeRawRows([...documentRows, ...taxRows]).sort((a, b) => {
+        const byYear = String(b.year).localeCompare(String(a.year))
+        if (byYear) return byYear
+        return a.documentType.localeCompare(b.documentType) || a.source.localeCompare(b.source)
+    })
 
   const preferredFields = [
     'statement_year',
@@ -478,20 +766,73 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
     'depreciation',
     'total_expenses',
     'net_income',
-    'days_rented',
-    'personal_use_days',
-  ]
+'days_rented',
+'personal_use_days',
+'confidence',
+'schedule1_line5_total',
+'schedule1_line5_delta',
+'cash_noi',
+'tax_pl',
+'depreciable_basis',
+'accumulated_depreciation',
+'remaining_depreciable_basis',
+'years_remaining',
+'annual_straight_line_depreciation',
+]
 
-  const fieldColumns = Array.from(new Set(rows.flatMap((row) => Object.keys(row.fields || {}))))
-    .sort((a, b) => {
-      const ai = preferredFields.indexOf(a)
-      const bi = preferredFields.indexOf(b)
-      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
-      return rawFieldLabel(a).localeCompare(rawFieldLabel(b))
-    })
+const fieldColumns = Array.from(new Set(rows.flatMap((row) => Object.keys(row.fields || {}))))
+.sort((a, b) => {
+const ai = preferredFields.indexOf(a)
+const bi = preferredFields.indexOf(b)
+if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+return rawFieldLabel(a).localeCompare(rawFieldLabel(b))
+})
 
-  const exportXLSX = () => {
-    const exportRows = rows.map((row) => {
+const requestSort = (key, type = 'field') => {
+setSortConfig((current) => ({
+key,
+type,
+direction: current.key === key && current.type === type && current.direction === 'asc' ? 'desc' : 'asc',
+}))
+}
+
+const sortedRows = [...rows].sort((a, b) => {
+const type = sortConfig.type || 'base'
+const key = sortConfig.key || 'year'
+const av = type === 'base' ? a[key] : a.fields?.[key]
+const bv = type === 'base' ? b[key] : b.fields?.[key]
+const left = rawComparable(av, key)
+const right = rawComparable(bv, key)
+let result = 0
+if (typeof left === 'number' && typeof right === 'number') {
+result = left - right
+} else {
+result = String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' })
+}
+if (result === 0) {
+result = String(b.year).localeCompare(String(a.year), undefined, { numeric: true }) ||
+a.documentType.localeCompare(b.documentType) ||
+a.source.localeCompare(b.source)
+}
+return sortConfig.direction === 'desc' ? -result : result
+})
+
+const SortHeader = ({ sortKey, type = 'field', children, sticky = false }) => {
+const active = sortConfig.key === sortKey && sortConfig.type === type
+return (
+<button
+type="button"
+onClick={() => requestSort(sortKey, type)}
+className={`inline-flex items-center gap-1 whitespace-nowrap font-medium hover:text-gray-900 dark:hover:text-white ${active ? 'text-gray-900 dark:text-white' : ''}`}
+>
+<span>{children}</span>
+<ChevronDown className={`h-3 w-3 transition-transform ${active && sortConfig.direction === 'asc' ? 'rotate-180' : ''} ${active ? 'opacity-100' : 'opacity-35'}`} />
+</button>
+)
+}
+
+const exportXLSX = () => {
+const exportRows = sortedRows.map((row) => {
       const out = {
         'Property ID': prop?.property_uid || propId,
         'Property Name': propertyLabel(prop),
@@ -500,7 +841,7 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
         Source: row.source,
       }
       fieldColumns.forEach((field) => {
-        out[rawFieldLabel(field)] = rawValue(row.fields[field])
+      out[rawFieldLabel(field)] = rawValue(row.fields[field], field)
       })
       return out
     })
@@ -539,16 +880,16 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                <th className="sticky left-0 z-10 bg-white py-2 pr-3 font-medium dark:bg-gray-800">Document Type</th>
-                <th className="py-2 px-3 font-medium">Year</th>
-                <th className="py-2 px-3 font-medium">Source</th>
-                {fieldColumns.map((field) => (
-                  <th key={field} className="whitespace-nowrap py-2 px-3 font-medium">{rawFieldLabel(field)}</th>
-                ))}
+<th className="sticky left-0 z-10 bg-white py-2 pr-3 font-medium dark:bg-gray-800"><SortHeader sortKey="documentType" type="base">Document Type</SortHeader></th>
+<th className="py-2 px-3 font-medium"><SortHeader sortKey="year" type="base">Year</SortHeader></th>
+<th className="py-2 px-3 font-medium"><SortHeader sortKey="source" type="base">Source</SortHeader></th>
+{fieldColumns.map((field) => (
+<th key={field} className="whitespace-nowrap py-2 px-3 font-medium"><SortHeader sortKey={field}>{rawFieldLabel(field)}</SortHeader></th>
+))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-              {rows.map((row) => (
+{sortedRows.map((row) => (
                 <tr key={row.key} className="hover:bg-gray-50 dark:hover:bg-gray-700/40">
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-white py-2 pr-3 align-top font-medium text-gray-900 dark:bg-gray-800 dark:text-white">
                     {row.documentType}
@@ -557,7 +898,7 @@ function ExtractedRawDataTab({ propId, prop, docs }) {
                   <td className="max-w-[220px] truncate whitespace-nowrap py-2 px-3 align-top text-gray-500 dark:text-gray-400">{row.source}</td>
                   {fieldColumns.map((field) => (
                     <td key={field} className="whitespace-nowrap py-2 px-3 align-top text-gray-800 dark:text-gray-200">
-                      {rawValue(row.fields[field])}
+                      {rawValue(row.fields[field], field)}
                     </td>
                   ))}
                 </tr>
@@ -575,6 +916,274 @@ function MetricRow({ label, value }) {
     <div className="flex justify-between text-sm">
       <span className="text-gray-500 dark:text-gray-400">{label}</span>
       <span className="font-medium text-gray-900 dark:text-white">{value}</span>
+    </div>
+  )
+}
+
+const defaultDepreciationAsset = {
+  asset_type: 'depreciation',
+  description: 'Roof replacement',
+  placed_in_service_date: new Date().toISOString().slice(0, 10),
+  cost_basis: 70000,
+  land_portion: 0,
+  method: 'SL',
+  recovery_period: 27.5,
+  prior_depreciation: 0,
+  notes: '',
+}
+
+function DepreciationTab({ propId }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [taxYear, setTaxYear] = useState(new Date().getFullYear())
+  const [showForm, setShowForm] = useState(false)
+  const [editingAsset, setEditingAsset] = useState(null)
+  const [form, setForm] = useState(defaultDepreciationAsset)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    propAPI.depreciation(propId, taxYear)
+      .then((res) => setData(res.data))
+      .catch(() => toast.error('Failed to load depreciation schedule'))
+      .finally(() => setLoading(false))
+  }, [propId, taxYear])
+
+  const openAdd = (type = 'depreciation') => {
+    setEditingAsset(null)
+    setForm(type === 'amortization'
+      ? { ...defaultDepreciationAsset, asset_type: 'amortization', description: 'Loan costs / points', cost_basis: 0, recovery_period: 30, notes: 'Amortized over loan term.' }
+      : defaultDepreciationAsset)
+    setShowForm(true)
+  }
+
+  const openEdit = (asset) => {
+    setEditingAsset(asset)
+    setForm({
+      asset_type: asset.asset_type || 'depreciation',
+      description: asset.description || '',
+      placed_in_service_date: asset.placed_in_service_date || '',
+      cost_basis: asset.cost_basis || 0,
+      land_portion: asset.land_portion || 0,
+      method: asset.method || 'SL',
+      recovery_period: asset.recovery_period || 27.5,
+      prior_depreciation: asset.prior_depreciation || 0,
+      notes: asset.notes || '',
+    })
+    setShowForm(true)
+  }
+
+  const saveAsset = async (e) => {
+    e.preventDefault()
+    setSaving(true)
+    const payload = {
+      ...form,
+      cost_basis: Number(form.cost_basis) || 0,
+      land_portion: Number(form.land_portion) || 0,
+      recovery_period: Number(form.recovery_period) || 27.5,
+      prior_depreciation: Number(form.prior_depreciation) || 0,
+    }
+    try {
+      const res = editingAsset?.id
+        ? await propAPI.updateDepreciationAsset(propId, editingAsset.id, payload)
+        : await propAPI.addDepreciationAsset(propId, payload)
+      setData(res.data)
+      setShowForm(false)
+      setEditingAsset(null)
+      toast.success('Asset saved')
+    } catch {
+      toast.error('Failed to save asset')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const deleteAsset = async (asset) => {
+    if (!asset.id || !window.confirm(`Delete ${asset.description}?`)) return
+    try {
+      const res = await propAPI.deleteDepreciationAsset(propId, asset.id)
+      setData(res.data)
+      toast.success('Asset deleted')
+    } catch {
+      toast.error('Failed to delete asset')
+    }
+  }
+
+  const comparison = data?.schedule_e || {}
+  const rollup = data?.rollup || {}
+  const assets = data?.assets || []
+  const assetKeys = assets.slice(0, 6).map((asset) => asset.description)
+  const colors = ['#2563eb', '#f97316', '#16a34a', '#9333ea', '#0f766e', '#dc2626']
+  const isTied = comparison.status === 'ties'
+  const hasDiff = comparison.status === 'diff'
+
+  return (
+    <div className="space-y-4">
+      <div className={`rounded-lg border p-4 ${hasDiff ? 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20' : 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/20'}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex gap-3">
+            {isTied ? <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-600" /> : <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600" />}
+            <div>
+              <h3 className="font-semibold text-gray-900 dark:text-white">
+                {isTied ? 'Ties to filing' : comparison.status === 'missing_filing' ? 'No Schedule E comparison yet' : `Off by ${fmt(Math.abs(comparison.delta || 0))}`}
+              </h3>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                Model depreciation {fmt(comparison.model_total)} vs Schedule E line 18 {comparison.line_18_depreciation == null ? 'not found' : fmt(comparison.line_18_depreciation)} for {taxYear}.
+              </p>
+              {comparison.common_causes?.length ? (
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Check: {comparison.common_causes.join(', ')}.</p>
+              ) : null}
+            </div>
+          </div>
+          <label className="text-xs font-medium text-gray-500 dark:text-gray-400">
+            Tax year
+            <input type="number" className="input mt-1 w-28" value={taxYear} onChange={(e) => setTaxYear(Number(e.target.value) || new Date().getFullYear())} />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          <p className="text-xs font-medium uppercase text-gray-400">Current Year Depreciation</p>
+          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_current_year_depreciation)}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          <p className="text-xs font-medium uppercase text-gray-400">Annual Depreciation</p>
+          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_annual_depreciation)}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          <p className="text-xs font-medium uppercase text-gray-400">Accumulated</p>
+          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_accumulated_depreciation)}</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          <p className="text-xs font-medium uppercase text-gray-400">Remaining Basis</p>
+          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_remaining_basis)}</p>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">Depreciation & Amortization Assets</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Land is excluded. Each capital improvement runs its own schedule.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-secondary flex items-center gap-1.5 text-sm" onClick={() => openAdd('amortization')}>
+              <Plus className="h-4 w-4" /> Add Amortization
+            </button>
+            <button type="button" className="btn-primary flex items-center gap-1.5 text-sm" onClick={() => openAdd('depreciation')}>
+              <Plus className="h-4 w-4" /> Add Improvement
+            </button>
+          </div>
+        </div>
+
+        {showForm && (
+          <form onSubmit={saveAsset} className="mb-4 grid gap-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700 md:grid-cols-3">
+            <label className="label">Type
+              <select className="input mt-1" value={form.asset_type} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}>
+                <option value="depreciation">Depreciation</option>
+                <option value="amortization">Amortization</option>
+              </select>
+            </label>
+            <label className="label md:col-span-2">Description
+              <input className="input mt-1" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} required />
+            </label>
+            <label className="label">Placed In Service
+              <input type="date" className="input mt-1" value={form.placed_in_service_date} onChange={(e) => setForm({ ...form, placed_in_service_date: e.target.value })} />
+            </label>
+            <label className="label">Cost / Basis
+              <input type="number" className="input mt-1" value={form.cost_basis} onChange={(e) => setForm({ ...form, cost_basis: e.target.value })} />
+            </label>
+            <label className="label">Land Portion
+              <input type="number" className="input mt-1" value={form.land_portion} onChange={(e) => setForm({ ...form, land_portion: e.target.value })} />
+            </label>
+            <label className="label">Method
+              <input className="input mt-1" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} />
+            </label>
+            <label className="label">Recovery Period
+              <input type="number" step="0.1" className="input mt-1" value={form.recovery_period} onChange={(e) => setForm({ ...form, recovery_period: e.target.value })} />
+            </label>
+            <label className="label">Prior Depreciation
+              <input type="number" className="input mt-1" value={form.prior_depreciation} onChange={(e) => setForm({ ...form, prior_depreciation: e.target.value })} />
+            </label>
+            <label className="label md:col-span-3">Notes
+              <input className="input mt-1" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+            </label>
+            <div className="flex gap-2 md:col-span-3">
+              <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Asset'}</button>
+              <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+            </div>
+          </form>
+        )}
+
+        {loading ? (
+          <div className="py-10 text-center text-sm text-gray-400">Loading depreciation schedule...</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  <th className="py-2 pr-3 font-medium">Asset</th>
+                  <th className="py-2 px-3 font-medium">Type</th>
+                  <th className="py-2 px-3 font-medium">In Service</th>
+                  <th className="py-2 px-3 font-medium">Basis</th>
+                  <th className="py-2 px-3 font-medium">Land</th>
+                  <th className="py-2 px-3 font-medium">Annual</th>
+                  <th className="py-2 px-3 font-medium">{taxYear}</th>
+                  <th className="py-2 px-3 font-medium">Accumulated</th>
+                  <th className="py-2 px-3 font-medium">Remaining</th>
+                  <th className="py-2 px-3 font-medium">Fully Depreciated</th>
+                  <th className="py-2 px-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+                {assets.map((asset, index) => (
+                  <tr key={asset.id || `base-${index}`} className="align-top">
+                    <td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">
+                      {asset.description}
+                      {asset.warning ? <p className="mt-1 max-w-xs text-xs font-normal text-amber-600 dark:text-amber-400">{asset.warning}</p> : null}
+                    </td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{asset.asset_type === 'amortization' ? 'Amortization' : 'Depreciation'}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{asset.placed_in_service_date || '—'}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.cost_basis)}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.land_portion)}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.annual_depreciation)}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-900 dark:text-white">{fmt(asset.current_year_depreciation)}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.accumulated_depreciation)}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.remaining_basis)}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{asset.fully_depreciated_date || '—'}</td>
+                    <td className="whitespace-nowrap py-2 px-3 text-right">
+                      {!asset.is_base_building && (
+                        <div className="flex justify-end gap-1">
+                          <button type="button" className="icon-btn" onClick={() => openEdit(asset)} title="Edit asset"><Pencil className="h-4 w-4" /></button>
+                          <button type="button" className="icon-btn text-red-600" onClick={() => deleteAsset(asset)} title="Delete asset"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h3 className="mb-4 font-semibold text-gray-900 dark:text-white">Annual Depreciation Timeline</h3>
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data?.timeline || []}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="year" />
+              <YAxis tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+              <Tooltip formatter={(value) => fmt(value)} />
+              {assetKeys.map((key, index) => (
+                <Area key={key} type="monotone" dataKey={key} stackId="1" stroke={colors[index % colors.length]} fill={colors[index % colors.length]} fillOpacity={0.35} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
     </div>
   )
 }

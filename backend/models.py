@@ -53,8 +53,22 @@ class Property(Base):
     zip_code = Column(String)
     property_type = Column(String, default=PropertyType.SINGLE_FAMILY)
     usage_type = Column(String, default="Rental")  # Rental | Primary
+    # True once the user has explicitly changed Usage themselves — locks out
+    # the tax-return importer's "latest primary home" auto-detection so a
+    # later return can't silently flip it back.
+    usage_type_locked = Column(Boolean, default=False)
+    original_residency_status = Column(String)
+    current_residency_status = Column(String)
+    primary_start_date = Column(String)
+    primary_end_date = Column(String)
+    rental_start_date = Column(String)
+    rental_end_date = Column(String)
+    recorded_date = Column(String)
+    held_period = Column(String)
     purchase_date = Column(String)
     purchase_price = Column(Float, default=0.0)
+    settlement_total_amount = Column(Float, default=0.0)
+    closing_costs = Column(Float, default=0.0)
 
     # Rental income
     monthly_rent = Column(Float, default=0.0)
@@ -63,6 +77,7 @@ class Property(Base):
     # Expenses (monthly)
     property_tax = Column(Float, default=0.0)
     insurance = Column(Float, default=0.0)
+    hoa_flag = Column(Boolean, default=False)
     hoa_fee = Column(Float, default=0.0)
     hoa_history = Column(Text, default="[]")  # JSON: [{year, monthly_fee}]
     hoa_special_assessment = Column(Float, default=0.0)
@@ -102,6 +117,8 @@ class Property(Base):
         cascade="all, delete-orphan", order_by="RentalPeriod.start_year, RentalPeriod.start_month")
     tax_entries = relationship(
         "TaxReturnEntry", back_populates="property", cascade="all, delete-orphan")
+    depreciation_assets = relationship(
+        "DepreciationAsset", back_populates="property", cascade="all, delete-orphan")
 
 
 class Loan(Base):
@@ -111,15 +128,18 @@ class Loan(Base):
     property_id = Column(Integer, ForeignKey("properties.id"), nullable=False)
 
     lender_name = Column(String)
+    loan_product = Column(String)
     loan_type = Column(String, default=LoanType.FIXED)
     original_amount = Column(Float, nullable=False)
     current_balance = Column(Float, nullable=False)
     interest_rate = Column(Float, nullable=False)  # annual percentage
     rate_note = Column(String)  # e.g. "Until 10/2032 pmt" for ARM intro rates
     monthly_payment = Column(Float, nullable=False)
+    estimated_total_monthly_payment = Column(Float, default=0.0)
     loan_term_years = Column(Integer, nullable=False)
     origination_date = Column(String)
     maturity_date = Column(String)
+    original_ltv = Column(Float, default=0.0)
 
     # From the latest mortgage statement
     account_number = Column(String)
@@ -128,8 +148,14 @@ class Loan(Base):
     interest_due = Column(Float)  # interest portion of current payment
     statement_date = Column(String)
     payment_due_date = Column(String)
+    mortgage_tenure_covered = Column(String)
+    interest_paid_ytd = Column(Float, default=0.0)
+    principal_paid_ytd = Column(Float, default=0.0)
+    projected_principal_fy = Column(Float, default=0.0)
+    projected_interest_fy = Column(Float, default=0.0)
 
     # Escrow
+    escrow_included = Column(Boolean, default=False)
     escrow_amount = Column(Float, default=0.0)  # monthly taxes+insurance in escrow
 
     # ARM specific
@@ -197,6 +223,28 @@ class RentalPeriod(Base):
     property = relationship("Property", back_populates="rental_periods")
 
 
+class DepreciationAsset(Base):
+    """Asset-level depreciation/amortization schedule item for one property."""
+    __tablename__ = "depreciation_assets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    asset_type = Column(String, default="depreciation")  # depreciation | amortization
+    description = Column(String, nullable=False)
+    placed_in_service_date = Column(String)
+    cost_basis = Column(Float, default=0.0)
+    land_portion = Column(Float, default=0.0)
+    method = Column(String, default="SL")
+    recovery_period = Column(Float, default=27.5)
+    prior_depreciation = Column(Float, default=0.0)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship("Property", back_populates="depreciation_assets")
+
+
 class TaxReturnEntry(Base):
     """Per-property figures extracted from a tax return (Schedule E rentals +
     Schedule A primary home), for year-over-year and cross-property comparison.
@@ -222,6 +270,20 @@ class TaxReturnEntry(Base):
     depreciation = Column(Float, default=0.0)
     total_expenses = Column(Float, default=0.0)
     net_income = Column(Float, default=0.0)
+    expense_breakdown = Column(Text, default="{}")
+    depreciation_detail = Column(Text, default="{}")
+    source_refs = Column(Text, default="{}")
+    unresolved_fields = Column(Text, default="[]")
+    confidence = Column(Float, default=0.0)
+    schedule1_line5_total = Column(Float)
+    schedule1_line5_delta = Column(Float)
+    cash_noi = Column(Float, default=0.0)
+    tax_pl = Column(Float, default=0.0)
+    depreciable_basis = Column(Float, default=0.0)
+    accumulated_depreciation = Column(Float, default=0.0)
+    remaining_depreciable_basis = Column(Float, default=0.0)
+    years_remaining = Column(Float, default=0.0)
+    annual_straight_line_depreciation = Column(Float, default=0.0)
     # Schedule E "Fair Rental Days" / "Personal Use Days" (lines 2 & 3)
     days_rented = Column(Integer, default=0)       # days property was rented
     personal_use_days = Column(Integer, default=0) # days owner personally used it

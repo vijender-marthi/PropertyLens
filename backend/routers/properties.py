@@ -1,11 +1,11 @@
 import json
 import uuid
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import date, datetime
 import models
 from database import get_db
 from routers.auth import get_current_user
@@ -14,6 +14,7 @@ from services.loan_calculator import (
     depreciation_schedule, monthly_payment
 )
 from services.property_valuation import get_property_value
+from services.checklist import build_checklist
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
 
@@ -28,16 +29,20 @@ PROPERTY_CODE_NAMES = [
 
 class LoanBase(BaseModel):
     lender_name: Optional[str] = None
+    loan_product: Optional[str] = None
     loan_type: str = "FIXED"
     original_amount: float
     current_balance: float
     interest_rate: float
     rate_note: Optional[str] = None
     monthly_payment: float
+    estimated_total_monthly_payment: float = 0.0
     loan_term_years: int
     origination_date: Optional[str] = None
     maturity_date: Optional[str] = None
+    original_ltv: float = 0.0
     escrow_amount: float = 0.0
+    escrow_included: bool = False
     down_payment: float = 0.0
     account_number: Optional[str] = None
     borrowers: Optional[str] = None
@@ -45,6 +50,11 @@ class LoanBase(BaseModel):
     interest_due: Optional[float] = None
     statement_date: Optional[str] = None
     payment_due_date: Optional[str] = None
+    mortgage_tenure_covered: Optional[str] = None
+    interest_paid_ytd: float = 0.0
+    principal_paid_ytd: float = 0.0
+    projected_principal_fy: float = 0.0
+    projected_interest_fy: float = 0.0
     arm_initial_period: Optional[int] = None
     arm_adjustment_period: Optional[int] = None
     arm_cap: Optional[float] = None
@@ -68,12 +78,23 @@ class PropertyBase(BaseModel):
     zip_code: Optional[str] = None
     property_type: str = "Single Family"
     usage_type: str = "Rental"  # Rental | Primary
+    original_residency_status: Optional[str] = None
+    current_residency_status: Optional[str] = None
+    primary_start_date: Optional[str] = None
+    primary_end_date: Optional[str] = None
+    rental_start_date: Optional[str] = None
+    rental_end_date: Optional[str] = None
+    recorded_date: Optional[str] = None
+    held_period: Optional[str] = None
     purchase_date: Optional[str] = None
     purchase_price: float = 0.0
+    settlement_total_amount: float = 0.0
+    closing_costs: float = 0.0
     monthly_rent: float = 0.0
     occupancy_rate: float = 100.0
     property_tax: float = 0.0
     insurance: float = 0.0
+    hoa_flag: bool = False
     hoa_fee: float = 0.0
     hoa_history: str = "[]"
     hoa_special_assessment: float = 0.0
@@ -101,6 +122,7 @@ class PropertyOut(PropertyBase):
     id: int
     property_uid: str
     owner_id: int
+    usage_type_locked: bool = False
     loans: List[LoanOut] = []
     market_value_updated: Optional[str] = None
 
@@ -161,6 +183,43 @@ class TaxEntryOut(BaseModel):
     net_income: float
     days_rented: Optional[int] = 0
     personal_use_days: Optional[int] = 0
+
+    class Config:
+        from_attributes = True
+
+
+class DepreciationAssetBase(BaseModel):
+    asset_type: str = "depreciation"
+    description: str
+    placed_in_service_date: Optional[str] = None
+    cost_basis: float = 0.0
+    land_portion: float = 0.0
+    method: str = "SL"
+    recovery_period: float = 27.5
+    prior_depreciation: float = 0.0
+    notes: Optional[str] = ""
+
+
+class DepreciationAssetCreate(DepreciationAssetBase):
+    pass
+
+
+class DepreciationAssetUpdate(DepreciationAssetBase):
+    pass
+
+
+class DepreciationAssetOut(DepreciationAssetBase):
+    id: Optional[int] = None
+    property_id: Optional[int] = None
+    owner_id: Optional[int] = None
+    depreciable_basis: float = 0.0
+    annual_depreciation: float = 0.0
+    current_year_depreciation: float = 0.0
+    accumulated_depreciation: float = 0.0
+    remaining_basis: float = 0.0
+    fully_depreciated_date: Optional[str] = None
+    is_base_building: bool = False
+    warning: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -280,6 +339,189 @@ def _get_accessible_property(prop_id: int, db: Session, current_user: models.Use
     raise HTTPException(status_code=403, detail="Access denied")
 
 
+def _parse_iso_date(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(value[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _add_months(value: date, months: int) -> date:
+    month = value.month - 1 + months
+    year = value.year + month // 12
+    month = month % 12 + 1
+    return date(year, month, min(value.day, 28))
+
+
+def _mid_month_depreciation_for_year(
+    basis: float,
+    placed_in_service: Optional[str],
+    recovery_period: float,
+    tax_year: int,
+) -> float:
+    if basis <= 0 or recovery_period <= 0:
+        return 0.0
+    placed = _parse_iso_date(placed_in_service) or date(tax_year, 1, 1)
+    total_months = recovery_period * 12
+    start = placed.year * 12 + (placed.month - 1) + 0.5
+    end = start + total_months
+    year_start = tax_year * 12
+    year_end = year_start + 12
+    months = max(0.0, min(end, year_end) - max(start, year_start))
+    return round((basis / total_months) * months, 2)
+
+
+def _fully_depreciated_date(placed_in_service: Optional[str], recovery_period: float) -> Optional[str]:
+    placed = _parse_iso_date(placed_in_service)
+    if not placed or recovery_period <= 0:
+        return None
+    return _add_months(placed, int(round(recovery_period * 12))).isoformat()
+
+
+def _asset_warning(asset_type: str, description: str, property_type: str) -> Optional[str]:
+    text = (description or "").lower()
+    is_commercial = (property_type or "").lower() == "commercial"
+    if "roof" in text and asset_type == "depreciation":
+        if is_commercial:
+            return "Commercial roof improvement may qualify for Section 179/bonus review."
+        return "Roof replacement is treated as a capital improvement and depreciated separately."
+    if any(word in text for word in ("patch", "leak", "repair")):
+        return "Confirm repair vs improvement: repairs may be fully deductible, full replacements are capitalized."
+    return None
+
+
+def _serialize_depreciation_asset(asset, prop, tax_year: int, is_base_building: bool = False) -> Dict[str, Any]:
+    basis = max((asset.get("cost_basis") or 0.0) - (asset.get("land_portion") or 0.0), 0.0)
+    recovery_period = asset.get("recovery_period") or 27.5
+    annual = round(basis / recovery_period, 2) if recovery_period else 0.0
+    current = _mid_month_depreciation_for_year(
+        basis,
+        asset.get("placed_in_service_date"),
+        recovery_period,
+        tax_year,
+    )
+    prior = asset.get("prior_depreciation") or 0.0
+    accumulated = round(prior + sum(
+        _mid_month_depreciation_for_year(
+            basis,
+            asset.get("placed_in_service_date"),
+            recovery_period,
+            year,
+        )
+        for year in range((_parse_iso_date(asset.get("placed_in_service_date")) or date(tax_year, 1, 1)).year, tax_year + 1)
+    ), 2)
+    remaining = round(max(basis - accumulated, 0.0), 2)
+    return {
+        **asset,
+        "depreciable_basis": round(basis, 2),
+        "annual_depreciation": annual,
+        "current_year_depreciation": current,
+        "accumulated_depreciation": min(accumulated, round(basis, 2)),
+        "remaining_basis": remaining,
+        "fully_depreciated_date": _fully_depreciated_date(asset.get("placed_in_service_date"), recovery_period),
+        "is_base_building": is_base_building,
+        "warning": _asset_warning(asset.get("asset_type", "depreciation"), asset.get("description", ""), prop.property_type),
+    }
+
+
+def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict[str, Any]:
+    tax_year = tax_year or date.today().year
+    base_basis = _depreciable_basis(prop)
+    base_placed = prop.purchase_date or prop.recorded_date
+    assets = []
+    if base_basis > 0:
+        assets.append(_serialize_depreciation_asset({
+            "id": None,
+            "property_id": prop.id,
+            "owner_id": prop.owner_id,
+            "asset_type": "depreciation",
+            "description": "Building",
+            "placed_in_service_date": base_placed,
+            "cost_basis": (prop.purchase_price or 0.0),
+            "land_portion": (prop.land_value or 0.0),
+            "method": "SL",
+            "recovery_period": prop.depreciation_years or 27.5,
+            "prior_depreciation": 0.0,
+            "notes": "Derived from purchase price less land value.",
+        }, prop, tax_year, True))
+
+    for row in prop.depreciation_assets:
+        assets.append(_serialize_depreciation_asset({
+            "id": row.id,
+            "property_id": row.property_id,
+            "owner_id": row.owner_id,
+            "asset_type": row.asset_type or "depreciation",
+            "description": row.description,
+            "placed_in_service_date": row.placed_in_service_date,
+            "cost_basis": row.cost_basis or 0.0,
+            "land_portion": row.land_portion or 0.0,
+            "method": row.method or "SL",
+            "recovery_period": row.recovery_period or 27.5,
+            "prior_depreciation": row.prior_depreciation or 0.0,
+            "notes": row.notes or "",
+        }, prop, tax_year, False))
+
+    filed = next((e.depreciation for e in prop.tax_entries if e.tax_year == tax_year and e.property_kind == "rental"), None)
+    model_total = round(sum(a["current_year_depreciation"] for a in assets if a["asset_type"] == "depreciation"), 2)
+    amortization_total = round(sum(a["current_year_depreciation"] for a in assets if a["asset_type"] == "amortization"), 2)
+    delta = None if filed is None else round(model_total - (filed or 0.0), 2)
+
+    start_years = [
+        (_parse_iso_date(a.get("placed_in_service_date")) or date(tax_year, 1, 1)).year
+        for a in assets
+    ]
+    end_year = max([tax_year] + [
+        (_parse_iso_date(a.get("fully_depreciated_date")) or date(tax_year, 1, 1)).year
+        for a in assets
+    ])
+    start_year = min(start_years + [tax_year])
+    timeline = []
+    for year in range(start_year, min(end_year, start_year + 40) + 1):
+        row = {"year": year, "total": 0.0}
+        for asset in assets:
+            value = _mid_month_depreciation_for_year(
+                asset["depreciable_basis"],
+                asset.get("placed_in_service_date"),
+                asset.get("recovery_period") or 27.5,
+                year,
+            )
+            row[asset["description"]] = value
+            row["total"] = round(row["total"] + value, 2)
+        timeline.append(row)
+
+    common_causes = []
+    if delta not in (None, 0):
+        common_causes = [
+            "Mid-month convention first/last year proration",
+            "Missing capital improvement asset",
+            "Land/building split differs from filed return",
+        ]
+
+    return {
+        "tax_year": tax_year,
+        "assets": assets,
+        "timeline": timeline,
+        "rollup": {
+            "total_annual_depreciation": round(sum(a["annual_depreciation"] for a in assets if a["asset_type"] == "depreciation"), 2),
+            "total_current_year_depreciation": model_total,
+            "total_accumulated_depreciation": round(sum(a["accumulated_depreciation"] for a in assets if a["asset_type"] == "depreciation"), 2),
+            "total_remaining_basis": round(sum(a["remaining_basis"] for a in assets if a["asset_type"] == "depreciation"), 2),
+            "total_current_year_amortization": amortization_total,
+        },
+        "schedule_e": {
+            "line_18_depreciation": filed,
+            "model_total": model_total,
+            "delta": delta,
+            "status": "missing_filing" if filed is None else ("ties" if abs(delta or 0) < 1 else "diff"),
+            "common_causes": common_causes,
+        },
+    }
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=List[PropertySummary])
@@ -356,6 +598,128 @@ def create_property(
     return prop
 
 
+@router.get("/{prop_id}/depreciation")
+def get_depreciation_schedule(
+    prop_id: int,
+    tax_year: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = _get_accessible_property(prop_id, db, current_user)
+    return _depreciation_schedule_payload(prop, tax_year)
+
+
+@router.post("/{prop_id}/depreciation-assets")
+def create_depreciation_asset(
+    prop_id: int,
+    asset_in: DepreciationAssetCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = _get_accessible_property(prop_id, db, current_user)
+    if prop.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owner can update depreciation assets")
+    recovery = asset_in.recovery_period or (39.0 if prop.property_type == "Commercial" else 27.5)
+    asset = models.DepreciationAsset(
+        property_id=prop.id,
+        owner_id=current_user.id,
+        asset_type=asset_in.asset_type or "depreciation",
+        description=asset_in.description,
+        placed_in_service_date=asset_in.placed_in_service_date,
+        cost_basis=asset_in.cost_basis or 0.0,
+        land_portion=asset_in.land_portion or 0.0,
+        method=asset_in.method or "SL",
+        recovery_period=recovery,
+        prior_depreciation=asset_in.prior_depreciation or 0.0,
+        notes=asset_in.notes or "",
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(prop)
+    return _depreciation_schedule_payload(prop)
+
+
+@router.put("/{prop_id}/depreciation-assets/{asset_id}")
+def update_depreciation_asset(
+    prop_id: int,
+    asset_id: int,
+    asset_in: DepreciationAssetUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = _get_accessible_property(prop_id, db, current_user)
+    if prop.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owner can update depreciation assets")
+    asset = db.query(models.DepreciationAsset).filter_by(
+        id=asset_id,
+        property_id=prop.id,
+        owner_id=current_user.id,
+    ).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Depreciation asset not found")
+    for field, value in asset_in.model_dump().items():
+        setattr(asset, field, value)
+    db.commit()
+    db.refresh(prop)
+    return _depreciation_schedule_payload(prop)
+
+
+@router.delete("/{prop_id}/depreciation-assets/{asset_id}")
+def delete_depreciation_asset(
+    prop_id: int,
+    asset_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = _get_accessible_property(prop_id, db, current_user)
+    if prop.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the owner can update depreciation assets")
+    asset = db.query(models.DepreciationAsset).filter_by(
+        id=asset_id,
+        property_id=prop.id,
+        owner_id=current_user.id,
+    ).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Depreciation asset not found")
+    db.delete(asset)
+    db.commit()
+    db.refresh(prop)
+    return _depreciation_schedule_payload(prop)
+
+
+@router.get("/checklist-summary")
+def get_checklist_summary(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Portfolio-wide rollup of missing required documents, one entry per
+    owned property, for a dashboard "N documents missing" widget."""
+    props = db.query(models.Property).filter(models.Property.owner_id == current_user.id).all()
+    items = []
+    total_missing = 0
+    for prop in props:
+        result = build_checklist(
+            prop,
+            docs=prop.documents,
+            loans=prop.loans,
+            tax_entries=prop.tax_entries,
+            rental_periods=prop.rental_periods,
+        )
+        total_missing += len(result["missing"])
+        items.append({
+            "property_id": prop.id,
+            "name": prop.name,
+            "address": prop.address,
+            "missing_count": len(result["missing"]),
+            "required_count": len(result["required"]),
+            "completion_pct": result["completion_pct"],
+        })
+    return {
+        "properties": items,
+        "total_missing": total_missing,
+    }
+
+
 @router.get("/{prop_id}", response_model=PropertyOut)
 def get_property(
     prop_id: int,
@@ -380,6 +744,8 @@ def update_property(
         raise HTTPException(status_code=404, detail="Property not found")
     data = prop_in.model_dump()
     data["name"] = data.get("name") or _default_property_name(data.get("address"), prop.id)
+    if data.get("usage_type") != prop.usage_type:
+        prop.usage_type_locked = True
     for k, v in data.items():
         setattr(prop, k, v)
     db.commit()
@@ -910,17 +1276,99 @@ def _match_property(address: str, props):
     return None
 
 
+def _split_tax_return_address(addr: str):
+    """Split a Schedule E line-1a address blob into street/city/state/zip.
+
+    Schedule E prints the address as one string (e.g. "123 Main St, Anytown,
+    CA 90210"); tolerate a missing comma before the state/zip too."""
+    addr = (addr or "").strip()
+    m = re.match(r'^(.*?),?\s*([A-Za-z][A-Za-z .\-]*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?$', addr)
+    if m:
+        return m.group(1).strip(' ,'), m.group(2).strip(), m.group(3), m.group(4)
+    return addr, None, None, None
+
+
 TAX_ENTRY_FIELDS = ("rents_received", "mortgage_interest", "property_taxes",
-                    "depreciation", "total_expenses", "net_income",
-                    "days_rented", "personal_use_days")
+"depreciation", "total_expenses", "net_income",
+"days_rented", "personal_use_days")
+
+TAX_ENTRY_EXTRA_FIELDS = (
+    "schedule1_line5_total",
+    "schedule1_line5_delta",
+    "cash_noi",
+    "tax_pl",
+    "confidence",
+)
+
+TAX_ENTRY_JSON_FIELDS = (
+    "expense_breakdown",
+    "depreciation_detail",
+    "source_refs",
+    "unresolved_fields",
+)
 
 
-def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) -> int:
-    """Parse a 1040 return and upsert per-property tax entries (Schedule E
-    rentals + Schedule A primary). Matches each address to a managed property;
-    unmatched addresses are kept with property_id=None for comparison. Stores
-    no SSNs or names. Returns the number of entries imported."""
+def _default_primary_property(db: Session, owner_id: int, props: list, year: int, entries: list):
+    """Pick which managed property the Schedule A primary-home figures belong
+    to, when the return includes them.
+
+    Schedule A carries no address, so we can't match it directly like a
+    Schedule E rental. Instead: if exactly one property is already flagged
+    Primary, use it. Otherwise, among properties this year's Schedule E
+    *didn't* list as a rental, assume the most recently purchased one is the
+    home the taxpayer currently lives in ("the latest primary home") and
+    default it to Primary — but never touch a property the user has manually
+    set (usage_type_locked), and never let an older return override a
+    determination already made from a more recent one.
+    """
+    if not any(e.get('property_kind') == 'primary' for e in entries):
+        return next((p for p in props if (p.usage_type or "").lower() == "primary"), None)
+
+    explicit_primary = [p for p in props if (p.usage_type or "").lower() == "primary"]
+    if len(explicit_primary) == 1:
+        return explicit_primary[0]
+
+    matched_rental_ids = set()
+    for e in entries:
+        if e.get('property_kind') != 'rental':
+            continue
+        m = _match_property(e.get('address'), props)
+        if m:
+            matched_rental_ids.add(m.id)
+
+    candidates = [p for p in props if p.id not in matched_rental_ids and not p.usage_type_locked]
+
+    existing_years = [
+        y for (y,) in db.query(models.TaxReturnEntry.tax_year)
+        .filter(models.TaxReturnEntry.owner_id == owner_id).distinct()
+    ]
+    latest_year_seen = max(existing_years) if existing_years else None
+    is_latest_return = latest_year_seen is None or year >= latest_year_seen
+
+    if candidates and is_latest_return:
+        def _purchase_year(p):
+            m = re.search(r'(?:19|20)\d{2}', p.purchase_date or '')
+            return int(m.group(0)) if m else 0
+        best = max(candidates, key=_purchase_year)
+        if (best.usage_type or "").lower() != "primary":
+            best.usage_type = "Primary"
+        return best
+
+    return explicit_primary[0] if explicit_primary else None
+
+
+async def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) -> int:
+    """Parse a 1040 return and upsert per-property tax entries.
+
+    Schedule E rental rows are matched to managed properties by address; a row
+    with no match gets a new draft Property (unconfirmed — the user reviews it
+    like any auto-created property) and a fair-market-value lookup, since FMV
+    never appears on a tax return. Primary residence data from Schedule A is
+    attached to the user's primary property when available. No SSNs or
+    taxpayer names are stored.
+    """
     from services.document_parser import parse_tax_return_properties
+    from services.property_valuation import get_property_value
 
     parsed = parse_tax_return_properties(filepath)
     year = parsed.get("tax_year")
@@ -928,9 +1376,9 @@ def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) ->
         return 0
 
     props = db.query(models.Property).filter(
-        models.Property.owner_id == owner_id).all()
-    primary_prop = next(
-        (p for p in props if (p.usage_type or "").lower() == "primary"), None)
+        models.Property.owner_id == owner_id
+    ).all()
+    primary_prop = _default_primary_property(db, owner_id, props, year, parsed.get("properties", []))
 
     count = 0
     for entry in parsed.get("properties", []):
@@ -942,19 +1390,98 @@ def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) ->
             matched = _match_property(entry.get("address"), props)
             address = entry.get("address")
 
-        existing = db.query(models.TaxReturnEntry).filter_by(
-            owner_id=owner_id, tax_year=year,
-            property_kind=kind, address=address).first()
+            if matched is None and address:
+                street, city, state, zip_code = _split_tax_return_address(address)
+                matched = models.Property(
+                    owner_id=owner_id,
+                    property_uid=str(uuid.uuid4()),
+                    address=street or address,
+                    city=city, state=state, zip_code=zip_code,
+                    usage_type="Rental",
+                )
+                db.add(matched)
+                db.flush()
+                matched.name = _default_property_name(matched.address, matched.id)
+                props.append(matched)
+
+                # FMV is never on the return itself — look it up now so the
+                # draft doesn't sit with a $0 market value until the user
+                # visits the property page.
+                try:
+                    valuation = await get_property_value(
+                        matched.address, city or "", state or "", zip_code or "")
+                    if valuation.get("value"):
+                        matched.market_value = valuation["value"]
+                        matched.market_value_source = valuation["source"]
+                        matched.market_value_updated = datetime.utcnow().isoformat()
+                except Exception:
+                    pass
+
+        # Dedupe on the resolved property when we have one — the raw parsed
+        # address text varies slightly between re-uploads of the same return
+        # (OCR/whitespace differences), so keying on it directly let two
+        # uploads of the same return create duplicate rows for one property.
+        dedup_filter = dict(owner_id=owner_id, tax_year=year, property_kind=kind)
+        if matched:
+            dedup_filter["property_id"] = matched.id
+        else:
+            dedup_filter["address"] = address
+        existing = db.query(models.TaxReturnEntry).filter_by(**dedup_filter).first()
         rec = existing or models.TaxReturnEntry(
-            owner_id=owner_id, tax_year=year,
-            property_kind=kind, address=address)
+            owner_id=owner_id,
+            tax_year=year,
+            property_kind=kind,
+            address=address,
+        )
         rec.property_id = matched.id if matched else None
         rec.document_id = document_id
-        for f in TAX_ENTRY_FIELDS:
-            setattr(rec, f, entry.get(f, 0.0) or 0.0)
+
+        for field in TAX_ENTRY_FIELDS:
+            setattr(rec, field, entry.get(field, 0.0) or 0.0)
+        for field in TAX_ENTRY_EXTRA_FIELDS:
+            setattr(rec, field, entry.get(field))
+        for field in TAX_ENTRY_JSON_FIELDS:
+            default = [] if field == "unresolved_fields" else {}
+            setattr(rec, field, json.dumps(entry.get(field, default)))
+
+        if matched:
+            # land_value/construction_price default to 0, which is
+            # indistinguishable from "never entered" — so treat neither being
+            # set as "split missing" rather than checking basis <= 0 (which is
+            # never true once purchase_price is set, making that check dead).
+            land_split_missing = not (matched.construction_price or matched.land_value)
+            basis = _depreciable_basis(matched)
+            period = matched.depreciation_years or 27.5
+            accumulated = entry.get("depreciation") or 0.0
+            try:
+                purchase_year = int(re.search(r'(?:19|20)\d{2}', matched.purchase_date or "").group(0))
+                years_elapsed = max(0, int(year) - purchase_year + 1)
+                if basis and period:
+                    accumulated = min(basis, round((basis / period) * years_elapsed, 2))
+            except Exception:
+                pass
+
+            rec.depreciable_basis = basis
+            rec.annual_straight_line_depreciation = round(basis / period, 2) if basis and period else 0.0
+            rec.accumulated_depreciation = accumulated
+            rec.remaining_depreciable_basis = max(basis - accumulated, 0)
+            rec.years_remaining = (
+                round(rec.remaining_depreciable_basis / rec.annual_straight_line_depreciation, 2)
+                if rec.annual_straight_line_depreciation else 0.0
+            )
+
+            if land_split_missing and entry.get("depreciation"):
+                unresolved = entry.get("unresolved_fields") or []
+                unresolved.append(
+                    "Land/building split missing; depreciable basis estimated at 75% "
+                    "of purchase price. Enter land value or construction price to correct it."
+                )
+                rec.unresolved_fields = json.dumps(unresolved)
+
         if not existing:
             db.add(rec)
         count += 1
+
     db.commit()
     return count
 
@@ -1682,7 +2209,23 @@ def get_raw_data(
         tax_entries_q = tax_entries_q.filter(
             models.TaxReturnEntry.tax_year >= purchase_year
         )
-    tax_entries = tax_entries_q.order_by(models.TaxReturnEntry.tax_year).all()
+    tax_entries = tax_entries_q.order_by(
+        models.TaxReturnEntry.tax_year,
+        models.TaxReturnEntry.id,
+    ).all()
+    deduped_tax_entries = {}
+    for entry in tax_entries:
+        key = (
+            entry.property_id,
+            entry.tax_year,
+            entry.property_kind or "",
+            (entry.address or "").strip().lower(),
+        )
+        deduped_tax_entries[key] = entry
+    tax_entries = sorted(
+        deduped_tax_entries.values(),
+        key=lambda entry: (entry.tax_year or 0, entry.id or 0),
+    )
 
     # Aggregate mortgage statement snapshots by year
     stmt_by_year: dict = {}
@@ -1755,10 +2298,24 @@ def get_raw_data(
                 "property_taxes": e.property_taxes,
                 "depreciation": e.depreciation,
                 "total_expenses": e.total_expenses,
-                "net_income": e.net_income,
-                "days_rented": e.days_rented or 0,
-                "personal_use_days": e.personal_use_days or 0,
-            }
+"net_income": e.net_income,
+"days_rented": e.days_rented or 0,
+"personal_use_days": e.personal_use_days or 0,
+"expense_breakdown": json.loads(e.expense_breakdown or "{}"),
+"depreciation_detail": json.loads(e.depreciation_detail or "{}"),
+"source_refs": json.loads(e.source_refs or "{}"),
+"unresolved_fields": json.loads(e.unresolved_fields or "[]"),
+"confidence": e.confidence or 0.0,
+"schedule1_line5_total": e.schedule1_line5_total,
+"schedule1_line5_delta": e.schedule1_line5_delta,
+"cash_noi": e.cash_noi,
+"tax_pl": e.tax_pl,
+"depreciable_basis": e.depreciable_basis,
+"accumulated_depreciation": e.accumulated_depreciation,
+"remaining_depreciable_basis": e.remaining_depreciable_basis,
+"years_remaining": e.years_remaining,
+"annual_straight_line_depreciation": e.annual_straight_line_depreciation,
+}
             for e in tax_entries
         ],
         "docs_1098": {yr: amt for yr, amt in interest_by_year.items()},
@@ -1808,6 +2365,24 @@ def get_raw_data(
             for l in prop.loans
         ],
     }
+
+
+@router.get("/{prop_id}/checklist")
+def get_property_checklist(
+    prop_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Required-document checklist for one property: one-time, annual, and
+    monthly expected document slots checked against uploads + manual data."""
+    prop = _get_accessible_property(prop_id, db, current_user)
+    return build_checklist(
+        prop,
+        docs=prop.documents,
+        loans=prop.loans,
+        tax_entries=prop.tax_entries,
+        rental_periods=prop.rental_periods,
+    )
 
 
 @router.patch("/{prop_id}/notes")

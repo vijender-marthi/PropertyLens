@@ -64,6 +64,13 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 class BatchDeleteRequest(BaseModel):
     ids: List[int]
 
+
+class UploadAcceptRequest(BaseModel):
+    pending_upload_id: str
+    original_filename: Optional[str] = None
+    property_id: Optional[int] = None
+    category: str = "auto"
+
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -119,9 +126,11 @@ def get_document_configs(
 # Extracted keys that map onto Loan columns when a document is applied
 LOAN_FIELDS = {
     "original_amount", "current_balance", "interest_rate", "rate_note",
-    "monthly_payment", "loan_term_years", "maturity_date",
-    "escrow_amount", "loan_type", "account_number",
+    "monthly_payment", "estimated_total_monthly_payment", "loan_term_years", "maturity_date",
+    "escrow_amount", "escrow_included", "loan_type", "loan_product", "account_number",
     "principal_due", "interest_due", "statement_date", "payment_due_date",
+    "mortgage_tenure_covered", "interest_paid_ytd", "principal_paid_ytd",
+    "projected_principal_fy", "projected_interest_fy", "original_ltv",
     "lender_name", "origination_date",
 }
 
@@ -132,7 +141,9 @@ LOAN_FIELDS = {
 STATEMENT_FIELDS = {
     "current_balance", "principal_due", "interest_due",
     "statement_date", "payment_due_date", "monthly_payment",
-    "escrow_amount", "interest_rate", "rate_note",
+    "escrow_amount", "interest_rate", "rate_note", "mortgage_tenure_covered",
+    "interest_paid_ytd", "principal_paid_ytd", "projected_principal_fy",
+    "projected_interest_fy", "estimated_total_monthly_payment",
 }
 
 
@@ -212,6 +223,15 @@ def _apply_extracted(db, prop, data, category=None) -> dict:
     if data.get("purchase_date"):
         prop.purchase_date = data["purchase_date"]
         applied["property.purchase_date"] = data["purchase_date"]
+    if data.get("recorded_date"):
+        prop.recorded_date = data["recorded_date"]
+        applied["property.recorded_date"] = data["recorded_date"]
+    if data.get("settlement_total_amount") is not None:
+        prop.settlement_total_amount = data["settlement_total_amount"]
+        applied["property.settlement_total_amount"] = data["settlement_total_amount"]
+    if data.get("closing_costs") is not None:
+        prop.closing_costs = data["closing_costs"]
+        applied["property.closing_costs"] = data["closing_costs"]
     if data.get("annual_property_tax") is not None:
         prop.property_tax = data["annual_property_tax"]
         applied["property.property_tax"] = data["annual_property_tax"]
@@ -267,17 +287,17 @@ def _find_or_create_property(db, user, extracted):
     return prop, True
 
 
-@router.post("/upload")
-async def upload_document(
-    property_id: Optional[int] = Form(None),
-    category: str = Form("auto"),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    if category not in DOC_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
+def _pending_upload_path(current_user: models.User, pending_upload_id: str) -> Path:
+    pending_upload_id = Path(pending_upload_id).name
+    if not pending_upload_id.startswith(f"pending-{current_user.id}-"):
+        raise HTTPException(status_code=404, detail="Pending upload not found")
+    path = UPLOAD_DIR / pending_upload_id
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Pending upload not found")
+    return path
 
+
+async def _save_pending_upload(file: UploadFile, current_user: models.User) -> tuple[Path, str, str, int]:
     suffix = Path(file.filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"File type {suffix} not allowed")
@@ -286,30 +306,32 @@ async def upload_document(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 
-    unique_name = f"{uuid.uuid4().hex}{suffix}"
+    unique_name = f"pending-{current_user.id}-{uuid.uuid4().hex}{suffix}"
     save_path = UPLOAD_DIR / unique_name
     with open(save_path, "wb") as f:
         f.write(content)
 
-    extracted = {}
-    markdown = ""
-    try:
-        category, extracted, markdown = parse_document(str(save_path), category)
-    except Exception as e:
-        category = "other" if category == "auto" else category
-        extracted = {"parse_error": str(e)}
-        if category == "tax_return":
-            _discard_uploaded_source(save_path)
-            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
+    return save_path, unique_name, suffix, len(content)
 
+
+async def _commit_parsed_document(
+    db: Session,
+    current_user: models.User,
+    save_path: Path,
+    original_filename: str,
+    suffix: str,
+    file_size: int,
+    category: str,
+    extracted: dict,
+    markdown: str,
+    property_id: Optional[int],
+):
     markdown_name = None
     if markdown:
-        markdown_name = f"{Path(unique_name).stem}.md"
+        markdown_name = f"{save_path.stem}.md"
         (UPLOAD_DIR / markdown_name).write_text(markdown)
 
-    # Tax returns are common to all properties — never tied to a single one.
     is_tax_return = (category == "tax_return")
-
     prop = None
     property_created = False
     auto_applied = {}
@@ -325,7 +347,6 @@ async def upload_document(
         else:
             prop, property_created = _find_or_create_property(db, current_user, extracted)
             if prop is None:
-                _discard_uploaded_source(save_path)
                 if markdown_name:
                     (UPLOAD_DIR / markdown_name).unlink(missing_ok=True)
                 raise HTTPException(
@@ -336,22 +357,20 @@ async def upload_document(
         if auto_applied:
             db.flush()
 
-    # Deduplication (property docs only — key: account + year)
     loan_account_number = (extracted.get("account_number") or "").strip()
     statement_year = extracted.get("statement_year")
     if prop and loan_account_number and statement_year:
         duplicate_doc = (
             db.query(models.Document)
-                .filter(
-                    models.Document.property_id == prop.id,
-                    models.Document.doc_category == category,
-                    models.Document.loan_account_number == loan_account_number,
-                    models.Document.statement_year == statement_year,
-                )
+            .filter(
+                models.Document.property_id == prop.id,
+                models.Document.doc_category == category,
+                models.Document.loan_account_number == loan_account_number,
+                models.Document.statement_year == statement_year,
+            )
             .first()
         )
         if duplicate_doc:
-            _discard_uploaded_source(save_path)
             if markdown_name:
                 (UPLOAD_DIR / markdown_name).unlink(missing_ok=True)
             raise HTTPException(
@@ -371,11 +390,11 @@ async def upload_document(
     doc = models.Document(
         property_id=prop.id if prop else None,
         owner_id=current_user.id,
-        filename=unique_name,
-        original_filename=file.filename,
+        filename=save_path.name,
+        original_filename=original_filename,
         file_type=suffix.lstrip("."),
         doc_category=category,
-        file_size=len(content),
+        file_size=file_size,
         extracted_data=json.dumps(extracted),
         markdown_file=markdown_name,
         loan_account_number=loan_account_number or None,
@@ -392,7 +411,7 @@ async def upload_document(
     tax_import_error = None
     if is_tax_return:
         try:
-            tax_entries_imported = import_tax_return(
+            tax_entries_imported = await import_tax_return(
                 db, current_user.id, doc.id, str(save_path))
         except Exception as e:
             tax_entries_imported = 0
@@ -423,6 +442,155 @@ async def upload_document(
         "tax_entries_imported": tax_entries_imported,
         "tax_import_error": tax_import_error,
     }
+
+
+@router.post("/upload/preview")
+async def preview_upload_document(
+    property_id: Optional[int] = Form(None),
+    category: str = Form("auto"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if category not in DOC_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
+
+    save_path, pending_upload_id, _suffix, file_size = await _save_pending_upload(file, current_user)
+    extracted = {}
+    markdown = ""
+    try:
+        category, extracted, markdown = parse_document(str(save_path), category)
+    except Exception as e:
+        category = "other" if category == "auto" else category
+        extracted = {"parse_error": str(e)}
+        if category == "tax_return":
+            _discard_uploaded_source(save_path)
+            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
+
+    prop = None
+    if property_id and category != "tax_return":
+        prop = db.query(models.Property).filter(
+            models.Property.id == property_id,
+            models.Property.owner_id == current_user.id,
+        ).first()
+        if not prop:
+            _discard_uploaded_source(save_path)
+            raise HTTPException(status_code=404, detail="Property not found")
+
+    return {
+        "pending_upload_id": pending_upload_id,
+        "original_filename": file.filename,
+        "category": category,
+        "file_size": file_size,
+        "extracted_data": extracted,
+        "document_config": config_as_dict(category),
+        "extraction_schema": extraction_schema(category, extracted),
+        "loan_account_number": (extracted.get("account_number") or "").strip() or None,
+        "statement_year": extracted.get("statement_year"),
+        "period_type": extracted.get("period_type", "other"),
+        "period_start": extracted.get("period_start") or extracted.get("statement_date"),
+        "period_end": extracted.get("period_end") or extracted.get("statement_date"),
+        "property_id": prop.id if prop else property_id,
+        "property_address": prop.address if prop else extracted.get("property_address"),
+        "has_markdown": bool(markdown),
+        "source_file_retained": True,
+    }
+
+
+@router.post("/upload/accept")
+async def accept_upload_document(
+    req: UploadAcceptRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if req.category not in DOC_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
+
+    save_path = _pending_upload_path(current_user, req.pending_upload_id)
+    suffix = save_path.suffix.lower()
+    file_size = save_path.stat().st_size
+
+    extracted = {}
+    markdown = ""
+    try:
+        category, extracted, markdown = parse_document(str(save_path), req.category)
+    except Exception as e:
+        category = "other" if req.category == "auto" else req.category
+        extracted = {"parse_error": str(e)}
+        if category == "tax_return":
+            _discard_uploaded_source(save_path)
+            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
+
+    try:
+        return await _commit_parsed_document(
+            db,
+            current_user,
+            save_path,
+            req.original_filename or req.pending_upload_id,
+            suffix,
+            file_size,
+            category,
+            extracted,
+            markdown,
+            req.property_id,
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/upload/cancel")
+def cancel_upload_document(
+    req: UploadAcceptRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    save_path = _pending_upload_path(current_user, req.pending_upload_id)
+    _discard_uploaded_source(save_path)
+    return {"ok": True}
+
+
+@router.post("/upload")
+async def upload_document(
+    property_id: Optional[int] = Form(None),
+    category: str = Form("auto"),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if category not in DOC_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
+
+    save_path, _pending_upload_id, suffix, file_size = await _save_pending_upload(file, current_user)
+    original_filename = file.filename
+
+    extracted = {}
+    markdown = ""
+    try:
+        category, extracted, markdown = parse_document(str(save_path), category)
+    except Exception as e:
+        category = "other" if category == "auto" else category
+        extracted = {"parse_error": str(e)}
+        if category == "tax_return":
+            _discard_uploaded_source(save_path)
+            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
+
+    try:
+        return await _commit_parsed_document(
+            db,
+            current_user,
+            save_path,
+            original_filename,
+            suffix,
+            file_size,
+            category,
+            extracted,
+            markdown,
+            property_id,
+        )
+    except Exception:
+        _discard_uploaded_source(save_path)
+        db.rollback()
+        raise
 
 
 @router.get("")
@@ -479,7 +647,7 @@ def get_document_markdown(
 
 
 @router.post("/{doc_id}/reparse")
-def reparse_document(
+async def reparse_document(
     doc_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
@@ -515,7 +683,7 @@ def reparse_document(
 
     if category == "tax_return":
         try:
-            import_tax_return(db, doc.owner_id, doc.id, str(path))
+            await import_tax_return(db, doc.owner_id, doc.id, str(path))
         except Exception:
             pass
 
@@ -530,7 +698,7 @@ def reparse_document(
 
 
 @router.post("/reprocess-all")
-def reprocess_all_documents(
+async def reprocess_all_documents(
     property_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
@@ -600,7 +768,7 @@ def reprocess_all_documents(
     # Re-import common tax returns
     for doc_id, path in common_tax_returns:
         try:
-            import_tax_return(db, current_user.id, doc_id, path)
+            await import_tax_return(db, current_user.id, doc_id, path)
         except Exception:
             pass
     return {
@@ -702,6 +870,25 @@ def list_documents(
     ]
 
 
+def _delete_document_and_dependents(db: Session, doc: models.Document):
+    """Remove a document's file(s) and every record derived from it, so
+    deleting a document doesn't leave stale data behind elsewhere in the app
+    (e.g. a tax return's TaxReturnEntry rows outliving the source file)."""
+    try:
+        os.remove(UPLOAD_DIR / doc.filename)
+    except FileNotFoundError:
+        pass
+    if doc.markdown_file:
+        try:
+            os.remove(UPLOAD_DIR / doc.markdown_file)
+        except FileNotFoundError:
+            pass
+    db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.document_id == doc.id
+    ).delete()
+    db.delete(doc)
+
+
 @router.post("/delete-batch")
 def delete_documents_batch(
     req: BatchDeleteRequest,
@@ -719,16 +906,7 @@ def delete_documents_batch(
     )
     deleted = []
     for doc in docs:
-        try:
-            os.remove(UPLOAD_DIR / doc.filename)
-        except FileNotFoundError:
-            pass
-        if doc.markdown_file:
-            try:
-                os.remove(UPLOAD_DIR / doc.markdown_file)
-            except FileNotFoundError:
-                pass
-        db.delete(doc)
+        _delete_document_and_dependents(db, doc)
         deleted.append(doc.id)
     db.commit()
     return {"deleted": deleted, "count": len(deleted)}
@@ -747,17 +925,6 @@ def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Delete file(s)
-    try:
-        os.remove(UPLOAD_DIR / doc.filename)
-    except FileNotFoundError:
-        pass
-    if doc.markdown_file:
-        try:
-            os.remove(UPLOAD_DIR / doc.markdown_file)
-        except FileNotFoundError:
-            pass
-
-    db.delete(doc)
+    _delete_document_and_dependents(db, doc)
     db.commit()
     return {"ok": True}

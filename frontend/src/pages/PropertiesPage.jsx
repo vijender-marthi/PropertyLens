@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Building2, Home, MapPin, Plus, TrendingDown, TrendingUp, Upload } from 'lucide-react'
+import { AlertTriangle, Building2, Home, MapPin, Plus, TrendingDown, TrendingUp, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { propAPI } from '../services/api'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
@@ -15,6 +15,7 @@ const fmt = (n) =>
 export default function PropertiesPage() {
   const [properties, setProperties] = useState([])
   const [loading, setLoading] = useState(true)
+  const [checklistSummary, setChecklistSummary] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -22,19 +23,53 @@ export default function PropertiesPage() {
       .then((r) => setProperties(r.data || []))
       .catch(() => toast.error('Failed to load properties'))
       .finally(() => setLoading(false))
+    propAPI.checklistSummary()
+      .then((r) => setChecklistSummary(r.data))
+      .catch(() => setChecklistSummary(null))
   }, [])
 
-  const summary = useMemo(() => {
-    const rental = properties.filter((p) => (p.usage_type || 'Rental').toLowerCase() !== 'primary')
-    const primary = properties.filter((p) => (p.usage_type || '').toLowerCase() === 'primary')
-    return {
+const summary = useMemo(() => {
+const rental = properties.filter((p) => (p.usage_type || 'Rental').toLowerCase() !== 'primary')
+const primary = properties.filter((p) => (p.usage_type || '').toLowerCase() === 'primary')
+return {
       rentalCount: rental.length,
       primaryCount: primary.length,
       marketValue: properties.reduce((sum, p) => sum + (p.market_value || 0), 0),
       loanBalance: properties.reduce((sum, p) => sum + (p.total_loan_balance || 0), 0),
       monthlyCashFlow: rental.reduce((sum, p) => sum + (p.monthly_cash_flow || 0), 0),
-    }
-  }, [properties])
+}
+}, [properties])
+
+const primaryProperties = useMemo(
+() => properties
+.filter((p) => (p.usage_type || '').toLowerCase() === 'primary')
+.sort((a, b) => propertyLabel(a).localeCompare(propertyLabel(b))),
+[properties]
+)
+
+const rentalGroups = useMemo(() => {
+const rentals = properties
+.filter((p) => (p.usage_type || 'Rental').toLowerCase() !== 'primary')
+.sort((a, b) => {
+const stateA = (a.state || '').trim()
+const stateB = (b.state || '').trim()
+if (!stateA && stateB) return 1
+if (stateA && !stateB) return -1
+return stateA.localeCompare(stateB) || propertyLabel(a).localeCompare(propertyLabel(b))
+})
+
+const groups = []
+rentals.forEach((property) => {
+const key = (property.state || '').trim() || 'Unassigned'
+let group = groups[groups.length - 1]
+if (!group || group.state !== key) {
+group = { state: key, properties: [] }
+groups.push(group)
+}
+group.properties.push(property)
+})
+return groups
+}, [properties])
 
   if (loading) {
     return (
@@ -84,6 +119,27 @@ export default function PropertiesPage() {
         </div>
       )}
 
+      {checklistSummary?.total_missing > 0 && (
+        <div className="card flex flex-col gap-3 border-amber-200 dark:border-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                {checklistSummary.total_missing} document{checklistSummary.total_missing === 1 ? '' : 's'} missing across your portfolio
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {checklistSummary.properties
+                  .filter((p) => p.missing_count > 0)
+                  .slice(0, 4)
+                  .map((p) => `${p.name || p.address} (${p.missing_count})`)
+                  .join(' · ')}
+                {checklistSummary.properties.filter((p) => p.missing_count > 0).length > 4 ? ' · …' : ''}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {properties.length === 0 ? (
         <div className="card py-20 text-center">
           <Building2 className="mx-auto mb-4 h-12 w-12 text-gray-300 dark:text-gray-600" />
@@ -102,10 +158,49 @@ export default function PropertiesPage() {
           </div>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {properties.map((property) => (
-            <PropertyCard key={property.id} property={property} />
-          ))}
+        <div className="space-y-8">
+          {primaryProperties.length > 0 && (
+            <section>
+              <div className="mb-3 flex items-center gap-2">
+                <Home className="h-4 w-4 text-amber-500" />
+                <h2 className="text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">Primary Residence</h2>
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">{primaryProperties.length}</span>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {primaryProperties.map((property) => (
+                  <PropertyCard key={property.id} property={property} featured />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section>
+            <div className="mb-4 flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-green-600" />
+              <h2 className="text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">Rental Properties</h2>
+              <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/20 dark:text-green-300">{summary.rentalCount}</span>
+            </div>
+            {rentalGroups.length === 0 ? (
+              <div className="card py-8 text-center text-sm text-gray-400">No rental properties yet.</div>
+            ) : (
+              <div className="space-y-6">
+                {rentalGroups.map((group) => (
+                  <div key={group.state}>
+                    <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2 dark:border-gray-700">
+                      <MapPin className="h-4 w-4 text-gray-400" />
+                      <h3 className="text-base font-semibold text-gray-900 dark:text-white">{group.state}</h3>
+                      <span className="text-sm text-gray-400">({group.properties.length})</span>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {group.properties.map((property) => (
+                        <PropertyCard key={property.id} property={property} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
       )}
     </div>
@@ -130,15 +225,15 @@ function SummaryTile({ label, value, suffix, tone }) {
   )
 }
 
-function PropertyCard({ property: p }) {
+function PropertyCard({ property: p, featured = false }) {
   const isPrimary = (p.usage_type || '').toLowerCase() === 'primary'
   const positive = (p.monthly_cash_flow || 0) >= 0
 
   return (
-    <Link
-      to={`/properties/${p.id}`}
-      className="card block transition-shadow hover:shadow-md dark:hover:border-gray-600"
-    >
+<Link
+to={`/properties/${p.id}`}
+className={`card block transition-shadow hover:shadow-md ${featured ? 'border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-900/10' : 'dark:hover:border-gray-600'}`}
+>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold text-gray-900 dark:text-white">{propertyLabel(p)}</h3>

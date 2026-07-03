@@ -48,6 +48,12 @@ export const propAPI = {
   performance: (id) => api.get(`/properties/${id}/performance`),
   lifetime: (id) => api.get(`/properties/${id}/lifetime`),
   rawdata: (id) => api.get(`/properties/${id}/rawdata`),
+  checklist: (id) => api.get(`/properties/${id}/checklist`),
+  checklistSummary: () => api.get('/properties/checklist-summary'),
+  depreciation: (id, taxYear) => api.get(`/properties/${id}/depreciation`, { params: taxYear ? { tax_year: taxYear } : {} }),
+  addDepreciationAsset: (id, data) => api.post(`/properties/${id}/depreciation-assets`, data),
+  updateDepreciationAsset: (id, assetId, data) => api.put(`/properties/${id}/depreciation-assets/${assetId}`, data),
+  deleteDepreciationAsset: (id, assetId) => api.delete(`/properties/${id}/depreciation-assets/${assetId}`),
   refreshValue: (id) => api.post(`/properties/${id}/refresh-value`),
   updateYearNote: (id, year, note) => api.patch(`/properties/${id}/year-note`, null, { params: { year, note } }),
   updateNotes: (id, note) => api.patch(`/properties/${id}/notes`, null, { params: { note } }),
@@ -80,6 +86,12 @@ export const docAPI = {
     api.post('/documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  previewUpload: (formData) =>
+    api.post('/documents/upload/preview', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  acceptUpload: (data) => api.post('/documents/upload/accept', data),
+  cancelUpload: (data) => api.post('/documents/upload/cancel', data),
   list: (propertyId) => api.get(`/documents/property/${propertyId}`),
   listAll: () => api.get('/documents'),
   apply: (docId) => api.post(`/documents/${docId}/apply`),

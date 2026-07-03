@@ -111,6 +111,18 @@ class TestRawDataTaxEntries:
         years = [e["tax_year"] for e in data["tax_entries"]]
         assert sorted(years) == [2021, 2022, 2023]
 
+    def test_duplicate_tax_entries_are_collapsed(self, client, db, user, prop):
+        _tax_entry(db, prop.id, user.id, 2024, rents_received=33_600)
+        _tax_entry(db, prop.id, user.id, 2024, rents_received=34_100)
+
+        resp = client.get(f"/api/properties/{prop.id}/rawdata",
+                          headers=auth_headers(user.email))
+        data = resp.json()
+
+        assert len(data["tax_entries"]) == 1
+        assert data["tax_entries"][0]["tax_year"] == 2024
+        assert data["tax_entries"][0]["rents_received"] == pytest.approx(34_100)
+
 
 class TestRawData1098:
 

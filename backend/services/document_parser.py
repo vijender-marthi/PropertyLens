@@ -139,9 +139,35 @@ SPREADSHEET_COLUMN_ALIASES = {
     "property": "property_name",
     "lender": "lender_name",
     "residencytype": "residency_type",
+    "originalresidencystatus": "original_residency_status",
+    "currentresidencystatus": "current_residency_status",
+    "primatedaterange": "primary_date_range",
+    "primarydaterange": "primary_date_range",
+    "rentaldaterange": "rental_date_range",
+    "recordeddate": "recorded_date",
+    "heldperiod": "held_period",
+    "hoaflag": "hoa_flag",
+    "solarlease": "solar_ownership",
     "loanaccountnumber": "account_number",
+    "loannumber": "account_number",
     "accountnumber": "account_number",
+    "loanproduct": "loan_product",
+    "product": "loan_product",
+    "estimatedtotalmonthlypayment": "estimated_total_monthly_payment",
+    "totpayment": "estimated_total_monthly_payment",
+    "totalpayment": "estimated_total_monthly_payment",
+    "originalltv": "original_ltv",
+    "escrowincluded": "escrow_included",
     "loanoriginationmonth": "origination_date",
+    "loanoriginationdate": "origination_date",
+    "loanacquisitiondate": "origination_date",
+    "settlementdateorpurchasedate": "purchase_date",
+    "settlementdate": "purchase_date",
+    "purchasedate": "purchase_date",
+    "salepriceakapurchaseprice": "purchase_price",
+    "saleprice": "purchase_price",
+    "totalamount": "settlement_total_amount",
+    "closingcosts": "closing_costs",
     "begmonth": "period_start",
     "beginningmonth": "period_start",
     "endingmonth": "period_end",
@@ -152,7 +178,18 @@ SPREADSHEET_COLUMN_ALIASES = {
     "mortgageinterestreceived": "mortgage_interest",
     "mortgageinterest": "mortgage_interest",
     "outstandingmortgageprincipal": "current_balance",
+    "outstandingprincipal": "current_balance",
+    "unpaidprincipalbalance": "current_balance",
     "mortgageinsurancepremiums": "mortgage_insurance",
+    "pmi": "mortgage_insurance",
+    "insurance": "annual_insurance",
+    "pointspaidonpurchaseofprincipalresidence": "points_paid",
+    "points": "points_paid",
+    "interestpaidytd": "interest_paid_ytd",
+    "principalpaidytd": "principal_paid_ytd",
+    "projectedprincipalfy": "projected_principal_fy",
+    "projectedinterestfy": "projected_interest_fy",
+    "mortgagetenurecovered": "mortgage_tenure_covered",
     "pointspaidonpurchaseofprincipalresidence": "points_paid",
     "propertytaxespaid": "property_tax_amount",
     "realestatetaxespaid": "property_tax_amount",
@@ -717,9 +754,21 @@ def _parse_schedule_e_page(page) -> list:
 
     targets = {
         'rents': r'Rents received',
+        'advertising': r'\b5\s+Advertising\b',
+        'auto_travel': r'\b6\s+Auto\s+and\s+travel\b',
+        'cleaning_maintenance': r'\b7\s+Cleaning\s+and\s+maintenance\b',
+        'commissions': r'\b8\s+Commissions\b',
+        'insurance': r'\b9\s+Insurance\b',
+        'legal_professional': r'\b10\s+Legal\s+and\s+other\s+professional\b',
+        'management_fees': r'\b11\s+Management\s+fees\b',
         'mortgage_interest': r'Mortgage interest paid to banks',
+        'other_interest': r'\b13\s+Other\s+interest\b',
+        'repairs': r'\b14\s+Repairs\b',
+        'supplies': r'\b15\s+Supplies\b',
         'property_taxes': r'\b16 Taxes\b',
+        'utilities': r'\b17\s+Utilities\b',
         'depreciation': r'Depreciation expense',
+        'other_expenses': r'\b19\s+Other\b',
         'total_expenses': r'Total expenses',
         # Schedule E lines 2 & 3 — integer day counts, not dollar amounts
         'days_rented':       r'(?:Fair\s+)?[Rr]ental\s+[Dd]ays|(?:2\s+)?(?:Fair\s+)?[Dd]ays\s+rented',
@@ -769,6 +818,41 @@ def _parse_schedule_e_page(page) -> list:
             'net_income': round(vals['rents'] - vals['total_expenses'], 2),
             'days_rented':       int(vals['days_rented']),
             'personal_use_days': int(vals['personal_use_days']),
+            'expense_breakdown': {
+                'advertising': vals['advertising'],
+                'auto_travel': vals['auto_travel'],
+                'cleaning_maintenance': vals['cleaning_maintenance'],
+                'commissions': vals['commissions'],
+                'insurance': vals['insurance'],
+                'legal_professional': vals['legal_professional'],
+                'management_fees': vals['management_fees'],
+                'mortgage_interest': vals['mortgage_interest'],
+                'other_interest': vals['other_interest'],
+                'repairs': vals['repairs'],
+                'supplies': vals['supplies'],
+                'taxes': vals['property_taxes'],
+                'utilities': vals['utilities'],
+                'depreciation': vals['depreciation'],
+                'other_expenses': vals['other_expenses'],
+            },
+            'source_refs': {
+                'schedule_e': {
+                    'page': getattr(page, 'page_number', None),
+                    'column': col,
+                    'lines': {
+                        'address': 'Schedule E Part I line 1a',
+                        'days_rented': 'Schedule E Part I line 2',
+                        'personal_use_days': 'Schedule E Part I line 3',
+                        'rents_received': 'Schedule E Part I line 3',
+                        'mortgage_interest': 'Schedule E Part I line 12',
+                        'property_taxes': 'Schedule E Part I line 16',
+                        'depreciation': 'Schedule E Part I line 18',
+                        'total_expenses': 'Schedule E Part I line 20',
+                        'net_income': 'Schedule E Part I line 21',
+                    },
+                },
+            },
+            'confidence': 0.9 if address and vals['rents'] and vals['total_expenses'] else 0.65,
         })
     return props
 
@@ -811,6 +895,21 @@ def parse_tax_return_properties(filepath: str) -> Dict[str, Any]:
         or re.search(r'\b(20\d{2})\b', full_text)
     tax_year = int(year_m.group(1)) if year_m else None
 
+    schedule1_line5_total = None
+    m = re.search(
+        r'SCHEDULE\s+1[\s\S]{0,2500}?(?:5\s+)?Rental\s+real\s+estate[\s\S]{0,160}?(\(?-?\$?\s*[\d,]+(?:\.\d{2})?\)?)',
+        full_text,
+        re.IGNORECASE,
+    )
+    if m:
+        schedule1_line5_total = _tr_value(m.group(1))
+    form4562_present = bool(re.search(r'Form\s+4562|Depreciation\s+and\s+Amortization', full_text, re.IGNORECASE))
+    depreciation_worksheet_present = bool(re.search(
+        r'Depreciation\s+(?:Schedule|Worksheet)|Accumulated\s+Depreciation|Prior\s+Depreciation',
+        full_text,
+        re.IGNORECASE,
+    ))
+
     properties = []
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:
@@ -822,7 +921,82 @@ def parse_tax_return_properties(filepath: str) -> Dict[str, Any]:
     if primary:
         properties.append(primary)
 
-    return {'tax_year': tax_year, 'properties': properties}
+    rental_total = round(sum(
+        p.get('net_income', 0.0)
+        for p in properties
+        if p.get('property_kind') == 'rental'
+    ), 2)
+    # The delta is only meaningful as an independent cross-check against a
+    # real Schedule 1 figure. When that figure wasn't found, a "delta" against
+    # our own Schedule E sum would trivially be ~0 and is misleading — surface
+    # a warning instead of a fabricated number.
+    validation_delta = None
+    schedule1_warning = None
+    if schedule1_line5_total is not None:
+        validation_delta = round(schedule1_line5_total - rental_total, 2)
+    else:
+        schedule1_warning = (
+            f"Schedule 1 Line 5 not found — using Schedule E sum "
+            f"(${rental_total:,.2f}) for cross-check."
+        )
+
+    for prop in properties:
+        if prop.get('property_kind') != 'rental':
+            continue
+        prop['schedule1_line5_total'] = schedule1_line5_total
+        prop['schedule1_line5_delta'] = validation_delta
+        prop['cash_noi'] = round(
+            (prop.get('rents_received') or 0)
+            - ((prop.get('total_expenses') or 0)
+               - (prop.get('mortgage_interest') or 0)
+               - (prop.get('depreciation') or 0)),
+            2,
+        )
+        prop['tax_pl'] = prop.get('net_income') or 0.0
+        prop['depreciation_detail'] = {
+            'form4562_present': form4562_present,
+            'depreciation_worksheet_present': depreciation_worksheet_present,
+            'current_year_depreciation': prop.get('depreciation') or 0.0,
+            'method': None,
+            'recovery_period_years': None,
+        }
+        unresolved = []
+        if schedule1_warning:
+            unresolved.append(schedule1_warning)
+        if prop.get('depreciation'):
+            if not form4562_present and not depreciation_worksheet_present:
+                unresolved.append(
+                    'Depreciation detail missing — upload depreciation schedule for accurate basis tracking.'
+                )
+            else:
+                if not depreciation_worksheet_present:
+                    unresolved.append('Depreciation worksheet or asset-level basis not found.')
+                if not form4562_present:
+                    unresolved.append('Form 4562 not found for depreciation method/recovery-period verification.')
+        prop['unresolved_fields'] = unresolved
+        prop['source_refs'] = {
+            **(prop.get('source_refs') or {}),
+            'schedule_1_line_5': {
+                'line': 'Schedule 1 line 5',
+                'value': schedule1_line5_total,
+                'delta_vs_schedule_e_properties': validation_delta,
+                'warning': schedule1_warning,
+            },
+            'form_4562': {
+                'present': form4562_present,
+                'depreciation_worksheet_present': depreciation_worksheet_present,
+            },
+        }
+
+    return {
+        'tax_year': tax_year,
+        'properties': properties,
+        'schedule1_line5_total': schedule1_line5_total,
+        'schedule1_line5_delta': validation_delta,
+        'schedule1_line5_warning': schedule1_warning,
+        'form4562_present': form4562_present,
+        'depreciation_worksheet_present': depreciation_worksheet_present,
+    }
 
 
 def _money_after(text: str, label: str, window: int = 120,
@@ -1719,36 +1893,47 @@ def to_markdown(category: str, data: Dict[str, Any]) -> str:
 
 
 def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str, Any], str]:
-    """Main entry: parse a document, returning (category, extracted data, markdown).
+    """Main entry: parse document, returning (category, extracted data, markdown).
 
-    With category='auto' the type is detected from the PDF text. The markdown
-    is the internal structured representation generated before app import.
+    When category is "auto", PDF documents are detected from extracted text.
     """
     path = Path(filepath)
     ext = path.suffix.lower()
 
-    raw_data = {}
+    raw_data: Dict[str, Any] = {}
 
     if ext == '.pdf':
         text = extract_pdf_text(filepath)
         if category == 'auto':
             category = detect_category(text)
+
         if category == 'mortgage_statement':
             raw_data = parse_mortgage_statement(text)
         elif category == 'tax_return':
-            # Per-property Schedule E / Schedule A figures are stored separately
-            # as TaxReturnEntry rows; the document itself just carries a clean
-            # year/summary (the flat text parse mis-reads single totals).
+            # Per-property Schedule E figures are returned in the properties
+            # collection so the preview can show field-level mappings.
             tr = parse_tax_return_properties(filepath)
-            rentals = [p for p in tr.get('properties', []) if p['property_kind'] == 'rental']
+            rentals = [
+                p for p in tr.get('properties', [])
+                if p.get('property_kind') == 'rental'
+            ]
             raw_data = {
                 'tax_year': tr.get('tax_year'),
                 'statement_year': tr.get('tax_year'),
                 'property_count': len(tr.get('properties', [])),
                 'rental_count': len(rentals),
-                'total_rents_received': round(sum(p['rents_received'] for p in rentals), 2),
+                'total_rents_received': round(
+                    sum(p.get('rents_received') or 0 for p in rentals), 2
+                ),
                 'total_mortgage_interest': round(
-                    sum(p['mortgage_interest'] for p in tr.get('properties', [])), 2),
+                    sum(p.get('mortgage_interest') or 0 for p in rentals), 2
+                ),
+                'schedule1_line5_total': tr.get('schedule1_line5_total'),
+                'schedule1_line5_delta': tr.get('schedule1_line5_delta'),
+                'schedule1_line5_warning': tr.get('schedule1_line5_warning'),
+                'form4562_present': tr.get('form4562_present'),
+                'depreciation_worksheet_present': tr.get('depreciation_worksheet_present'),
+                'properties': tr.get('properties', []),
                 'period_type': 'yearly',
             }
         elif category == '1098':
@@ -1766,9 +1951,8 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
         else:
             raw_data = {'raw_text_preview': text[:500]}
 
-        # Add period type detection for parsed PDF documents
         if 'raw_text_preview' not in raw_data:
-            raw_data['period_type'] = detect_period_type(raw_data)
+            raw_data['period_type'] = raw_data.get('period_type') or detect_period_type(raw_data)
     elif ext in ('.xlsx', '.xls'):
         if category == 'auto':
             category = 'other'

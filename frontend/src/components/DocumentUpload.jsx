@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { docAPI } from '../services/api'
-import { Upload, FileText, Trash2, ChevronDown, Wand2, CheckSquare, Square, AlertTriangle, Copy } from 'lucide-react'
+import { Upload, FileText, Trash2, ChevronDown, Wand2, CheckSquare, Square, AlertTriangle, Copy, X, RefreshCw, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const CATEGORIES = [
@@ -12,8 +12,27 @@ const CATEGORIES = [
   { value: 'loan_disclosure', label: 'Loan Disclosure' },
   { value: 'bank_statement', label: 'Bank Statement' },
   { value: 'property_tax', label: 'Property Tax Statement' },
+  { value: 'deed_title', label: 'Deed / Title' },
+  { value: 'insurance_declaration', label: 'Insurance Policy Declaration' },
+  { value: 'expense_receipt', label: 'Operating Expense Receipt' },
   { value: 'other', label: 'Other' },
 ]
+
+const YEAR_FIELD_RE = /year$/i
+// Years must never pick up thousands separators ("2,024"); money/count
+// fields should. schedule1_line5_delta reads "n/a" (not "—") when the
+// return's own Schedule 1 total wasn't found — that's a known cross-check
+// gap, not a missing field.
+const formatFieldValue = (key, value, allData) => {
+  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData?.schedule1_line5_total == null) {
+    return 'n/a'
+  }
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'number') {
+    return YEAR_FIELD_RE.test(key) ? String(Math.trunc(value)) : value.toLocaleString()
+  }
+  return String(value)
+}
 
 const fmtSize = (bytes) => {
   if (!bytes) return ''
@@ -28,6 +47,8 @@ export default function DocumentUpload({ propertyId, docs, onUploaded }) {
   const [dragOver, setDragOver] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [deleting, setDeleting] = useState(false)
+  const [previewDoc, setPreviewDoc] = useState(null)
+  const [acceptingPreview, setAcceptingPreview] = useState(false)
   const inputRef = useRef()
 
   const duplicateDocs = docs.filter((d) => d.is_duplicate)
@@ -40,16 +61,50 @@ export default function DocumentUpload({ propertyId, docs, onUploaded }) {
     fd.append('file', file)
     setUploading(true)
     try {
-      const { data } = await docAPI.upload(fd)
-      if (data.tax_import_error)
-        toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
-      else
-        toast.success(`Uploaded: ${data.original_filename}`)
-      onUploaded()
+      const { data } = await docAPI.previewUpload(fd)
+      setPreviewDoc(data)
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Upload failed')
     } finally {
       setUploading(false)
+    }
+  }
+
+  const acceptPreview = async () => {
+    if (!previewDoc) return
+    setAcceptingPreview(true)
+    try {
+      const { data } = await docAPI.acceptUpload({
+        pending_upload_id: previewDoc.pending_upload_id,
+        original_filename: previewDoc.original_filename,
+        property_id: propertyId,
+        category: previewDoc.category,
+      })
+      if (data.tax_import_error)
+        toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
+      else toast.success(`Saved: ${data.original_filename}`)
+      setPreviewDoc(null)
+      onUploaded()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Save failed')
+    } finally {
+      setAcceptingPreview(false)
+    }
+  }
+
+  const cancelPreview = async () => {
+    if (!previewDoc) return
+    const pending = previewDoc
+    setPreviewDoc(null)
+    try {
+      await docAPI.cancelUpload({
+        pending_upload_id: pending.pending_upload_id,
+        original_filename: pending.original_filename,
+        property_id: propertyId,
+        category: pending.category,
+      })
+    } catch {
+      // Temporary upload cleanup failure is not actionable for this view.
     }
   }
 
@@ -203,11 +258,120 @@ export default function DocumentUpload({ propertyId, docs, onUploaded }) {
             accept=".pdf,.xlsx,.xls,.csv"
             onChange={(e) => handleFiles(e.target.files)}
           />
-        </div>
-      </div>
+</div>
+</div>
 
-      {/* Document list */}
-      <div className="card">
+{previewDoc && (
+<div className="card border-blue-200 dark:border-blue-800">
+<div className="flex items-start justify-between gap-4 mb-4">
+<div>
+<p className="text-xs font-bold uppercase tracking-wide text-blue-500">Review extracted fields</p>
+<h3 className="font-semibold text-gray-900 dark:text-white mt-1">{previewDoc.original_filename}</h3>
+<p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+{catLabel(previewDoc.category)} · {fmtSize(previewDoc.file_size)}
+</p>
+</div>
+<button type="button" onClick={cancelPreview} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Cancel upload">
+<X className="w-5 h-5" />
+</button>
+</div>
+
+{(() => {
+  const previewFields = Object.entries(previewDoc.extracted_data || {}).filter(
+    ([key, value]) => key !== 'raw_text_preview' && (value === null || (!Array.isArray(value) && typeof value !== 'object'))
+  )
+  const previewProperties = previewDoc.extracted_data?.properties || []
+  return previewFields.length ? (
+<div className="max-h-72 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+<table className="min-w-full text-sm">
+<thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
+<tr>
+<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Field</th>
+<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Extracted Value</th>
+</tr>
+</thead>
+<tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+{previewFields.map(([key, value]) => (
+<tr key={key}>
+<td className="px-3 py-2 text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap">{key.replace(/_/g, ' ')}</td>
+<td className="px-3 py-2 text-gray-900 dark:text-gray-100">
+{formatFieldValue(key, value, previewDoc.extracted_data)}
+</td>
+</tr>
+))}
+</tbody>
+</table>
+</div>
+  ) : previewProperties.length === 0 ? (
+<div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+No structured fields were extracted. Cancel this upload or save it as a document record for manual review.
+</div>
+  ) : null
+})()}
+
+{(previewDoc.extracted_data?.properties || []).length > 0 && (
+<div className="mt-4">
+<p className="text-xs font-bold uppercase tracking-wide text-blue-500 mb-2">
+Per-property Schedule E figures ({previewDoc.extracted_data.properties.length})
+</p>
+<div className="max-h-72 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+<table className="min-w-full text-sm">
+<thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
+<tr>
+<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Property</th>
+<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Kind</th>
+<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Rents</th>
+<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Total Exp.</th>
+<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Mortgage Int.</th>
+<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Depreciation</th>
+<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Net Income</th>
+<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Confidence</th>
+</tr>
+</thead>
+<tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+{previewDoc.extracted_data.properties.map((p, i) => (
+<tr key={i} className="align-top">
+<td className="px-3 py-2 text-gray-900 dark:text-gray-100">
+{p.address || '—'}
+{p.unresolved_fields?.length > 0 && (
+<div className="mt-1 flex items-start gap-1 text-xs text-amber-600">
+<AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+<span>{p.unresolved_fields.join(' ')}</span>
+</div>
+)}
+</td>
+<td className="px-3 py-2 text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap">{p.property_kind || '—'}</td>
+<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.rents_received != null ? `$${Number(p.rents_received).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
+<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.total_expenses != null ? `$${Number(p.total_expenses).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
+<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.mortgage_interest != null ? `$${Number(p.mortgage_interest).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
+<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.depreciation != null ? `$${Number(p.depreciation).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
+<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.net_income != null ? `$${Number(p.net_income).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
+<td className="px-3 py-2 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">{p.confidence != null ? `${Math.round(p.confidence * 100)}%` : '—'}</td>
+</tr>
+))}
+</tbody>
+</table>
+</div>
+</div>
+)}
+
+{previewDoc.extracted_data?.parse_error && (
+<div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+{previewDoc.extracted_data.parse_error}
+</div>
+)}
+
+<div className="mt-5 flex justify-end gap-3">
+<button type="button" onClick={cancelPreview} className="btn-secondary">Cancel</button>
+<button type="button" onClick={acceptPreview} disabled={acceptingPreview} className="btn-primary inline-flex items-center gap-2">
+{acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><CheckCircle2 className="w-4 h-4" /> Save and accept</>}
+</button>
+</div>
+</div>
+)}
+
+{/* Document list */}
+<div className="card">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-gray-900">Documents ({docs.length})</h3>
@@ -330,14 +494,23 @@ function DocRow({ doc, catLabel, selected, onToggle, onDelete, onApply }) {
           )}
           <div className="grid grid-cols-2 gap-x-6 gap-y-1">
             {Object.entries(doc.extracted_data)
-              .filter(([k]) => !['period_type', 'period_start', 'period_end', 'raw_text_preview'].includes(k))
+              .filter(([k, v]) => !['period_type', 'period_start', 'period_end', 'raw_text_preview'].includes(k)
+                && (v === null || (!Array.isArray(v) && typeof v !== 'object')))
               .map(([k, v]) => (
                 <div key={k} className="flex justify-between text-xs">
                   <span className="text-gray-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                  <span className="font-medium text-gray-700">{typeof v === 'number' ? v.toLocaleString() : String(v)}</span>
+                  <span className="font-medium text-gray-700">{formatFieldValue(k, v, doc.extracted_data)}</span>
                 </div>
               ))}
           </div>
+          {(doc.extracted_data.properties || []).length > 0 && (
+            <div className="mt-1.5 text-[11px] text-gray-500">
+              <span className="block text-gray-400">Properties:</span>
+              {doc.extracted_data.properties.map((p, i) => (
+                <div key={i} className="truncate">{p.address || 'Unknown'}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

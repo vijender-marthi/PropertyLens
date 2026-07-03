@@ -4,7 +4,7 @@ import { propAPI, docAPI } from '../services/api'
 import {
   Upload, FileText, Trash2, ChevronDown, Wand2, Building2,
   RefreshCw, FileSpreadsheet, PenLine, Download, CheckCircle2,
-  ArrowRight, AlertCircle, X, RotateCcw,
+  ArrowRight, AlertCircle, AlertTriangle, X, RotateCcw,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
@@ -19,6 +19,9 @@ const CATEGORIES = [
   { value: 'loan_disclosure',    label: 'Loan Disclosure' },
   { value: 'bank_statement',     label: 'Bank Statement' },
   { value: 'property_tax',       label: 'Property Tax Statement' },
+  { value: 'deed_title',         label: 'Deed / Title' },
+  { value: 'insurance_declaration', label: 'Insurance Policy Declaration' },
+  { value: 'expense_receipt',    label: 'Operating Expense Receipt' },
   { value: 'other',              label: 'Other' },
 ]
 
@@ -63,6 +66,43 @@ const fmtSize = (bytes) => {
 }
 const catLabel = (val) => CATEGORIES.find((c) => c.value === val)?.label || val
 const CURRENT_YEAR = new Date().getFullYear()
+const fmtMoney = (n) => n === null || n === undefined
+  ? '—'
+  : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+const YEAR_FIELD_RE = /year$/i
+// Years must never pick up thousands separators ("2,024"); money/count
+// fields should. schedule1_line5_delta reads "n/a" (not "—") when the
+// return's own Schedule 1 total wasn't found — that's a known cross-check
+// gap, not a missing field.
+const formatFieldValue = (key, value, allData) => {
+  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData?.schedule1_line5_total == null) {
+    return 'n/a'
+  }
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'number') {
+    return YEAR_FIELD_RE.test(key) ? String(Math.trunc(value)) : value.toLocaleString()
+  }
+  return String(value)
+}
+
+function UploadProcessing({ tone = 'blue' }) {
+  const color = tone === 'emerald' ? 'text-emerald-600 dark:text-emerald-300' : 'text-blue-600 dark:text-blue-400'
+  const ring = tone === 'emerald' ? 'border-emerald-200 border-t-emerald-600 dark:border-emerald-900 dark:border-t-emerald-300' : 'border-blue-200 border-t-blue-600 dark:border-blue-900 dark:border-t-blue-300'
+  return (
+    <div className="flex flex-col items-center justify-center gap-3">
+      <div className="relative h-14 w-14">
+        <div className={`absolute inset-0 rounded-full border-4 ${ring} animate-spin`} />
+        <div className="absolute inset-3 rounded-full bg-white dark:bg-gray-800 shadow-sm flex items-center justify-center">
+          <RefreshCw className={`h-5 w-5 ${color} animate-pulse`} />
+        </div>
+      </div>
+      <div>
+        <p className={`text-sm font-semibold ${color}`}>Uploading and extracting fields...</p>
+        <p className="text-xs text-slate-400 dark:text-gray-500 mt-1">Reading the document and preparing the preview.</p>
+      </div>
+    </div>
+  )
+}
 
 export default function UploadsPage() {
   const [mode, setMode] = useState('document')
@@ -77,6 +117,10 @@ export default function UploadsPage() {
   const [uploading, setUploading]   = useState(false)
   const [dragOver, setDragOver]     = useState(false)
   const [reprocessing, setReprocessing] = useState(false)
+  const [previewDoc, setPreviewDoc] = useState(null)
+  const [acceptingPreview, setAcceptingPreview] = useState(false)
+  const [uploadQueue, setUploadQueue] = useState([])
+  const [uploadProgress, setUploadProgress] = useState({ saved: 0, created: 0, total: 0 })
   const fileInputRef = useRef()
 
   // ── manual entry ──
@@ -86,9 +130,24 @@ export default function UploadsPage() {
     rents_received: '', mortgage_interest: '', property_taxes: '',
     depreciation: '', total_expenses: '', net_income: '',
   })
-  const [mPropFields, setMPropFields] = useState({ market_value: '', purchase_price: '', monthly_rent: '' })
+  const [mPropFields, setMPropFields] = useState({
+    market_value: '', purchase_price: '', monthly_rent: '',
+    original_residency_status: '', current_residency_status: '',
+    primary_start_date: '', primary_end_date: '',
+    rental_start_date: '', rental_end_date: '',
+    recorded_date: '', held_period: '',
+    settlement_total_amount: '', closing_costs: '',
+    hoa_flag: false, hoa_fee: '',
+    solar_ownership: 'None', solar_monthly_payment: '', solar_purchase_price: '',
+  })
   const [mLoanFields, setMLoanFields] = useState({
     original_loan_amount: '', current_balance: '', interest_rate: '', loan_type: 'Fixed', monthly_payment: '',
+    loan_product: '', origination_date: '', loan_term_years: '',
+    escrow_amount: '', escrow_included: false,
+    estimated_total_monthly_payment: '', original_ltv: '',
+    interest_paid_ytd: '', principal_paid_ytd: '',
+    projected_principal_fy: '', projected_interest_fy: '',
+    mortgage_tenure_covered: '',
   })
   const [saving, setSaving]         = useState(false)
   const [savingProp, setSavingProp] = useState(false)
@@ -125,33 +184,104 @@ export default function UploadsPage() {
   const isTaxReturn = category === 'tax_return'
 
   // ── Document upload handler ──────────────────────────────────────────────
-  const handleUpload = async (files) => {
-    if (!files.length) return
-    setUploading(true)
-    setResult(null)
-    let uploaded = 0, created = 0
-    for (const file of files) {
-      const fd = new FormData()
-      if (propertyId && !isTaxReturn) fd.append('property_id', propertyId)
-      fd.append('category', category)
-      fd.append('file', file)
-      try {
-        const { data } = await docAPI.upload(fd)
-        uploaded++
-        if (data.property_created) created++
-        if (data.tax_import_error)
-          toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
-        else if (data.tax_entries_imported > 0)
-          toast.success(`${data.tax_entries_imported} propert${data.tax_entries_imported === 1 ? 'y' : 'ies'} updated from tax return`, { duration: 5000 })
-        else
-          toast.success(`Uploaded: ${data.original_filename} (${catLabel(data.category)})`)
-      } catch (err) {
-        toast.error(err.response?.data?.detail || `Upload failed: ${file.name}`)
-      }
+  const previewNextFile = async (
+    queue,
+    saved = uploadProgress.saved,
+    created = uploadProgress.created,
+    uploadCategory = category,
+    uploadPropertyId = propertyId,
+  ) => {
+    if (!queue.length) {
+      setUploadQueue([])
+      setPreviewDoc(null)
+      setUploading(false)
+      await Promise.all([loadDocs(), loadProps()])
+      if (saved) setResult({ type: 'upload', count: saved, created })
+      return
     }
-    setUploading(false)
-    await Promise.all([loadDocs(), loadProps()])
-    if (uploaded) setResult({ type: 'upload', count: uploaded, created })
+
+    const [nextFile, ...rest] = queue
+    setUploadQueue(rest)
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      if (uploadPropertyId && uploadCategory !== 'tax_return') fd.append('property_id', uploadPropertyId)
+      fd.append('category', uploadCategory)
+      fd.append('file', nextFile)
+      const { data } = await docAPI.previewUpload(fd)
+      setPreviewDoc({
+        ...data,
+        selectedPropertyId: uploadPropertyId && uploadCategory !== 'tax_return' ? uploadPropertyId : null,
+        uploadCategory,
+        uploadPropertyId,
+        remainingCount: rest.length,
+      })
+    } catch (err) {
+      toast.error(err.response?.data?.detail || `Upload failed: ${nextFile.name}`)
+      await previewNextFile(rest, saved, created, uploadCategory, uploadPropertyId)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleUpload = async (files, options = {}) => {
+    const selectedFiles = [...files]
+    if (!selectedFiles.length) return
+    const uploadCategory = options.category || category
+    const uploadPropertyId = options.propertyId ?? propertyId
+    setResult(null)
+    setUploadProgress({ saved: 0, created: 0, total: selectedFiles.length })
+    await previewNextFile(selectedFiles, 0, 0, uploadCategory, uploadPropertyId)
+  }
+
+  const handleAcceptPreview = async () => {
+    if (!previewDoc) return
+    setAcceptingPreview(true)
+    try {
+      const { data } = await docAPI.acceptUpload({
+        pending_upload_id: previewDoc.pending_upload_id,
+        original_filename: previewDoc.original_filename,
+        property_id: previewDoc.selectedPropertyId,
+        category: previewDoc.category,
+      })
+      if (data.tax_import_error) {
+        toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
+      } else if (data.tax_entries_imported > 0) {
+        toast.success(`${data.tax_entries_imported} propert${data.tax_entries_imported === 1 ? 'y' : 'ies'} updated from tax return`, { duration: 5000 })
+      } else {
+        toast.success(`Saved: ${data.original_filename} (${catLabel(data.category)})`)
+      }
+      const nextSaved = uploadProgress.saved + 1
+      const nextCreated = uploadProgress.created + (data.property_created ? 1 : 0)
+      setUploadProgress((prev) => ({
+        ...prev,
+        saved: nextSaved,
+        created: nextCreated,
+      }))
+      setPreviewDoc(null)
+      await previewNextFile(uploadQueue, nextSaved, nextCreated, previewDoc.uploadCategory, previewDoc.uploadPropertyId)
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Save failed')
+    } finally {
+      setAcceptingPreview(false)
+    }
+  }
+
+  const handleCancelPreview = async () => {
+    if (!previewDoc) return
+    const pending = previewDoc
+    setPreviewDoc(null)
+    try {
+      await docAPI.cancelUpload({
+        pending_upload_id: pending.pending_upload_id,
+        original_filename: pending.original_filename,
+        property_id: pending.selectedPropertyId,
+        category: pending.category,
+      })
+    } catch {
+      // Pending uploads are temporary; a missing file does not need a user alert.
+    }
+    await previewNextFile(uploadQueue, uploadProgress.saved, uploadProgress.created, pending.uploadCategory, pending.uploadPropertyId)
   }
 
   // ── Spreadsheet template download ────────────────────────────────────────
@@ -287,6 +417,12 @@ export default function UploadsPage() {
   )
 
   const activeMethod = METHODS.find((m) => m.id === mode)
+  const previewFields = previewDoc
+    ? Object.entries(previewDoc.extracted_data || {}).filter(
+        ([key, value]) => key !== 'raw_text_preview' && (value === null || (!Array.isArray(value) && typeof value !== 'object'))
+      )
+    : []
+  const previewProperties = previewDoc?.extracted_data?.properties || []
 
   return (
 <div className="max-w-5xl mx-auto space-y-6">
@@ -375,6 +511,137 @@ export default function UploadsPage() {
         </div>
       )}
 
+      {previewDoc && (
+        <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+          <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-blue-100 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/20">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300">Review extracted fields</p>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mt-1">{previewDoc.original_filename}</h2>
+              <p className="text-sm text-slate-500 dark:text-gray-400 mt-1">
+                {catLabel(previewDoc.category)} · {fmtSize(previewDoc.file_size)}
+                {previewDoc.property_address ? ` · ${previewDoc.property_address}` : ''}
+              </p>
+              {uploadProgress.total > 1 && (
+                <p className="text-xs text-blue-600 dark:text-blue-300 mt-1">
+                  {uploadProgress.saved} saved · {previewDoc.remainingCount || 0} waiting · {uploadProgress.total} selected
+                </p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelPreview}
+              className="text-slate-400 hover:text-slate-700 dark:hover:text-gray-200"
+              title="Cancel upload"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="p-5">
+            {previewFields.length > 0 ? (
+              <div className="max-h-80 overflow-auto rounded-lg border border-slate-200 dark:border-gray-700">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 dark:bg-gray-700 sticky top-0">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Field</th>
+                      <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Extracted Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-gray-700">
+                    {previewFields.map(([key, value]) => (
+                      <tr key={key} className="bg-white dark:bg-gray-800">
+                        <td className="px-3 py-2 text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap">
+                          {key.replace(/_/g, ' ')}
+                        </td>
+                        <td className="px-3 py-2 text-slate-900 dark:text-gray-100">
+                          {formatFieldValue(key, value, previewDoc.extracted_data)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+                No structured fields were extracted. Cancel this upload or save it as a document record for manual review.
+              </div>
+            )}
+
+            {previewProperties.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300 mb-2">
+                  Per-property Schedule E figures ({previewProperties.length})
+                </p>
+                <div className="max-h-80 overflow-auto rounded-lg border border-slate-200 dark:border-gray-700">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50 dark:bg-gray-700 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Property</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Kind</th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Rents</th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Total Exp.</th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Mortgage Int.</th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Depreciation</th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Net Income</th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Confidence</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-gray-700">
+                      {previewProperties.map((p, i) => (
+                        <tr key={i} className="bg-white dark:bg-gray-800 align-top">
+                          <td className="px-3 py-2 text-slate-900 dark:text-gray-100">
+                            {p.address || '—'}
+                            {p.unresolved_fields?.length > 0 && (
+                              <div className="mt-1 flex items-start gap-1 text-xs text-amber-600 dark:text-amber-400">
+                                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+                                <span>{p.unresolved_fields.join(' ')}</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap">{p.property_kind || '—'}</td>
+                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.rents_received)}</td>
+                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.total_expenses)}</td>
+                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.mortgage_interest)}</td>
+                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.depreciation)}</td>
+                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.net_income)}</td>
+                          <td className="px-3 py-2 text-right text-slate-500 dark:text-gray-400 whitespace-nowrap">
+                            {p.confidence != null ? `${Math.round(p.confidence * 100)}%` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {previewDoc.extracted_data?.parse_error && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-200">
+                {previewDoc.extracted_data.parse_error}
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleCancelPreview}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 dark:border-gray-600 px-4 py-2 text-sm font-semibold text-slate-600 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAcceptPreview}
+                disabled={acceptingPreview}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><CheckCircle2 className="w-4 h-4" /> Save and accept</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Active mode panel ── */}
       <div className="rounded-xl border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
 
@@ -439,7 +706,7 @@ dragOver ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 
               >
                 <Upload className="w-10 h-10 text-slate-300 dark:text-gray-600 mx-auto mb-4" />
                 {uploading
-                ? <p className="text-sm font-semibold text-blue-600 dark:text-blue-400 animate-pulse">Uploading…</p>
+? <UploadProcessing />
                   : <>
                       <p className="text-sm font-semibold text-slate-700 dark:text-gray-300">Drop files here or click to browse</p>
                       <p className="text-xs text-slate-400 dark:text-gray-500 mt-1">PDF, XLSX, XLS, CSV · Max 20 MB · Multiple files supported</p>
@@ -536,7 +803,7 @@ dragOver ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 
                   <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5 mb-3">Upload your completed CSV or XLSX file. Each row creates or updates year data for that property.</p>
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    onDrop={(e) => { e.preventDefault(); setDragOver(false); setCategory('tax_return'); handleUpload([...e.dataTransfer.files]) }}
+onDrop={(e) => { e.preventDefault(); setDragOver(false); setCategory('tax_return'); handleUpload([...e.dataTransfer.files], { category: 'tax_return', propertyId: '' }) }}
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                     onDragLeave={() => setDragOver(false)}
                     className={`rounded-xl border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
@@ -545,14 +812,14 @@ dragOver ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-900/20' : 'border-s
                   >
                     <FileSpreadsheet className="w-9 h-9 text-slate-300 dark:text-gray-600 mx-auto mb-3" />
                     {uploading
-                ? <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-300 animate-pulse">Uploading…</p>
+? <UploadProcessing tone="emerald" />
                       : <>
                           <p className="text-sm font-semibold text-slate-700 dark:text-gray-300">Drop your filled CSV / XLSX here</p>
                           <p className="text-xs text-slate-400 dark:text-gray-500 mt-1">CSV or XLSX · Max 20 MB</p>
                         </>
                     }
                     <input ref={fileInputRef} type="file" className="hidden" accept=".csv,.xlsx,.xls"
-                      onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files]); e.target.value = '' }} />
+onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], { category: 'tax_return', propertyId: '' }); e.target.value = '' }} />
                   </div>
                 </div>
               </div>
@@ -853,13 +1120,24 @@ className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 da
         <div className="bg-slate-50 dark:bg-gray-700/50 border-t border-slate-100 dark:border-gray-700 px-5 py-3">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-gray-500 mb-2">Extracted Data</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
-            {Object.entries(data).filter(([k]) => !['raw_text_preview'].includes(k)).map(([k, v]) => (
-              <div key={k} className="flex justify-between text-xs py-0.5">
-                <span className="text-slate-400 dark:text-gray-500 capitalize">{k.replace(/_/g, ' ')}</span>
-                <span className="font-medium text-slate-700 dark:text-gray-300 ml-2 truncate">{typeof v === 'number' ? v.toLocaleString() : String(v)}</span>
-              </div>
-            ))}
+            {Object.entries(data)
+              .filter(([k, v]) => !['raw_text_preview'].includes(k)
+                && (v === null || (!Array.isArray(v) && typeof v !== 'object')))
+              .map(([k, v]) => (
+                <div key={k} className="flex justify-between text-xs py-0.5">
+                  <span className="text-slate-400 dark:text-gray-500 capitalize">{k.replace(/_/g, ' ')}</span>
+                  <span className="font-medium text-slate-700 dark:text-gray-300 ml-2 truncate">{formatFieldValue(k, v, data)}</span>
+                </div>
+              ))}
           </div>
+          {(data.properties || []).length > 0 && (
+            <div className="mt-1.5 text-[11px] text-slate-500 dark:text-gray-400">
+              <span className="block text-slate-400 dark:text-gray-500">Properties:</span>
+              {data.properties.map((p, i) => (
+                <div key={i} className="truncate">{p.address || 'Unknown'}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
