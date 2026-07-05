@@ -249,10 +249,23 @@ class TestLifetimeSummaryStructure:
         lt = data["lifetime"]
         for key in ("total_rental_income", "total_operating_expenses",
                     "total_interest_paid", "total_principal_paid",
-                    "total_cash_flow", "total_taxable_income",
-                    "total_depreciation", "equity", "market_value",
-                    "current_loan_balance"):
+                      "total_cash_flow", "total_taxable_income",
+                      "total_depreciation", "equity", "market_value",
+                      "current_loan_balance"):
             assert key in lt, f"Missing lifetime key: {key}"
+
+    def test_zero_balance_without_documents_does_not_create_fake_paydown(self, client, db, user, prop):
+        for loan in prop.loans:
+            loan.current_balance = 0.0
+        db.commit()
+
+        resp = client.get(f"/api/properties/{prop.id}/lifetime",
+                          headers=auth_headers(user.email))
+        assert resp.status_code == 200
+        lt = resp.json()["lifetime"]
+        assert lt["total_principal_paid"] == 0.0
+        assert lt["principal_paid_source"] == "missing_balance_evidence"
+        assert lt["principal_paid_note"]
 
     def test_yearly_row_keys_present(self, client, db, user, prop):
         _add_tax_entry(db, prop.id, user.id, 2022, rents_received=36_000.0)

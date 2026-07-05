@@ -182,11 +182,14 @@ class Document(Base):
 
     filename = Column(String, nullable=False)
     original_filename = Column(String, nullable=False)
+    display_name = Column(String)  # human-readable name derived from extracted content, not the uploaded filename
     file_type = Column(String)  # pdf, xlsx, etc.
     doc_category = Column(String)  # mortgage_statement, tax_return, 1099, loan_disclosure, other
     file_size = Column(Integer)
     extracted_data = Column(Text)  # JSON string of parsed data
     markdown_file = Column(String)  # structured markdown generated at parse time
+    content_hash = Column(String, index=True)  # sha256 of raw file bytes; flags exact-content duplicates regardless of filename
+    content_fingerprint = Column(String, index=True)  # sha256 of normalized extracted fields; flags near-duplicates (re-scan/re-export of the same statement)
 
     # Deduplication and loan tracking
     loan_account_number = Column(String, index=True)  # extracted from document

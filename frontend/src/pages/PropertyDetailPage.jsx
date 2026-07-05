@@ -285,7 +285,7 @@ export default function PropertyDetailPage() {
 )}
 
 {activeTab === 'checklist' && (
-<DocumentChecklist prop={prop} docs={docs} propId={id} onUploadRequest={() => setActiveTab('documents')} />
+<DocumentChecklist prop={prop} docs={docs} propId={id} onUploadRequest={() => setActiveTab('documents')} onRentalRequest={() => setActiveTab('rental')} />
 )}
 
 {activeTab === 'raw data' && (
@@ -309,6 +309,7 @@ export default function PropertyDetailPage() {
       {showLoanModal && (
         <LoanModal
           propId={id}
+          property={prop}
           loan={editLoan}
           onClose={() => setShowLoanModal(false)}
           onSaved={loadData}
@@ -370,17 +371,16 @@ const cell = (label, year) => items.find((i) => i.label === label && i.year === 
 return { labels, years, cell }
 }
 
-function pivotMonthly(items) {
-const labels = [...new Set(items.map((i) => i.label))]
-const rows = labels.map((label) => ({
-label,
-years: [...new Set(items.filter((i) => i.label === label).map((i) => i.year))].sort((a, b) => a - b),
-}))
-const cell = (label, year, month) => items.find((i) => i.label === label && i.year === year && i.month === month)
-return { rows, cell }
+function ChecklistDotGroup({ item }) {
+  if (!item.loans) return <ChecklistDot status={item.status} />
+  return (
+    <span className="inline-flex gap-1" title={item.loans.map((l) => `${l.label}: ${l.status}`).join(', ')}>
+      {item.loans.map((l) => <ChecklistDot key={l.id} status={l.status} />)}
+    </span>
+  )
 }
 
-function DocumentChecklist({ prop, docs, propId, onUploadRequest }) {
+function DocumentChecklist({ prop, docs, propId, onUploadRequest, onRentalRequest }) {
 const [checklist, setChecklist] = useState(null)
 const [loading, setLoading] = useState(true)
 
@@ -392,7 +392,14 @@ propAPI.checklist(propId)
 .finally(() => setLoading(false))
 }, [propId, docs])
 
+const isRentRoll = (item) => item.key.startsWith('rent-roll-')
+
 const requestUpload = (item) => {
+if (isRentRoll(item)) {
+toast(`Add this rental period on the Rental tab — no document needed for ${item.year}`, { icon: '🏠' })
+onRentalRequest?.()
+return
+}
 toast(`Go to Documents to upload: ${item.label}${item.year ? ` — ${item.month_label ? `${item.month_label} ` : ''}${item.year}` : ''}`, { icon: '📄' })
 onUploadRequest?.()
 }
@@ -402,7 +409,6 @@ if (!checklist) return <div className="card py-10 text-center text-sm text-gray-
 
 const { required, missing, completion_pct: completionPct, groups } = checklist
 const annualPivot = pivotByLabelYear(groups.annual)
-const monthlyPivot = pivotMonthly(groups.monthly)
 const missingSorted = [...missing].sort((a, b) =>
 (a.year || 0) - (b.year || 0) || (a.month || 0) - (b.month || 0)
 )
@@ -423,6 +429,82 @@ return (
 </div>
 <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{completionPct}%</span>
 </div>
+</div>
+</div>
+
+<div className="card">
+<h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">One-Time</h4>
+<div className="divide-y divide-gray-50 dark:divide-gray-700/50">
+{groups.one_time.map((item) => (
+<div key={item.key} className="flex items-center justify-between gap-3 py-2">
+<div className="min-w-0">
+<div className="flex items-center gap-2">
+<span className="truncate text-sm font-medium text-gray-900 dark:text-white">{item.label}</span>
+<ChecklistDotGroup item={item} />
+<ChecklistStatus status={item.status} />
+</div>
+<p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.detail}</p>
+</div>
+<span className="shrink-0 text-xs text-gray-400">{item.source}</span>
+</div>
+))}
+</div>
+</div>
+
+<div className="card">
+<div className="mb-3 flex items-center justify-between">
+<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Annual</h4>
+<span className="text-xs text-gray-400">Tax returns are portfolio-wide (common); multi-loan rows show one dot per loan.</span>
+</div>
+<div className="overflow-x-auto">
+<table className="min-w-full text-sm">
+<thead>
+<tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+<th className="py-2 pr-3 font-medium">Document</th>
+{annualPivot.years.map((year) => (
+<th key={year} className="py-2 px-3 text-center font-medium">{year}</th>
+))}
+</tr>
+</thead>
+<tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
+{annualPivot.labels.map((label) => (
+<tr key={label}>
+<td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">{label}</td>
+{annualPivot.years.map((year) => {
+const item = annualPivot.cell(label, year)
+return (
+<td key={year} className="py-2 px-3 text-center" title={item?.detail}>
+{item ? <ChecklistDotGroup item={item} /> : <span className="text-gray-300">—</span>}
+</td>
+)
+})}
+</tr>
+))}
+</tbody>
+</table>
+</div>
+</div>
+
+<div className="card">
+<div className="mb-3 flex items-center justify-between">
+<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Monthly</h4>
+<span className="text-xs text-gray-400">One statement per loan, current tax year only</span>
+</div>
+<div className="divide-y divide-gray-50 dark:divide-gray-700/50">
+{groups.monthly.map((item) => (
+<div key={item.key} className="flex items-center justify-between gap-3 py-2">
+<div className="min-w-0">
+<div className="flex items-center gap-2">
+<span className="truncate text-sm font-medium text-gray-900 dark:text-white">{item.label}</span>
+<ChecklistDotGroup item={item} />
+<ChecklistStatus status={item.status} />
+{item.year && <span className="text-xs text-gray-400">{item.year}</span>}
+</div>
+<p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.detail}</p>
+</div>
+<span className="shrink-0 text-xs text-gray-400">{item.source}</span>
+</div>
+))}
 </div>
 </div>
 
@@ -450,100 +532,16 @@ type="button"
 onClick={() => requestUpload(item)}
 className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700/40"
 >
-<Upload className="h-3 w-3" /> Upload
+{isRentRoll(item) ? 'Go to Rental' : <><Upload className="h-3 w-3" /> Upload</>}
 </button>
 </div>
 ))}
 </div>
 </div>
 )}
-
-<div className="card">
-<h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">One-Time</h4>
-<div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-{groups.one_time.map((item) => (
-<div key={item.key} className="flex items-center justify-between gap-3 py-2">
-<div className="min-w-0">
-<div className="flex items-center gap-2">
-<span className="truncate text-sm font-medium text-gray-900 dark:text-white">{item.label}</span>
-<ChecklistStatus status={item.status} />
-</div>
-<p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.detail}</p>
-</div>
-<span className="shrink-0 text-xs text-gray-400">{item.source}</span>
-</div>
-))}
-</div>
-</div>
-
-<div className="card">
-<div className="mb-3 flex items-center justify-between">
-<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Annual</h4>
-<span className="text-xs text-gray-400">Tax returns are portfolio-wide (common) and satisfy every property at once.</span>
-</div>
-<div className="overflow-x-auto">
-<table className="min-w-full text-sm">
-<thead>
-<tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-<th className="py-2 pr-3 font-medium">Document</th>
-{annualPivot.years.map((year) => (
-<th key={year} className="py-2 px-3 text-center font-medium">{year}</th>
-))}
-</tr>
-</thead>
-<tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-{annualPivot.labels.map((label) => (
-<tr key={label}>
-<td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">{label}</td>
-{annualPivot.years.map((year) => {
-const item = annualPivot.cell(label, year)
-return (
-<td key={year} className="py-2 px-3 text-center" title={item?.detail}>
-{item ? <ChecklistDot status={item.status} /> : <span className="text-gray-300">—</span>}
-</td>
-)
-})}
-</tr>
-))}
-</tbody>
-</table>
-</div>
-</div>
-
-<div className="card">
-<div className="mb-3 flex items-center justify-between">
-<h4 className="text-sm font-semibold text-gray-900 dark:text-white">Monthly</h4>
-<span className="text-xs text-gray-400">Last 24 months of ownership</span>
-</div>
-<div className="space-y-4">
-{monthlyPivot.rows.map(({ label, years }) => (
-<div key={label} className="overflow-x-auto">
-<div className="mb-1 text-xs font-semibold text-gray-700 dark:text-gray-300">{label}</div>
-{years.map((year) => (
-<div key={year} className="mb-1 flex items-center gap-2 text-xs">
-<span className="w-12 shrink-0 text-gray-400">{year}</span>
-<div className="flex gap-1">
-{MONTH_ABBR.map((monthLabel, idx) => {
-const item = monthlyPivot.cell(label, year, idx + 1)
-return (
-<span key={monthLabel} title={item ? `${monthLabel} ${year}: ${item.status}` : undefined} className="flex flex-col items-center gap-0.5">
-<span className="text-[10px] text-gray-400">{monthLabel[0]}</span>
-{item ? <ChecklistDot status={item.status} /> : <span className="inline-block h-2.5 w-2.5 rounded-full bg-gray-100 dark:bg-gray-700" />}
-</span>
-)
-})}
-</div>
-</div>
-))}
-</div>
-))}
-</div>
-</div>
 </div>
 )
 }
-
-const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 
 const RAW_FIELD_LABELS = {
@@ -1659,7 +1657,7 @@ function PerformanceTab({ propId }) {
                   <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">
                     {doc.category}
                   </span>
-                  <span className="text-gray-900 dark:text-white font-medium truncate">{doc.original_filename}</span>
+                  <span className="text-gray-900 dark:text-white font-medium truncate">{doc.display_name || doc.original_filename}</span>
                   {doc.period_type && doc.period_type !== 'other' && (
                     <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">
                       {doc.period_type} · {doc.period_start || ''}{doc.period_start && doc.period_end ? ' → ' : ''}{doc.period_end || ''}
@@ -3205,7 +3203,19 @@ function SummaryTab({ propId, prop, metrics }) {
             <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Remaining Mortgage</span><span className="text-red-500">{fmt(lifetime.current_loan_balance)}</span></div>
             <div className="flex justify-between border-t pt-2"><span className="font-semibold text-gray-900 dark:text-white">Current Equity</span><span className="font-bold text-blue-600">{fmt(lifetime.equity)}</span></div>
             <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Appreciation</span><span className={appreciation >= 0 ? 'text-green-600' : 'text-red-500'}>{fmt(appreciation)} ({appPct.toFixed(1)}%)</span></div>
-            <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Loan Paydown</span><span className="text-blue-600">{fmt(lifetime.total_principal_paid)}</span></div>
+          <div className="flex justify-between gap-3">
+            <span className="text-gray-500 dark:text-gray-400">Loan Paydown</span>
+            {lifetime.principal_paid_source === 'missing_balance_evidence' ? (
+              <span className="text-right text-amber-600 dark:text-amber-400">
+                Needs loan statement
+              </span>
+            ) : (
+              <span className="text-blue-600">{fmt(lifetime.total_principal_paid)}</span>
+            )}
+          </div>
+          {lifetime.principal_paid_note && (
+            <div className="text-right text-xs text-amber-600 dark:text-amber-400">{lifetime.principal_paid_note}</div>
+          )}
             <div className="flex justify-between"><span className="text-gray-500 dark:text-gray-400">Topup Paid</span><span className="text-indigo-600 dark:text-indigo-400">{fmt(principalTopupPaid)}</span></div>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 italic border-t pt-3">{equityVerdict}</p>

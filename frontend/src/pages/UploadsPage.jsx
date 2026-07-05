@@ -4,7 +4,8 @@ import { propAPI, docAPI } from '../services/api'
 import {
   Upload, FileText, Trash2, ChevronDown, Wand2, Building2,
   RefreshCw, FileSpreadsheet, PenLine, Download, CheckCircle2,
-  ArrowRight, AlertCircle, AlertTriangle, X, RotateCcw,
+  ArrowRight, AlertCircle, AlertTriangle, X, RotateCcw, Copy,
+  Filter, ArrowUpDown, Layers,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
@@ -65,6 +66,20 @@ const fmtSize = (bytes) => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 const catLabel = (val) => CATEGORIES.find((c) => c.value === val)?.label || val
+const CADENCE_BY_CATEGORY = {
+  closing_statement: 'one_time',
+  loan_disclosure: 'one_time',
+  deed_title: 'one_time',
+  '1098': 'annual',
+  '1099': 'annual',
+  property_tax: 'annual',
+  insurance_declaration: 'annual',
+  tax_return: 'annual',
+  expense_receipt: 'annual',
+  mortgage_statement: 'monthly',
+}
+const CADENCE_LABELS = { one_time: 'One-Time', annual: 'Annual', monthly: 'Monthly', other: 'Other' }
+const cadenceOf = (category) => CADENCE_BY_CATEGORY[category] || 'other'
 const CURRENT_YEAR = new Date().getFullYear()
 const fmtMoney = (n) => n === null || n === undefined
   ? '—'
@@ -120,6 +135,13 @@ export default function UploadsPage() {
   const [previewDoc, setPreviewDoc] = useState(null)
   const [acceptingPreview, setAcceptingPreview] = useState(false)
   const [uploadQueue, setUploadQueue] = useState([])
+
+  // ── document list filters / grouping / sort ──
+  const [docFilters, setDocFilters] = useState({
+    property: '', category: '', scope: '', year: '', cadence: '', status: '',
+  })
+  const [groupBy, setGroupBy] = useState('none') // none | property | category | both
+  const [sortDir, setSortDir] = useState('desc') // desc = newest first
   const [uploadProgress, setUploadProgress] = useState({ saved: 0, created: 0, total: 0 })
   const fileInputRef = useRef()
 
@@ -234,7 +256,7 @@ export default function UploadsPage() {
     await previewNextFile(selectedFiles, 0, 0, uploadCategory, uploadPropertyId)
   }
 
-  const handleAcceptPreview = async () => {
+  const handleAcceptPreview = async ({ force = false, replaceDocumentId = null } = {}) => {
     if (!previewDoc) return
     setAcceptingPreview(true)
     try {
@@ -243,13 +265,15 @@ export default function UploadsPage() {
         original_filename: previewDoc.original_filename,
         property_id: previewDoc.selectedPropertyId,
         category: previewDoc.category,
+        force,
+        replace_document_id: replaceDocumentId,
       })
       if (data.tax_import_error) {
         toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
       } else if (data.tax_entries_imported > 0) {
         toast.success(`${data.tax_entries_imported} propert${data.tax_entries_imported === 1 ? 'y' : 'ies'} updated from tax return`, { duration: 5000 })
       } else {
-        toast.success(`Saved: ${data.original_filename} (${catLabel(data.category)})`)
+        toast.success(`Saved: ${data.display_name || data.original_filename} (${catLabel(data.category)})`)
       }
       const nextSaved = uploadProgress.saved + 1
       const nextCreated = uploadProgress.created + (data.property_created ? 1 : 0)
@@ -260,8 +284,14 @@ export default function UploadsPage() {
       }))
       setPreviewDoc(null)
       await previewNextFile(uploadQueue, nextSaved, nextCreated, previewDoc.uploadCategory, previewDoc.uploadPropertyId)
+      loadDocs()
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Save failed')
+      const detail = err.response?.data?.detail
+      if (detail && typeof detail === 'object' && detail.name) {
+        setPreviewDoc((prev) => (prev ? { ...prev, duplicate_of: detail } : prev))
+      } else {
+        toast.error(detail || 'Save failed')
+      }
     } finally {
       setAcceptingPreview(false)
     }
@@ -423,6 +453,56 @@ export default function UploadsPage() {
       )
     : []
   const previewProperties = previewDoc?.extracted_data?.properties || []
+
+  const propNameById = Object.fromEntries(properties.map((p) => [p.id, p.name || p.address]))
+  const docYears = [...new Set(docs.map((d) => d.statement_year).filter(Boolean))].sort((a, b) => b - a)
+  const usedCategories = [...new Set(docs.map((d) => d.doc_category).filter(Boolean))]
+
+  const filteredDocs = docs
+    .filter((d) => {
+      if (docFilters.property && String(d.property_id || '') !== docFilters.property) return false
+      if (docFilters.category && d.doc_category !== docFilters.category) return false
+      if (docFilters.scope === 'common' && d.property_id) return false
+      if (docFilters.scope === 'property' && !d.property_id) return false
+      if (docFilters.year && String(d.statement_year || '') !== docFilters.year) return false
+      if (docFilters.cadence && cadenceOf(d.doc_category) !== docFilters.cadence) return false
+      if (docFilters.status === 'matched' && !d.property_id) return false
+      if (docFilters.status === 'unassigned' && d.property_id) return false
+      if (docFilters.status === 'duplicate' && !d.is_duplicate) return false
+      return true
+    })
+    .sort((a, b) => {
+      const ta = a.upload_date ? new Date(a.upload_date).getTime() : 0
+      const tb = b.upload_date ? new Date(b.upload_date).getTime() : 0
+      return sortDir === 'desc' ? tb - ta : ta - tb
+    })
+
+  const groupLabel = (d) => {
+    const propPart = d.property_id ? (propNameById[d.property_id] || d.property_address || `Property ${d.property_id}`) : 'Common'
+    const catPart = catLabel(d.doc_category)
+    if (groupBy === 'property') return propPart
+    if (groupBy === 'category') return catPart
+    if (groupBy === 'both') return `${propPart} — ${catPart}`
+    return null
+  }
+  const groupedDocs = groupBy === 'none'
+    ? [[null, filteredDocs]]
+    : Object.entries(
+        filteredDocs.reduce((acc, d) => {
+          const key = groupLabel(d)
+          ;(acc[key] = acc[key] || []).push(d)
+          return acc
+        }, {})
+      )
+
+  const activeFilterChips = [
+    docFilters.property && { key: 'property', label: `Property: ${propNameById[docFilters.property] || docFilters.property}` },
+    docFilters.category && { key: 'category', label: `Type: ${catLabel(docFilters.category)}` },
+    docFilters.scope && { key: 'scope', label: `Scope: ${docFilters.scope === 'common' ? 'Common' : 'Property'}` },
+    docFilters.year && { key: 'year', label: `Year: ${docFilters.year}` },
+    docFilters.cadence && { key: 'cadence', label: `Cadence: ${CADENCE_LABELS[docFilters.cadence]}` },
+    docFilters.status && { key: 'status', label: `Status: ${docFilters.status[0].toUpperCase()}${docFilters.status.slice(1)}` },
+  ].filter(Boolean)
 
   return (
 <div className="max-w-5xl mx-auto space-y-6">
@@ -621,6 +701,24 @@ export default function UploadsPage() {
               </div>
             )}
 
+            {previewDoc.duplicate_of && (
+              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+                <div className="flex items-start gap-2">
+                  <Copy className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">
+                      {previewDoc.duplicate_of.match_type === 'exact' ? 'Identical file already uploaded' : 'Possible duplicate — same content'}
+                    </p>
+                    <p className="mt-0.5">
+                      Matches "{previewDoc.duplicate_of.name}"
+                      {previewDoc.duplicate_of.property_address ? ` for ${previewDoc.duplicate_of.property_address}` : ''}
+                      {previewDoc.duplicate_of.upload_date ? `, uploaded ${new Date(previewDoc.duplicate_of.upload_date).toLocaleDateString()}` : ''}.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
               <button
                 type="button"
@@ -629,14 +727,35 @@ export default function UploadsPage() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleAcceptPreview}
-                disabled={acceptingPreview}
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-              >
-                {acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><CheckCircle2 className="w-4 h-4" /> Save and accept</>}
-              </button>
+              {previewDoc.duplicate_of ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleAcceptPreview({ replaceDocumentId: previewDoc.duplicate_of.id })}
+                    disabled={acceptingPreview}
+                    className="inline-flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700 px-4 py-2 text-sm font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 disabled:opacity-60"
+                  >
+                    Replace existing
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAcceptPreview({ force: true })}
+                    disabled={acceptingPreview}
+                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : 'Keep both'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleAcceptPreview()}
+                  disabled={acceptingPreview}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><CheckCircle2 className="w-4 h-4" /> Save and accept</>}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1002,7 +1121,9 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-gray-700">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-gray-500">Uploaded Documents</p>
-            <p className="font-semibold text-slate-900 dark:text-white mt-0.5">{docs.length} file{docs.length !== 1 ? 's' : ''}</p>
+            <p className="font-semibold text-slate-900 dark:text-white mt-0.5">
+              {filteredDocs.length} of {docs.length} file{docs.length !== 1 ? 's' : ''}
+            </p>
           </div>
           {docs.length > 0 && (
             <button onClick={handleReprocessAll} disabled={reprocessing}
@@ -1013,20 +1134,114 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
           )}
         </div>
 
+        {docs.length > 0 && (
+          <div className="px-6 py-3 border-b border-slate-100 dark:border-gray-700 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter className="w-3.5 h-3.5 text-slate-400 dark:text-gray-500" />
+              <select value={docFilters.property} onChange={(e) => setDocFilters((f) => ({ ...f, property: e.target.value }))}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="">All properties</option>
+                {properties.map((p) => <option key={p.id} value={p.id}>{p.name || p.address}</option>)}
+              </select>
+              <select value={docFilters.category} onChange={(e) => setDocFilters((f) => ({ ...f, category: e.target.value }))}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="">All document types</option>
+                {usedCategories.map((c) => <option key={c} value={c}>{catLabel(c)}</option>)}
+              </select>
+              <select value={docFilters.scope} onChange={(e) => setDocFilters((f) => ({ ...f, scope: e.target.value }))}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="">All scopes</option>
+                <option value="common">Common</option>
+                <option value="property">Property</option>
+              </select>
+              <select value={docFilters.year} onChange={(e) => setDocFilters((f) => ({ ...f, year: e.target.value }))}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="">All years</option>
+                {docYears.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+              <select value={docFilters.cadence} onChange={(e) => setDocFilters((f) => ({ ...f, cadence: e.target.value }))}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="">All cadences</option>
+                {Object.entries(CADENCE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              <select value={docFilters.status} onChange={(e) => setDocFilters((f) => ({ ...f, status: e.target.value }))}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="">Any status</option>
+                <option value="matched">Matched</option>
+                <option value="unassigned">Unassigned</option>
+                <option value="duplicate">Duplicate</option>
+              </select>
+
+              <span className="w-px h-5 bg-slate-200 dark:bg-gray-600 mx-1" />
+
+              <Layers className="w-3.5 h-3.5 text-slate-400 dark:text-gray-500" />
+              <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)}
+                className="text-xs rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300">
+                <option value="none">No grouping</option>
+                <option value="property">Group by property</option>
+                <option value="category">Group by document type</option>
+                <option value="both">Group by property + type</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))}
+                className="inline-flex items-center gap-1 text-xs font-medium rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-slate-600 dark:text-gray-300"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5" />
+                {sortDir === 'desc' ? 'Newest first' : 'Oldest first'}
+              </button>
+            </div>
+
+            {activeFilterChips.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {activeFilterChips.map((chip) => (
+                  <span key={chip.key} className="inline-flex items-center gap-1 text-xs font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full pl-2.5 pr-1.5 py-1">
+                    {chip.label}
+                    <button onClick={() => setDocFilters((f) => ({ ...f, [chip.key]: '' }))} className="hover:text-blue-900 dark:hover:text-blue-100">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={() => setDocFilters({ property: '', category: '', scope: '', year: '', cadence: '', status: '' })}
+                  className="text-xs font-medium text-slate-400 dark:text-gray-500 hover:text-slate-600 dark:hover:text-gray-300 px-1.5"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {docs.length === 0 ? (
           <div className="text-center py-12">
             <FileText className="w-10 h-10 text-slate-200 dark:text-gray-600 mx-auto mb-3" />
             <p className="text-sm text-slate-400 dark:text-gray-500">No documents uploaded yet</p>
           </div>
-        ) : (
-          <div className="divide-y divide-slate-50">
-            {docs.map((doc) => (
-              <DocRow key={doc.id} doc={doc} properties={properties}
-                onDelete={() => handleDelete(doc.id)}
-                onApply={() => handleApply(doc.id)}
-                onReparse={() => handleReparse(doc.id)} />
-            ))}
+        ) : filteredDocs.length === 0 ? (
+          <div className="text-center py-12">
+            <Filter className="w-10 h-10 text-slate-200 dark:text-gray-600 mx-auto mb-3" />
+            <p className="text-sm text-slate-400 dark:text-gray-500">No documents match the current filters</p>
           </div>
+        ) : (
+          groupedDocs.map(([label, groupDocs]) => (
+            <div key={label || 'all'}>
+              {label && (
+                <div className="px-6 py-2 bg-slate-50 dark:bg-gray-700/40 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-gray-400 border-b border-slate-100 dark:border-gray-700">
+                  {label} <span className="font-normal normal-case text-slate-400 dark:text-gray-500">({groupDocs.length})</span>
+                </div>
+              )}
+              <div className="divide-y divide-slate-50">
+                {groupDocs.map((doc) => (
+                  <DocRow key={doc.id} doc={doc} properties={properties}
+                    onDelete={() => handleDelete(doc.id)}
+                    onApply={() => handleApply(doc.id)}
+                    onReparse={() => handleReparse(doc.id)} />
+                ))}
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>
@@ -1068,7 +1283,9 @@ function DocRow({ doc, properties = [], onDelete, onApply, onReparse }) {
         <div className="w-2 h-2 rounded-full shrink-0" style={{ background: catColor }} />
         <FileText className="w-4 h-4 shrink-0" style={{ color: catColor }} />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{doc.original_filename}</p>
+          <p className="text-sm font-medium text-slate-900 dark:text-white truncate" title={doc.original_filename}>
+            {doc.display_name || doc.original_filename}
+          </p>
           <div className="flex items-center gap-2 flex-wrap mt-0.5">
             {doc.property_id
 ? <Link to={`/properties/${doc.property_id}`} className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline">{propertyLabel(linkedProperty, `ID ${doc.property_id}`)}</Link>
@@ -1077,6 +1294,11 @@ function DocRow({ doc, properties = [], onDelete, onApply, onReparse }) {
             <span className="text-xs text-slate-400 dark:text-gray-500">·</span>
             <span className="text-xs text-slate-500 dark:text-gray-400">{catLabel(doc.doc_category)}</span>
             {doc.file_size > 0 && <><span className="text-xs text-slate-400 dark:text-gray-500">·</span><span className="text-xs text-slate-400 dark:text-gray-500">{fmtSize(doc.file_size)}</span></>}
+            {doc.is_duplicate && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+                <Copy className="w-2.5 h-2.5" /> Duplicate
+              </span>
+            )}
           </div>
         </div>
 

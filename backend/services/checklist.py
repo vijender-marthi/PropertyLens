@@ -50,15 +50,7 @@ def _doc_year(doc, data: dict) -> Optional[int]:
     return _year_of(doc.statement_year or data.get("statement_year") or data.get("tax_year"))
 
 
-def _doc_month(doc, data: dict) -> Optional[int]:
-    dt = _parse_date(
-        data.get("statement_date") or data.get("period_end") or doc.period_end
-        or data.get("period_start") or doc.period_start
-    )
-    return dt.month if dt else None
-
-
-def _slot(key, label, cadence, status, source, detail, year=None, month=None, scope="property"):
+def _slot(key, label, cadence, status, source, detail, year=None, month=None, scope="property", loans=None):
     return {
         "key": key,
         "label": label,
@@ -70,7 +62,43 @@ def _slot(key, label, cadence, status, source, detail, year=None, month=None, sc
         "month": month,
         "month_label": MONTH_ABBR[month - 1] if month else None,
         "scope": scope,       # property | portfolio
+        "loans": loans,             # per-loan status dots when a property has multiple loans, else None
+        "loan_count": len(loans) if loans else None,
     }
+
+
+def _loan_group_slot(key, base_label, cadence, loan_list, doc_lookup, detail, year,
+                      month=None, missing_status="missing"):
+    """One checklist row covering every loan on the property, with a status
+    dot per loan (green = uploaded, yellow = missing) instead of a separate
+    row per loan."""
+    if not loan_list:
+        d = doc_lookup(None)
+        has_doc = d is not None
+        return _slot(
+            key, base_label, cadence,
+            "present" if has_doc else missing_status,
+            "Document upload" if has_doc else "Not uploaded",
+            detail, year=year, month=month,
+        )
+
+    loan_dots = []
+    for loan in loan_list:
+        d = doc_lookup(loan)
+        loan_dots.append({
+            "id": loan.id,
+            "label": loan.lender_name or f"Loan {loan.id}",
+            "status": "present" if d is not None else "missing",
+        })
+    all_present = all(l["status"] == "present" for l in loan_dots)
+    any_present = any(l["status"] == "present" for l in loan_dots)
+    label = f"{base_label} ×{len(loan_list)}" if len(loan_list) > 1 else base_label
+    return _slot(
+        key, label, cadence,
+        "present" if all_present else missing_status,
+        "Document upload" if any_present else "Not uploaded",
+        detail, year=year, month=month, loans=loan_dots,
+    )
 
 
 def build_checklist(prop, docs: list, loans: list, tax_entries: list,
@@ -80,7 +108,6 @@ def build_checklist(prop, docs: list, loans: list, tax_entries: list,
 
     purchase_dt = _parse_date(prop.purchase_date)
     purchase_year = purchase_dt.year if purchase_dt else (_year_of(prop.purchase_date) or current_year)
-    purchase_month = purchase_dt.month if purchase_dt else 1
 
     by_category: dict[str, list] = {}
     for d in docs:
@@ -92,18 +119,8 @@ def build_checklist(prop, docs: list, loans: list, tax_entries: list,
     def year_doc(category, year):
         return next((d for d, data in docs_of(category) if _doc_year(d, data) == year), None)
 
-    def month_doc(category, year, month):
-        for d, data in docs_of(category):
-            if _doc_year(d, data) == year and _doc_month(d, data) == month:
-                return d
-        return None
-
     def annual_status(year: int) -> str:
         return "expired" if year < current_year - 1 else "missing"
-
-    def monthly_status(year: int, month: int) -> str:
-        months_ago = (current_year - year) * 12 + (current_month - month)
-        return "expired" if months_ago > 2 else "missing"
 
     required: list[dict] = []
 
@@ -169,6 +186,14 @@ def build_checklist(prop, docs: list, loans: list, tax_entries: list,
         if y >= purchase_year
     })
 
+    def rent_roll_covers_year(year):
+        for period in rental_periods:
+            start_year = period.start_year
+            end_year = period.end_year or current_year
+            if start_year <= year <= end_year:
+                return True
+        return False
+
     tax_years_present = {e.tax_year for e in tax_entries}
     for year in annual_years:
         has_tax = year in tax_years_present
@@ -180,18 +205,22 @@ def build_checklist(prop, docs: list, loans: list, tax_entries: list,
             year=year, scope="portfolio",
         ))
 
-        for loan in (loan_list or [None]):
-            label = f"Form 1098 ({loan.lender_name or 'Loan'})" if loan else "Form 1098"
-            key = f"1098-{year}-{loan.id}" if loan else f"1098-{year}"
-            d = year_doc("1098", year)
-            has_1098 = d is not None
-            required.append(_slot(
-                key, label, "annual",
-                "present" if has_1098 else annual_status(year),
-                "Document upload" if has_1098 else "Not uploaded",
-                "Mortgage interest, outstanding principal, and points paid for the year.",
-                year=year,
-            ))
+        def _1098_lookup(loan, year=year):
+            docs_1098 = docs_of("1098")
+            for d, data in docs_1098:
+                if _doc_year(d, data) != year:
+                    continue
+                if loan is None or loan.account_number is None:
+                    return d
+                if (d.loan_account_number or data.get("account_number")) == loan.account_number:
+                    return d
+            return None
+
+        required.append(_loan_group_slot(
+            f"1098-{year}", "Form 1098", "annual", loan_list, _1098_lookup,
+            "Mortgage interest, outstanding principal, and points paid for the year.",
+            year=year, missing_status=annual_status(year),
+        ))
 
         has_tax_bill = year_doc("property_tax", year) is not None
         manual_tax = bool(prop.property_tax) and year == last_complete_year
@@ -213,56 +242,44 @@ def build_checklist(prop, docs: list, loans: list, tax_entries: list,
             year=year,
         ))
 
-    # ---------- MONTHLY ----------
-    # Capped to the last 24 months of ownership so the grid stays usable
-    # for long-held properties.
-    window_months = []
-    y, m = purchase_year, purchase_month
-    while (y, m) <= (current_year, current_month):
-        window_months.append((y, m))
-        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-    window_months = window_months[-24:]
-
-    def rent_roll_covers(year, month):
-        for period in rental_periods:
-            start = (period.start_year, period.start_month)
-            end = (period.end_year or current_year, period.end_month or current_month)
-            if start <= (year, month) <= end:
-                return True
-        return False
-
-    for year, month in window_months:
-        for loan in (loan_list or [None]):
-            label = f"Mortgage Statement ({loan.lender_name or 'Loan'})" if loan else "Mortgage Statement"
-            key = f"mortgage-{year}-{month}-{loan.id}" if loan else f"mortgage-{year}-{month}"
-            d = month_doc("mortgage_statement", year, month)
-            has_stmt = d is not None
-            required.append(_slot(
-                key, label, "monthly",
-                "present" if has_stmt else ("missing" if not loan_list else monthly_status(year, month)),
-                "Document upload" if has_stmt else "Not uploaded",
-                "Balance, due date, rate, escrow, and YTD principal/interest.",
-                year=year, month=month,
-            ))
-
-        has_rent = rent_roll_covers(year, month)
+        has_rent = rent_roll_covers_year(year)
         required.append(_slot(
-            f"rent-{year}-{month}", "Rent Roll / Income Statement", "monthly",
-            "present" if has_rent else monthly_status(year, month),
+            f"rent-roll-{year}", "Rent Roll / Income Statement", "annual",
+            "present" if has_rent else annual_status(year),
             "Manual rental period" if has_rent else "Not entered",
-            "Occupancy/rent coverage for the month.",
-            year=year, month=month,
+            "Occupancy/rent coverage for the year — one entry per tax year, not per month.",
+            year=year,
         ))
 
-        d = month_doc("expense_receipt", year, month)
-        has_expense = d is not None
+        has_expense = year_doc("expense_receipt", year) is not None
         required.append(_slot(
-            f"expense-{year}-{month}", "Operating Expense Receipts", "monthly",
-            "present" if has_expense else monthly_status(year, month),
+            f"expense-{year}", "Operating Expense Summary", "annual",
+            "present" if has_expense else annual_status(year),
             "Document upload" if has_expense else "Not uploaded",
-            "Receipts for repairs, supplies, and other deductible operating expenses.",
-            year=year, month=month,
+            "Receipts/summary for repairs, supplies, and other deductible operating expenses — one per tax year.",
+            year=year,
         ))
+
+    # ---------- MONTHLY ----------
+    # Only one statement is required per loan per year — the most recent
+    # (current/latest tax year), any month. Prior years and other months
+    # are ignored here (they're satisfied by the 1098 for that year instead).
+    def _mortgage_lookup(loan, year=current_year):
+        docs_mtg = docs_of("mortgage_statement")
+        for d, data in docs_mtg:
+            if _doc_year(d, data) != year:
+                continue
+            if loan is None or loan.account_number is None:
+                return d
+            if (d.loan_account_number or data.get("account_number")) == loan.account_number:
+                return d
+        return None
+
+    required.append(_loan_group_slot(
+        "mortgage-current", "Mortgage Statement", "monthly", loan_list, _mortgage_lookup,
+        f"At least one statement from {current_year} — balance, due date, rate, escrow, YTD principal/interest.",
+        year=current_year,
+    ))
 
     present = [s for s in required if s["status"] == "present"]
     missing = [s for s in required if s["status"] in ("missing", "expired")]

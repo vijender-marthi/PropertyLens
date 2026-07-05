@@ -1276,18 +1276,6 @@ def _match_property(address: str, props):
     return None
 
 
-def _split_tax_return_address(addr: str):
-    """Split a Schedule E line-1a address blob into street/city/state/zip.
-
-    Schedule E prints the address as one string (e.g. "123 Main St, Anytown,
-    CA 90210"); tolerate a missing comma before the state/zip too."""
-    addr = (addr or "").strip()
-    m = re.match(r'^(.*?),?\s*([A-Za-z][A-Za-z .\-]*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?$', addr)
-    if m:
-        return m.group(1).strip(' ,'), m.group(2).strip(), m.group(3), m.group(4)
-    return addr, None, None, None
-
-
 TAX_ENTRY_FIELDS = ("rents_received", "mortgage_interest", "property_taxes",
 "depreciation", "total_expenses", "net_income",
 "days_rented", "personal_use_days")
@@ -1360,15 +1348,14 @@ def _default_primary_property(db: Session, owner_id: int, props: list, year: int
 async def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) -> int:
     """Parse a 1040 return and upsert per-property tax entries.
 
-    Schedule E rental rows are matched to managed properties by address; a row
-    with no match gets a new draft Property (unconfirmed — the user reviews it
-    like any auto-created property) and a fair-market-value lookup, since FMV
-    never appears on a tax return. Primary residence data from Schedule A is
+    Schedule E rental rows are matched to managed properties by address. A row
+    with no match is kept as an unassigned tax entry (property_id=None) rather
+    than auto-creating a new Property — only properties already in the user's
+    Property List are ever linked. Primary residence data from Schedule A is
     attached to the user's primary property when available. No SSNs or
     taxpayer names are stored.
     """
     from services.document_parser import parse_tax_return_properties
-    from services.property_valuation import get_property_value
 
     parsed = parse_tax_return_properties(filepath)
     year = parsed.get("tax_year")
@@ -1387,35 +1374,11 @@ async def import_tax_return(db: Session, owner_id: int, document_id, filepath: s
             matched = primary_prop
             address = matched.address if matched else "Primary Residence"
         else:
+            # Only ever link to a property already in the user's Property
+            # List — an unmatched Schedule E row is kept as an unassigned tax
+            # entry (property_id=None) rather than auto-creating a new one.
             matched = _match_property(entry.get("address"), props)
             address = entry.get("address")
-
-            if matched is None and address:
-                street, city, state, zip_code = _split_tax_return_address(address)
-                matched = models.Property(
-                    owner_id=owner_id,
-                    property_uid=str(uuid.uuid4()),
-                    address=street or address,
-                    city=city, state=state, zip_code=zip_code,
-                    usage_type="Rental",
-                )
-                db.add(matched)
-                db.flush()
-                matched.name = _default_property_name(matched.address, matched.id)
-                props.append(matched)
-
-                # FMV is never on the return itself — look it up now so the
-                # draft doesn't sit with a $0 market value until the user
-                # visits the property page.
-                try:
-                    valuation = await get_property_value(
-                        matched.address, city or "", state or "", zip_code or "")
-                    if valuation.get("value"):
-                        matched.market_value = valuation["value"]
-                        matched.market_value_source = valuation["source"]
-                        matched.market_value_updated = datetime.utcnow().isoformat()
-                except Exception:
-                    pass
 
         # Dedupe on the resolved property when we have one — the raw parsed
         # address text varies slightly between re-uploads of the same return
@@ -2122,7 +2085,15 @@ def get_lifetime_summary(
     # higher than the next year's balance). Summing those gives nonsense totals.
     _original_loan = round(sum(l.original_amount for l in prop.loans if l.original_amount), 2)
     _current_bal   = round(metrics["total_loan_balance"], 2)
-    _principal_paid_actual = round(max(0, _original_loan - _current_bal), 2)
+    _has_balance_evidence = bool(snapshots or balance_by_year or statement_balance_by_year)
+    _principal_paid_source = "loan_balance"
+    _principal_paid_note = None
+    if _original_loan > 0 and _current_bal <= 0 and not _has_balance_evidence:
+        _principal_paid_actual = 0.0
+        _principal_paid_source = "missing_balance_evidence"
+        _principal_paid_note = "Upload a mortgage statement or 1098 to verify principal paydown."
+    else:
+        _principal_paid_actual = round(max(0, _original_loan - _current_bal), 2)
     _expected_principal_cumulative = (
         yearly_details[-1].get("expected_principal_cumulative") if yearly_details else None
     )
@@ -2139,6 +2110,8 @@ def get_lifetime_summary(
         "total_operating_expenses": round(sum(y["operating_expenses"] for y in yearly_details), 2),
         "total_interest_paid": round(sum(y["interest_paid"] for y in yearly_details), 2),
         "total_principal_paid": _principal_paid_actual,
+        "principal_paid_source": _principal_paid_source,
+        "principal_paid_note": _principal_paid_note,
         "expected_principal_paid": _expected_principal_cumulative,
         "principal_topup_paid": _principal_topup_cumulative,
         "total_expected_principal_paid": _expected_principal_cumulative,
@@ -2631,6 +2604,47 @@ def get_tax_entries(
     return db.query(models.TaxReturnEntry).filter(
         models.TaxReturnEntry.property_id == prop.id
     ).order_by(models.TaxReturnEntry.tax_year.desc()).all()
+
+
+@router.get("/tax-entries/unassigned", response_model=List[TaxEntryOut])
+def get_unassigned_tax_entries(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Schedule E rows extracted from a tax return that didn't match any
+    property already in the user's Property List. Held here for manual
+    review/linking rather than auto-creating a new property."""
+    return db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.owner_id == current_user.id,
+        models.TaxReturnEntry.property_id.is_(None),
+    ).order_by(models.TaxReturnEntry.tax_year.desc()).all()
+
+
+class LinkTaxEntryRequest(BaseModel):
+    property_id: int
+
+
+@router.post("/tax-entries/{entry_id}/link", response_model=TaxEntryOut)
+def link_tax_entry(
+    entry_id: int,
+    req: LinkTaxEntryRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Manually link a previously-unassigned Schedule E row to an existing
+    property. The target must already be in the user's Property List —
+    this never creates one."""
+    rec = db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.id == entry_id,
+        models.TaxReturnEntry.owner_id == current_user.id,
+    ).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Tax entry not found")
+    prop = _get_owned_property(req.property_id, db, current_user)
+    rec.property_id = prop.id
+    db.commit()
+    db.refresh(rec)
+    return rec
 
 
 # ── Loan endpoints ─────────────────────────────────────────────────────────────

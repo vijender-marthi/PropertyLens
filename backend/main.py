@@ -58,6 +58,9 @@ MIGRATIONS = {
         "period_type": "VARCHAR DEFAULT 'other'",
         "period_start": "VARCHAR",
         "period_end": "VARCHAR",
+        "display_name": "VARCHAR",
+        "content_hash": "VARCHAR",
+        "content_fingerprint": "VARCHAR",
     },
 "tax_return_entries": {
 "days_rented": "INTEGER DEFAULT 0",
@@ -163,6 +166,9 @@ with engine.connect() as conn:
                     period_type VARCHAR DEFAULT 'other',
                     period_start VARCHAR,
                     period_end VARCHAR,
+                    display_name VARCHAR,
+                    content_hash VARCHAR,
+                    content_fingerprint VARCHAR,
                     upload_date DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """))
