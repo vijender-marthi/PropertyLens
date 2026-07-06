@@ -26,6 +26,9 @@ def _default_property_name(prop_id: int) -> str:
 
 # Lightweight migrations for columns added after the initial schema
 MIGRATIONS = {
+    "users": {
+        "role": "VARCHAR DEFAULT 'demo'",
+    },
     "properties": {
 "property_uid": "VARCHAR",
 "name": "VARCHAR",

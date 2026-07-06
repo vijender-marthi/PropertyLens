@@ -227,6 +227,7 @@ function SummaryTile({ label, value, suffix, tone }) {
 
 function PropertyCard({ property: p, featured = false }) {
   const isPrimary = (p.usage_type || '').toLowerCase() === 'primary'
+  const isMixedUse = p.residency_status === 'Mixed' || (isPrimary && p.has_rental_history)
   const positive = (p.monthly_cash_flow || 0) >= 0
 
   return (
@@ -247,9 +248,14 @@ className={`card block transition-shadow hover:shadow-md ${featured ? 'border-am
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className="badge-blue">{p.property_type || 'Property'}</span>
-          <span className={isPrimary ? 'badge-yellow' : 'badge-green'}>
-            {isPrimary ? 'Primary Home' : 'Rental'}
+          <span className={isMixedUse ? 'badge-yellow' : isPrimary ? 'badge-yellow' : 'badge-green'}>
+            {isMixedUse ? 'Mixed Use' : isPrimary ? 'Primary Home' : 'Rental'}
           </span>
+          {isMixedUse ? (
+            <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700 dark:border-orange-800 dark:bg-orange-900/20 dark:text-orange-300">
+              Rental & Primary
+            </span>
+          ) : null}
           {p.shared_by_name ? (
             <span className="rounded border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-xs text-purple-700 dark:border-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
               {p.shared_by_name}

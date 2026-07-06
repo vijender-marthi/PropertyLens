@@ -5,10 +5,20 @@ import {
   Upload, FileText, Trash2, ChevronDown, Wand2, Building2,
   RefreshCw, FileSpreadsheet, PenLine, Download, CheckCircle2,
   ArrowRight, AlertCircle, AlertTriangle, X, RotateCcw, Copy,
-  Filter, ArrowUpDown, Layers,
+  Filter, ArrowUpDown, Layers, Plus,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
+import { useAuth } from '../hooks/useAuth'
+
+function monthlyPI(principal, annualRatePct, years = 30) {
+  const months = years * 12
+  const monthlyRate = (annualRatePct || 0) / 100 / 12
+  if (!principal || !months) return 0
+  if (!monthlyRate) return Math.round((principal / months) * 100) / 100
+  const payment = principal * (monthlyRate * (1 + monthlyRate) ** months) / ((1 + monthlyRate) ** months - 1)
+  return Math.round(payment * 100) / 100
+}
 
 const CATEGORIES = [
   { value: 'auto',               label: 'Auto-detect' },
@@ -120,7 +130,9 @@ function UploadProcessing({ tone = 'blue' }) {
 }
 
 export default function UploadsPage() {
-  const [mode, setMode] = useState('document')
+const { user } = useAuth()
+const isDemo = (user?.role || '').toLowerCase() === 'demo'
+const [mode, setMode] = useState('manual')
   const [properties, setProperties] = useState([])
   const [docs, setDocs]         = useState([])
   const [loading, setLoading]   = useState(true)
@@ -152,15 +164,8 @@ export default function UploadsPage() {
     rents_received: '', mortgage_interest: '', property_taxes: '',
     depreciation: '', total_expenses: '', net_income: '',
   })
-  const [mPropFields, setMPropFields] = useState({
-    market_value: '', purchase_price: '', monthly_rent: '',
-    original_residency_status: '', current_residency_status: '',
-    primary_start_date: '', primary_end_date: '',
-    rental_start_date: '', rental_end_date: '',
-    recorded_date: '', held_period: '',
-    settlement_total_amount: '', closing_costs: '',
-    hoa_flag: false, hoa_fee: '',
-    solar_ownership: 'None', solar_monthly_payment: '', solar_purchase_price: '',
+const [mPropFields, setMPropFields] = useState({
+market_value: '', purchase_price: '', monthly_rent: '',
   })
   const [mLoanFields, setMLoanFields] = useState({
     original_loan_amount: '', current_balance: '', interest_rate: '', loan_type: 'Fixed', monthly_payment: '',
@@ -173,7 +178,19 @@ export default function UploadsPage() {
   })
   const [saving, setSaving]         = useState(false)
   const [savingProp, setSavingProp] = useState(false)
-  const [savingLoan, setSavingLoan] = useState(false)
+const [savingLoan, setSavingLoan] = useState(false)
+
+useEffect(() => {
+if (isDemo && mode !== 'manual') setMode('manual')
+}, [isDemo, mode])
+
+const selectMode = (nextMode) => {
+if (isDemo && nextMode !== 'manual') {
+toast.error('Document upload and spreadsheet import are premium features. Demo mode supports Manual Entry.')
+return
+}
+setMode(nextMode)
+}
 
   useEffect(() => {
     if (!mPropId || !properties.length) return
@@ -186,11 +203,11 @@ export default function UploadsPage() {
     })
     const loan = prop.loans?.[0]
     setMLoanFields({
-      original_loan_amount: loan?.original_loan_amount || '',
-      current_balance:      loan?.current_balance      || '',
-      interest_rate:        loan?.interest_rate        || '',
-      loan_type:            loan?.loan_type            || 'Fixed',
-      monthly_payment:      loan?.monthly_payment      || '',
+      original_loan_amount: loan?.original_amount || '',
+      current_balance:      loan?.current_balance || '',
+      interest_rate:        loan?.interest_rate   || '',
+      loan_type:            loan?.loan_type       || 'Fixed',
+      monthly_payment:      loan?.monthly_payment || '',
     })
   }, [mPropId, properties])
 
@@ -246,8 +263,12 @@ export default function UploadsPage() {
     }
   }
 
-  const handleUpload = async (files, options = {}) => {
-    const selectedFiles = [...files]
+const handleUpload = async (files, options = {}) => {
+if (isDemo) {
+toast.error('Document upload and spreadsheet import are premium features. Use Manual Entry in demo mode.')
+return
+}
+const selectedFiles = [...files]
     if (!selectedFiles.length) return
     const uploadCategory = options.category || category
     const uploadPropertyId = options.propertyId ?? propertyId
@@ -256,9 +277,13 @@ export default function UploadsPage() {
     await previewNextFile(selectedFiles, 0, 0, uploadCategory, uploadPropertyId)
   }
 
-  const handleAcceptPreview = async ({ force = false, replaceDocumentId = null } = {}) => {
-    if (!previewDoc) return
-    setAcceptingPreview(true)
+const handleAcceptPreview = async ({ force = false, replaceDocumentId = null } = {}) => {
+if (!previewDoc) return
+if (isDemo) {
+toast.error('Saving uploaded documents is a premium feature. Use Manual Entry in demo mode.')
+return
+}
+setAcceptingPreview(true)
     try {
       const { data } = await docAPI.acceptUpload({
         pending_upload_id: previewDoc.pending_upload_id,
@@ -315,8 +340,13 @@ export default function UploadsPage() {
   }
 
   // ── Spreadsheet template download ────────────────────────────────────────
-  const downloadTemplate = () => {
-    const headers = [
+const downloadTemplate = () => {
+  if (isDemo) {
+    toast.error('Spreadsheet template download is a premium feature. Use Manual Entry in demo mode.')
+    return
+  }
+
+  const headers = [
       // Property identification
       'Property Name', 'Property ID', 'City', 'State', 'Zip Code',
       // Property details (update anytime)
@@ -336,7 +366,7 @@ export default function UploadsPage() {
           rows.push([
             propertyLabel(p), p.property_uid || '', p.city || '', p.state || '', p.zip_code || '',
             p.market_value   || '', p.purchase_price || '', p.monthly_rent || '',
-            loan?.original_loan_amount || '', loan?.current_balance || '',
+            loan?.original_amount || '', loan?.current_balance || '',
             loan?.interest_rate || '', loan?.loan_type || 'Fixed', loan?.monthly_payment || '',
             yr, '', '', '', '', '', '', '',
           ])
@@ -359,9 +389,10 @@ export default function UploadsPage() {
     toast.success('Template downloaded — fill it in and upload below')
   }
 
-  // ── Manual entry handler ─────────────────────────────────────────────────
+// ── Manual entry handler ─────────────────────────────────────────────────
   const handlePropSave = async () => {
-    if (!mPropId) { toast.error('Select a property first'); return }
+    if (!mPropId) { toast.error('Select a property first, or add a new one.'); return }
+    const targetPropId = mPropId
     const payload = {}
     if (mPropFields.market_value   !== '') payload.market_value   = parseFloat(mPropFields.market_value)
     if (mPropFields.purchase_price !== '') payload.purchase_price = parseFloat(mPropFields.purchase_price)
@@ -369,7 +400,7 @@ export default function UploadsPage() {
     if (!Object.keys(payload).length) { toast('Nothing to update'); return }
     setSavingProp(true)
     try {
-      await propAPI.update(mPropId, payload)
+      await propAPI.update(targetPropId, payload)
       await loadProps()
       toast.success('Property details saved')
     } catch (err) {
@@ -380,24 +411,45 @@ export default function UploadsPage() {
   }
 
   const handleLoanSave = async () => {
-    if (!mPropId) { toast.error('Select a property first'); return }
+    if (!mPropId) { toast.error('Select a property first, or add a new one.'); return }
+    const targetPropId = mPropId
     if (!mLoanFields.interest_rate) { toast.error('Interest rate is required'); return }
+    if (!mLoanFields.original_loan_amount) { toast.error('Original loan amount is required'); return }
     setSavingLoan(true)
     try {
-      const payload = {
-        loan_type:     mLoanFields.loan_type,
-        interest_rate: parseFloat(mLoanFields.interest_rate),
-      }
-      if (mLoanFields.original_loan_amount !== '') payload.original_loan_amount = parseFloat(mLoanFields.original_loan_amount)
-      if (mLoanFields.current_balance      !== '') payload.current_balance      = parseFloat(mLoanFields.current_balance)
-      if (mLoanFields.monthly_payment      !== '') payload.monthly_payment      = parseFloat(mLoanFields.monthly_payment)
-      const prop = properties.find(p => String(p.id) === String(mPropId))
+      const prop = properties.find(p => String(p.id) === String(targetPropId))
       const existingLoan = prop?.loans?.[0]
+
+      const originalAmount = parseFloat(mLoanFields.original_loan_amount)
+      const interestRate   = parseFloat(mLoanFields.interest_rate)
+      const loanTermYears  = existingLoan?.loan_term_years || 30
+      const currentBalance = mLoanFields.current_balance !== ''
+        ? parseFloat(mLoanFields.current_balance)
+        : originalAmount
+      const monthlyPayment = mLoanFields.monthly_payment !== ''
+        ? parseFloat(mLoanFields.monthly_payment)
+        : monthlyPI(originalAmount, interestRate, loanTermYears)
+
+      // The update endpoint replaces the whole loan record, so start from
+      // the existing loan's fields (escrow, statement data, ARM terms, etc.)
+      // and only overlay what this quick-entry form actually edits.
+      const payload = {
+        ...(existingLoan || {}),
+        loan_type: mLoanFields.loan_type,
+        interest_rate: interestRate,
+        original_amount: originalAmount,
+        current_balance: currentBalance,
+        monthly_payment: monthlyPayment,
+        loan_term_years: loanTermYears,
+      }
+      delete payload.id
+      delete payload.property_id
+
       if (existingLoan) {
-        await propAPI.updateLoan(mPropId, existingLoan.id, payload)
+        await propAPI.updateLoan(targetPropId, existingLoan.id, payload)
         toast.success('Loan updated')
       } else {
-        await propAPI.addLoan(mPropId, payload)
+        await propAPI.addLoan(targetPropId, payload)
         toast.success('Loan added')
       }
       await loadProps()
@@ -409,17 +461,18 @@ export default function UploadsPage() {
   }
 
   const handleManualSave = async () => {
-    if (!mPropId) { toast.error('Select a property first'); return }
+    if (!mPropId) { toast.error('Select a property first, or add a new one.'); return }
+    const targetPropId = mPropId
     setSaving(true)
     try {
       const payload = { tax_year: parseInt(mYear) }
       Object.entries(mFields).forEach(([k, v]) => {
         if (v !== '') payload[k] = parseFloat(v)
       })
-      await propAPI.upsertYearEntry(mPropId, payload)
+      await propAPI.upsertYearEntry(targetPropId, payload)
       toast.success(`${mYear} data saved successfully`)
       setMFields({ rents_received:'', mortgage_interest:'', property_taxes:'', depreciation:'', total_expenses:'', net_income:'' })
-      setResult({ type: 'manual', year: mYear, prop: propertyLabel(properties.find(p => String(p.id) === String(mPropId))) })
+      setResult({ type: 'manual', year: mYear, prop: propertyLabel(properties.find(p => String(p.id) === String(targetPropId))) })
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Save failed')
     } finally {
@@ -428,17 +481,24 @@ export default function UploadsPage() {
   }
 
   const handleDelete   = async (id) => { if (!confirm('Delete this document?')) return; await docAPI.delete(id); toast.success('Deleted'); loadDocs() }
-  const handleApply    = async (id) => { try { const { data } = await docAPI.apply(id); toast(data.message, { icon: Object.keys(data.applied||{}).length ? '✅' : 'ℹ️' }) } catch(e) { toast.error(e.response?.data?.detail||'Apply failed') } }
-  const handleReparse  = async (id) => { try { await docAPI.reparse(id); toast.success('Re-parsed'); loadDocs() } catch { toast.error('Re-parse failed') } }
-  const handleReprocessAll = async () => {
-    if (!confirm('Re-extract all files with the latest parser?')) return
-    setReprocessing(true)
-    try { const { data } = await docAPI.reprocessAll(); toast.success(`Reprocessed ${data.reprocessed} of ${data.total}`); await Promise.all([loadDocs(), loadProps()]) }
-    catch { toast.error('Reprocess failed') }
-    finally { setReprocessing(false) }
-  }
+  const handleApply = async (id) => {
+if (isDemo) { toast.error('Applying uploaded documents is a premium feature. Use Manual Entry in demo mode.'); return }
+try { const { data } = await docAPI.apply(id); toast(data.message, { icon: Object.keys(data.applied||{}).length ? '✅' : 'ℹ️' }) } catch(e) { toast.error(e.response?.data?.detail||'Apply failed') }
+}
+const handleReparse = async (id) => {
+if (isDemo) { toast.error('Re-parsing uploaded documents is a premium feature. Use Manual Entry in demo mode.'); return }
+try { await docAPI.reparse(id); toast.success('Re-parsed'); loadDocs() } catch { toast.error('Re-parse failed') }
+}
+const handleReprocessAll = async () => {
+if (isDemo) { toast.error('Document reprocessing is a premium feature. Use Manual Entry in demo mode.'); return }
+if (!confirm('Re-extract all files with latest parser?')) return
+setReprocessing(true)
+try { const { data } = await docAPI.reprocessAll(); toast.success(`Reprocessed ${data.reprocessed} of ${data.total}`); await Promise.all([loadDocs(), loadProps()]) }
+catch { toast.error('Reprocess failed') }
+finally { setReprocessing(false) }
+}
 
-  const switchMode = (id) => { setMode(id); setResult(null) }
+const switchMode = (id) => { selectMode(id); setResult(null) }
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -446,7 +506,9 @@ export default function UploadsPage() {
     </div>
   )
 
-  const activeMethod = METHODS.find((m) => m.id === mode)
+  const methodOrder = ['manual', 'document', 'spreadsheet']
+  const orderedMethods = methodOrder.map((id) => METHODS.find((m) => m.id === id)).filter(Boolean)
+  const activeMethod = METHODS.find((m) => m.id === mode) || METHODS.find((m) => m.id === 'manual')
   const previewFields = previewDoc
     ? Object.entries(previewDoc.extracted_data || {}).filter(
         ([key, value]) => key !== 'raw_text_preview' && (value === null || (!Array.isArray(value) && typeof value !== 'object'))
@@ -527,14 +589,16 @@ export default function UploadsPage() {
       )}
 
       {/* ── Method cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {METHODS.map((m) => {
-          const active = mode === m.id
-          return (
-            <button key={m.id} onClick={() => switchMode(m.id)}
-        className="text-left rounded-xl border-2 p-5 transition-all focus:outline-none bg-white dark:bg-gray-800 font-medium"
-              style={active
-                ? { borderColor: m.accent }
+<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+{orderedMethods.map((m) => {
+const active = mode === m.id
+const locked = isDemo && m.id !== 'manual'
+return (
+<button key={m.id} onClick={() => switchMode(m.id)}
+disabled={locked}
+className={`text-left rounded-xl border-2 p-5 transition-all focus:outline-none bg-white dark:bg-gray-800 font-medium ${locked ? 'cursor-not-allowed opacity-60' : ''}`}
+style={active
+? { borderColor: m.accent }
 : { borderColor: '#e2e8f0' }
               }
             >
@@ -542,13 +606,18 @@ export default function UploadsPage() {
 <div className="rounded-lg p-2 bg-slate-100 dark:bg-gray-700" style={active ? { background: m.accent } : undefined}>
                   <m.Icon className="w-5 h-5" style={{ color: active ? '#fff' : '#94a3b8' }} />
                 </div>
-                {active && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-2 py-0.5"
-                    style={{ background: m.accent, color: '#fff' }}>
-                    Active
-                  </span>
-                )}
-              </div>
+{active && (
+<span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-2 py-0.5"
+style={{ background: m.accent, color: '#fff' }}>
+Active
+</span>
+)}
+{locked && (
+<span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700 px-2 py-0.5">
+Premium
+</span>
+)}
+</div>
               <p className="font-semibold text-slate-900 dark:text-white text-sm">{m.title}</p>
                     <p className={`text-[11px] font-semibold mt-0.5 mb-2 ${active ? 'text-slate-700 dark:text-gray-300' : 'text-slate-400 dark:text-gray-500'}`}>{m.badge}</p>
               <p className="text-xs text-slate-500 dark:text-gray-400 leading-relaxed">{m.desc}</p>
@@ -855,10 +924,13 @@ dragOver ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 
                     The template is pre-populated with your existing properties and the last two tax years.
                     Open it in Excel or Google Sheets and fill in the financial figures.
                   </p>
-                  <button onClick={downloadTemplate}
-                  className="inline-flex items-center gap-2 rounded-lg border-2 border-emerald-600 bg-emerald-600 text-white text-sm font-semibold px-4 py-2 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 transition-colors">
-                    <Download className="w-4 h-4" /> Download Template CSV
-                  </button>
+                <button
+                  onClick={downloadTemplate}
+                  disabled={isDemo}
+                  title={isDemo ? 'Premium feature' : undefined}
+                  className="inline-flex items-center gap-2 rounded-lg border-2 border-emerald-600 bg-emerald-600 text-white text-sm font-semibold px-4 py-2 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50">
+                  <Download className="w-4 h-4" /> {isDemo ? 'Premium Template CSV' : 'Download Template CSV'}
+                </button>
                 </div>
               </div>
 
@@ -950,23 +1022,44 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
             <div className="space-y-6">
 
               {/* Property selector — shared across all sections */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-gray-300 mb-1.5">Property <span className="text-red-500">*</span></label>
-                <select
-                    className="w-full rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
-                  value={mPropId} onChange={(e) => setMPropId(e.target.value)}
-                >
-                  <option value="">Select a property…</option>
-                  {properties.map((p) => <option key={p.id} value={p.id}>{propertyLabel(p)} · ID {shortPropertyUid(p)}</option>)}
-                </select>
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-gray-300 mb-1.5">Property</label>
+                  <select
+                      className="w-full rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-slate-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    value={mPropId} onChange={(e) => setMPropId(e.target.value)}
+                  >
+                    <option value="">Select a property…</option>
+                    {properties.map((p) => <option key={p.id} value={p.id}>{propertyLabel(p)} · ID {shortPropertyUid(p)}</option>)}
+                  </select>
+                </div>
+                <Link to="/properties/new"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-gray-600 text-slate-700 dark:text-gray-200 text-sm font-semibold px-4 py-2 hover:bg-slate-50 dark:hover:bg-gray-700/50 transition-colors shrink-0">
+                  <Plus className="w-4 h-4" /> New Property
+                </Link>
               </div>
 
+              {!mPropId && (
+                <div className="rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-4 flex items-start gap-3">
+                  <Building2 className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" />
+                  <div className="text-sm text-blue-800 dark:text-blue-200">
+                    <p className="font-semibold">First time entering this property?</p>
+                    <p className="text-blue-700 dark:text-blue-300 mt-0.5">
+                      Use <Link to="/properties/new" className="underline font-medium">Add Property</Link> to capture the full picture —
+                      address, purchase date, depreciation basis, taxes, insurance, and expenses. Once it's created,
+                      come back here to select it and add loan and per-year tax data.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* ── SECTION A: Property Details ── */}
+              {mPropId && (
               <div className="rounded-xl border border-slate-100 dark:border-gray-700 bg-slate-50 dark:bg-gray-700/50 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-gray-500">A · Property Details</p>
-                    <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">Current valuation and rental income — used for equity, LTV, and cash flow metrics</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-gray-500">A · Quick Update</p>
+                    <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">Current valuation and rental income — used for equity, LTV, and cash flow metrics. For full property details (address, depreciation basis, taxes, insurance) use <Link to={`/properties/${mPropId}/edit`} className="underline">Edit Property</Link>.</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -989,20 +1082,22 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                   ))}
                 </div>
                 <div className="mt-4 flex justify-end">
-                  <button onClick={handlePropSave} disabled={savingProp || !mPropId}
+<button onClick={handlePropSave} disabled={savingProp}
                     className="inline-flex items-center gap-2 rounded-lg bg-blue-600 text-white text-xs font-semibold px-4 py-2 hover:bg-blue-700 disabled:opacity-50 transition-colors">
                     {savingProp ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving…</> : 'Save Property Details'}
                   </button>
                 </div>
               </div>
+              )}
 
               {/* ── SECTION B: Loan Details ── */}
+              {mPropId && (
               <div className="rounded-xl border border-slate-100 dark:border-gray-700 bg-slate-50 dark:bg-gray-700/50 p-5">
                 <div className="mb-4">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-gray-500">B · Loan Details</p>
                   <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">
                     Primary mortgage — used for DSCR, paydown progress, and financing metrics
-                    {mPropId && properties.find(p => String(p.id) === String(mPropId))?.loans?.length > 0 && (
+                    {properties.find(p => String(p.id) === String(mPropId))?.loans?.length > 0 && (
                       <span className="ml-1 text-violet-500 font-medium">· Existing loan will be updated</span>
                     )}
                   </p>
@@ -1044,7 +1139,7 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                   </div>
                 </div>
                 <div className="mt-4 flex justify-end">
-                  <button onClick={handleLoanSave} disabled={savingLoan || !mPropId}
+<button onClick={handleLoanSave} disabled={savingLoan}
                     className="inline-flex items-center gap-2 rounded-lg bg-blue-600 text-white text-xs font-semibold px-4 py-2 hover:bg-blue-700 disabled:opacity-50 transition-colors">
                     {savingLoan ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving…</> : (
                       properties.find(p => String(p.id) === String(mPropId))?.loans?.length > 0 ? 'Update Loan' : 'Add Loan'
@@ -1052,8 +1147,10 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                   </button>
                 </div>
               </div>
+              )}
 
               {/* ── SECTION C: Tax Year Data ── */}
+              {mPropId && (
               <div className="rounded-xl border border-slate-100 dark:border-gray-700 bg-slate-50 dark:bg-gray-700/50 p-5">
                 <div className="flex items-start justify-between mb-4 gap-4">
                   <div>
@@ -1103,12 +1200,13 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                     </span>
                     . Existing entry will be updated.
                   </p>
-                  <button onClick={handleManualSave} disabled={saving || !mPropId}
+<button onClick={handleManualSave} disabled={saving}
                     className="inline-flex items-center gap-2 rounded-lg bg-violet-600 text-white text-xs font-semibold px-4 py-2 hover:bg-violet-700 disabled:opacity-50 transition-colors">
                     {saving ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Saving…</> : <>Save Tax Data <ArrowRight className="w-3.5 h-3.5" /></>}
                   </button>
                 </div>
               </div>
+              )}
 
             </div>
           )}
@@ -1126,10 +1224,10 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
             </p>
           </div>
           {docs.length > 0 && (
-            <button onClick={handleReprocessAll} disabled={reprocessing}
+            <button onClick={handleReprocessAll} disabled={reprocessing || isDemo} title={isDemo ? 'Premium feature' : undefined}
               className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 dark:border-gray-600 text-slate-600 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700/50 disabled:opacity-50 transition-colors">
               <RefreshCw className={`w-3.5 h-3.5 ${reprocessing ? 'animate-spin' : ''}`} />
-              {reprocessing ? 'Reprocessing…' : 'Reprocess All'}
+              {isDemo ? 'Premium Reprocess' : reprocessing ? 'Reprocessing…' : 'Reprocess All'}
             </button>
           )}
         </div>
@@ -1234,7 +1332,7 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
               )}
               <div className="divide-y divide-slate-50">
                 {groupDocs.map((doc) => (
-                  <DocRow key={doc.id} doc={doc} properties={properties}
+                  <DocRow key={doc.id} doc={doc} properties={properties} isDemo={isDemo}
                     onDelete={() => handleDelete(doc.id)}
                     onApply={() => handleApply(doc.id)}
                     onReparse={() => handleReparse(doc.id)} />
@@ -1249,7 +1347,7 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
 }
 
 // ── Doc row ────────────────────────────────────────────────────────────────────
-function DocRow({ doc, properties = [], onDelete, onApply, onReparse }) {
+function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onReparse }) {
   const [expanded, setExpanded]       = useState(false)
   const [showMarkdown, setShowMarkdown] = useState(false)
   const [markdown, setMarkdown]       = useState(null)
@@ -1315,17 +1413,17 @@ className="text-xs text-violet-500 dark:text-violet-300 hover:text-violet-700 da
               {showMarkdown ? 'Hide' : 'MD'}
             </button>
           )}
-          <button onClick={onReparse} title="Re-parse with latest parser"
-className="p-1.5 rounded text-slate-400 dark:text-gray-500 hover:text-slate-700 dark:hover:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-700 transition-colors">
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
-          {applicable && (
-            <button onClick={onApply} title="Apply extracted data to property"
-className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-100 px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors">
-              <Wand2 className="w-3.5 h-3.5" /> Apply
-            </button>
-          )}
-          <button onClick={onDelete}
+          <button onClick={onReparse} disabled={isDemo} title={isDemo ? 'Premium feature' : 'Re-parse latest parser'}
+className="p-1.5 rounded text-slate-400 dark:text-gray-500 hover:text-slate-700 dark:hover:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-40">
+ <RefreshCw className="w-3.5 h-3.5" />
+ </button>
+ {applicable && (
+ <button onClick={onApply} disabled={isDemo} title={isDemo ? 'Premium feature' : 'Apply extracted data to property'}
+className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-100 px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-40">
+ <Wand2 className="w-3.5 h-3.5" /> {isDemo ? 'Premium' : 'Apply'}
+ </button>
+ )}
+ <button onClick={onDelete}
 className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
             <Trash2 className="w-4 h-4" />
           </button>

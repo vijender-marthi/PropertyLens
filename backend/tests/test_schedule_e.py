@@ -7,7 +7,8 @@ Verifies that:
   2. TaxReturnEntry.total_expenses (minus interest and depreciation) is used
      as operating_expenses when available, replacing static field estimates.
   3. A Form 1098 document still takes priority over Schedule E interest.
-  4. Years with no tax return fall back to the static field / statement values.
+  4. Years with no tax return, 1098, or statement fall back to an
+     amortization projection from the loan's rate and balance.
 
 Tests call the /api/properties/{id}/lifetime endpoint and inspect the
 returned `yearly` array.
@@ -118,8 +119,11 @@ class TestScheduleEInterestPriority:
             f"Expected 1098 interest 19 800 to win, got {row['interest_paid']}"
         )
 
-    def test_no_tax_entry_falls_back_to_loan_estimate(self, client, db, user, prop):
-        """Without any tax entry or 1098, interest comes from loan.interest_due."""
+    def test_no_tax_entry_falls_back_to_amortization_projection(self, client, db, user, prop):
+        """Without any tax entry, 1098, or statement for the year, interest is
+        projected from the loan's own amortization schedule (rate + balance)
+        rather than annualizing the latest known monthly interest_due —
+        which would misrepresent a past year using today's interest amount."""
         # Add a rent period so the year appears
         db.add(models.RentalPeriod(
             property_id=prop.id,
@@ -135,8 +139,9 @@ class TestScheduleEInterestPriority:
         row = _get_year(resp.json()["yearly"], 2021)
         if row is None:
             pytest.skip("Year 2021 not generated — need purchase_date before 2021")
-        # interest_due on the loan is 1 625/mo; annualized = 19 500
-        assert row["interest_paid"] == pytest.approx(1_625.0 * 12, rel=0.05)
+        # Loan: $320,000 @ 6.5%, originated 2020-01-01 — amortized interest
+        # for full-year 2021 comes out to ~$20,475, not a flat $1,625 x 12.
+        assert row["interest_paid"] == pytest.approx(20_475.27, rel=0.01)
 
 
 class TestScheduleEExpensesPriority:
@@ -255,6 +260,12 @@ class TestLifetimeSummaryStructure:
             assert key in lt, f"Missing lifetime key: {key}"
 
     def test_zero_balance_without_documents_does_not_create_fake_paydown(self, client, db, user, prop):
+        """current_balance is no longer authoritative for this figure: the
+        balance is derived from the loan's own amortization schedule, so a
+        bad manual value (e.g. zeroed out with no supporting statement)
+        can't fake a full payoff."""
+        from routers.properties import current_loan_balance
+
         for loan in prop.loans:
             loan.current_balance = 0.0
         db.commit()
@@ -263,9 +274,13 @@ class TestLifetimeSummaryStructure:
                           headers=auth_headers(user.email))
         assert resp.status_code == 200
         lt = resp.json()["lifetime"]
-        assert lt["total_principal_paid"] == 0.0
-        assert lt["principal_paid_source"] == "missing_balance_evidence"
-        assert lt["principal_paid_note"]
+
+        expected_paid = round(sum(
+            l.original_amount - current_loan_balance(l) for l in prop.loans if l.original_amount
+        ), 2)
+        assert lt["total_principal_paid"] == pytest.approx(expected_paid)
+        assert 0 < lt["total_principal_paid"] < prop.loans[0].original_amount
+        assert lt["principal_paid_source"] == "loan_balance"
 
     def test_yearly_row_keys_present(self, client, db, user, prop):
         _add_tax_entry(db, prop.id, user.id, 2022, rents_received=36_000.0)

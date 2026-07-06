@@ -108,9 +108,10 @@ def user(db) -> models.User:
     from passlib.context import CryptContext
     ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
     u = models.User(
-        email="test@propertylens.com",
+        email="vijender.marthi@gmail.com",
         name="Test User",
         hashed_password=ctx.hash("password"),
+        role="admin",
     )
     db.add(u)
     db.commit()

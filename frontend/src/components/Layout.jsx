@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut,
-  BarChart3, Menu, X, HelpCircle, Wrench, FileText,
+ BarChart3, Menu, X, HelpCircle, Wrench, FileText, Users,
   Sun, Moon,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -40,8 +40,9 @@ function NavItem({ to, icon: Icon, label, active }) {
 function SidebarContent({ user, onLogout, onClose }) {
   const location = useLocation()
   const { dark, toggle } = useTheme()
-  const isActive = (path) =>
-    location.pathname === path || location.pathname.startsWith(path + '/')
+const isActive = (path) =>
+location.pathname === path || location.pathname.startsWith(path + '/')
+const isAdmin = ['admin', 'superuser'].includes((user?.role || '').toLowerCase())
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700">
@@ -77,10 +78,11 @@ function SidebarContent({ user, onLogout, onClose }) {
             <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest">Resources</p>
           </div>
           <div className="flex flex-col gap-0.5">
-            {TOOLS_NAV.map(({ to, icon, label }) => (
-              <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
-            ))}
-          </div>
+{TOOLS_NAV.map(({ to, icon, label }) => (
+<NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
+))}
+{isAdmin && <NavItem to="/admin" icon={Users} label="Admin" active={isActive('/admin')} />}
+</div>
         </div>
 
         {/* Dark / Light toggle */}

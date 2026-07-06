@@ -14,6 +14,7 @@ import UploadsPage from './pages/UploadsPage'
 import SettingsPage from './pages/SettingsPage'
 import HelpPage from './pages/HelpPage'
 import ReportsPage from './pages/ReportsPage'
+import AdminPage from './pages/AdminPage'
 
 function PrivateRoute({ children }) {
   const { user } = useAuth()
@@ -41,6 +42,7 @@ function AppRoutes() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/reports" element={<ReportsPage />} />
+                <Route path="/admin" element={<AdminPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </Layout>

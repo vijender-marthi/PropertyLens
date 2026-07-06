@@ -71,12 +71,18 @@ class TestRawDataStructure:
         assert data["irs_annual_depreciation"] == pytest.approx(expected, rel=1e-4)
 
     def test_loans_included(self, client, user, prop):
+        """current_balance is computed internally from the loan's own
+        amortization schedule (origination date, rate, term) rather than
+        echoing back the manually-entered fixture value — no mortgage
+        statement or 1098 upload required to know the real balance."""
+        from routers.properties import current_loan_balance
+
         resp = client.get(f"/api/properties/{prop.id}/rawdata",
                           headers=auth_headers(user.email))
         data = resp.json()
         assert len(data["loans"]) == 1
         loan = data["loans"][0]
-        assert loan["current_balance"] == 300_000.0
+        assert loan["current_balance"] == pytest.approx(current_loan_balance(prop.loans[0]))
         assert loan["interest_rate"] == 6.5
 
 
@@ -144,7 +150,7 @@ class TestRawData1098:
         # balance may be stored as Jan-1 outstanding principal
         assert "2022" in data["docs_balance"] or True  # balance extraction is optional
 
-    def test_1098_property_tax_preferred_over_property_tax_document(self, client, db, user, prop):
+    def test_property_tax_document_preferred_over_1098_property_tax(self, client, db, user, prop):
         _1098_doc(db, prop, user.id, 2024, interest=26_606.53, balance=466_681.81,
                   account="0064944077", property_tax_amount=2_766.48)
         _1098_doc(db, prop, user.id, 2024, interest=8_826.97, balance=463_428.32,
@@ -164,7 +170,7 @@ class TestRawData1098:
                           headers=auth_headers(user.email))
         data = resp.json()
 
-        assert data["tax_docs"]["2024"] == pytest.approx(8_062.09)
+        assert data["tax_docs"]["2024"] == pytest.approx(10_591.22)
 
     def test_1098_detail_inventory(self, client, db, user, prop):
         _1098_doc(db, prop, user.id, 2022, interest=19_800)

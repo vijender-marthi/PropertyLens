@@ -56,7 +56,7 @@ def detect_duplicate_ids(doc_objects) -> set:
 
     return _dedupe_groups(content_groups) | _dedupe_groups(metadata_groups)
 from database import get_db
-from routers.auth import get_current_user
+from routers.auth import get_current_user, require_premium_user
 from routers.properties import import_tax_return
 from services.document_parser import parse_document
 from services.document_config import (
@@ -608,6 +608,7 @@ async def preview_upload_document(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    require_premium_user(current_user)
     if category not in DOC_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
 
@@ -688,6 +689,7 @@ async def accept_upload_document(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    require_premium_user(current_user)
     if req.category not in DOC_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
 
@@ -744,6 +746,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    require_premium_user(current_user)
     if category not in DOC_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {DOC_CATEGORIES}")
 
@@ -843,6 +846,7 @@ async def reparse_document(
     current_user: models.User = Depends(get_current_user),
 ):
     """Re-run extraction (with auto-detection) on an already uploaded file."""
+    require_premium_user(current_user)
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id,
         models.Document.owner_id == current_user.id,
@@ -907,6 +911,7 @@ async def reprocess_all_documents(
     chronological order so "Statement Details" reflects the latest statement.
     Pass ?property_id= to limit the scope to a single property.
     """
+    require_premium_user(current_user)
     q = db.query(models.Document).filter(
         models.Document.owner_id == current_user.id
     )
@@ -988,6 +993,7 @@ def apply_document(
     current_user: models.User = Depends(get_current_user),
 ):
     """Apply a document's extracted fields to its property and loan."""
+    require_premium_user(current_user)
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id,
         models.Document.owner_id == current_user.id,

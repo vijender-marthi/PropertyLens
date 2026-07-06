@@ -1,10 +1,17 @@
 import { propAPI } from '../services/api'
-import { Pencil, Trash2, BarChart2 } from 'lucide-react'
+import { Pencil, Trash2, BarChart2, FileCheck, Calculator as CalcIcon, HelpCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0)
 
-export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propId }) {
+const SOURCE_BADGE = {
+  '1098':      { label: 'Form 1098',    icon: FileCheck, className: 'bg-green-100 text-green-700' },
+  tax_return:  { label: 'Tax Return',   icon: FileCheck, className: 'bg-blue-100 text-blue-700' },
+  projected:   { label: 'Projected',    icon: CalcIcon,  className: 'bg-amber-100 text-amber-700' },
+  no_data:     { label: 'No Data',      icon: HelpCircle, className: 'bg-gray-100 text-gray-500' },
+}
+
+export default function LoanCard({ loan: l, debt, onEdit, onAmortize, onDeleted, propId }) {
   const handleDelete = async () => {
     if (!confirm('Delete this loan?')) return
     await propAPI.deleteLoan(propId, l.id)
@@ -65,6 +72,32 @@ export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propI
         </div>
       )}
 
+      {debt && (
+        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+              Debt Accumulation
+            </p>
+            <DebtSourceBadge source={debt.source} />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <LoanMetric label="Balance Today" value={fmt(debt.current_balance)} bold />
+            <LoanMetric label="Interest Accumulated" value={fmt(debt.accumulated_interest)} />
+            <LoanMetric label="Last Statement" value={debt.last_known_statement_date || '—'} />
+            <LoanMetric
+              label="Gap Projected"
+              value={debt.gap_months_projected > 0 ? `${debt.gap_months_projected} mo` : 'None'}
+              sub={debt.rate_assumption_flag ? 'ARM: rate held at last known value' : undefined}
+            />
+          </div>
+          {debt.estimated_vs_reported === 'estimated' && (
+            <p className="mt-2 text-xs text-amber-600">
+              Some months aren't backed by a 1098 or tax return yet — projected from the last known statement using its rate and payment.
+            </p>
+          )}
+        </div>
+      )}
+
       {l.loan_type === 'ARM' && (
         <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 grid grid-cols-2 md:grid-cols-4 gap-4">
           <LoanMetric label="Initial Period" value={l.arm_initial_period ? `${l.arm_initial_period} yr` : 'N/A'} />
@@ -74,6 +107,16 @@ export default function LoanCard({ loan: l, onEdit, onAmortize, onDeleted, propI
         </div>
       )}
     </div>
+  )
+}
+
+function DebtSourceBadge({ source }) {
+  const cfg = SOURCE_BADGE[source] || SOURCE_BADGE.no_data
+  const Icon = cfg.icon
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${cfg.className}`}>
+      <Icon className="h-3 w-3" /> {cfg.label}
+    </span>
   )
 }
 

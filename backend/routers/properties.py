@@ -11,7 +11,7 @@ from database import get_db
 from routers.auth import get_current_user
 from services.loan_calculator import (
     amortization_schedule, payoff_analysis, arm_schedule,
-    depreciation_schedule, monthly_payment
+    depreciation_schedule
 )
 from services.property_valuation import get_property_value
 from services.checklist import build_checklist
@@ -72,7 +72,7 @@ class LoanOut(LoanBase):
 
 class PropertyBase(BaseModel):
     name: Optional[str] = None
-    address: str
+    address: str = ""
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
@@ -145,6 +145,9 @@ class PropertySummary(BaseModel):
     monthly_mortgage: float
     monthly_cash_flow: float
     equity: float
+    has_rental_history: bool = False
+    currently_rental: bool = False
+    residency_status: str = "Rental"
     shared_by_name: Optional[str] = None
     shared_by_email: Optional[str] = None
 
@@ -247,7 +250,7 @@ def _depreciable_basis(prop) -> float:
 
 
 def compute_property_metrics(prop: models.Property) -> dict:
-    total_loan_balance = sum(l.current_balance for l in prop.loans)
+    total_loan_balance = sum(current_loan_balance(l) for l in prop.loans)
 
     # monthly_payment on the loan stores the full PITI payment from the statement.
     # escrow_amount is the taxes+insurance portion bundled into that payment.
@@ -357,29 +360,45 @@ def _add_months(value: date, months: int) -> date:
     return date(year, month, min(value.day, 28))
 
 
-def _mid_month_depreciation_for_year(
+def _depreciation_for_year(
     basis: float,
-    placed_in_service: Optional[str],
     recovery_period: float,
+    rental_months: Dict[int, float],
     tax_year: int,
 ) -> float:
+    """This year's depreciation, limited to the calendar months the
+    property (or this specific asset, via `rental_months`'s floor) was an
+    active rental. A year with zero rental months — including a property
+    that has always been a primary residence — contributes 0."""
     if basis <= 0 or recovery_period <= 0:
         return 0.0
-    placed = _parse_iso_date(placed_in_service) or date(tax_year, 1, 1)
     total_months = recovery_period * 12
-    start = placed.year * 12 + (placed.month - 1) + 0.5
-    end = start + total_months
-    year_start = tax_year * 12
-    year_end = year_start + 12
-    months = max(0.0, min(end, year_end) - max(start, year_start))
+    months = rental_months.get(tax_year, 0)
     return round((basis / total_months) * months, 2)
 
 
-def _fully_depreciated_date(placed_in_service: Optional[str], recovery_period: float) -> Optional[str]:
-    placed = _parse_iso_date(placed_in_service)
-    if not placed or recovery_period <= 0:
+def _estimated_fully_depreciated_date(
+    basis: float,
+    recovery_period: float,
+    prior_depreciation: float,
+    rental_months: Dict[int, float],
+    currently_rental: bool,
+) -> Optional[str]:
+    """Best-effort projection assuming the *current* rental streak
+    continues uninterrupted. Only meaningful while the property is
+    actively a rental right now — if it's currently a primary residence
+    we can't know if/when it converts back, so return None (shown as
+    "paused" in the UI) rather than a misleading date."""
+    if basis <= 0 or recovery_period <= 0 or not currently_rental:
         return None
-    return _add_months(placed, int(round(recovery_period * 12))).isoformat()
+    total_months = recovery_period * 12
+    monthly_rate = basis / total_months
+    accumulated_dollars = prior_depreciation + monthly_rate * sum(rental_months.values())
+    remaining_dollars = basis - accumulated_dollars
+    if remaining_dollars <= 0:
+        return date.today().isoformat()
+    remaining_months = remaining_dollars / monthly_rate
+    return _add_months(date.today(), int(round(remaining_months))).isoformat()
 
 
 def _asset_warning(asset_type: str, description: str, property_type: str) -> Optional[str]:
@@ -394,26 +413,21 @@ def _asset_warning(asset_type: str, description: str, property_type: str) -> Opt
     return None
 
 
-def _serialize_depreciation_asset(asset, prop, tax_year: int, is_base_building: bool = False) -> Dict[str, Any]:
+def _serialize_depreciation_asset(
+    asset, prop, tax_year: int, currently_rental: bool, is_base_building: bool = False,
+) -> Dict[str, Any]:
     basis = max((asset.get("cost_basis") or 0.0) - (asset.get("land_portion") or 0.0), 0.0)
     recovery_period = asset.get("recovery_period") or 27.5
     annual = round(basis / recovery_period, 2) if recovery_period else 0.0
-    current = _mid_month_depreciation_for_year(
-        basis,
-        asset.get("placed_in_service_date"),
-        recovery_period,
-        tax_year,
-    )
+
+    placed = _parse_iso_date(asset.get("placed_in_service_date"))
+    rental_months = _rental_months_by_year(prop, floor=placed)
+
+    current = _depreciation_for_year(basis, recovery_period, rental_months, tax_year)
     prior = asset.get("prior_depreciation") or 0.0
-    accumulated = round(prior + sum(
-        _mid_month_depreciation_for_year(
-            basis,
-            asset.get("placed_in_service_date"),
-            recovery_period,
-            year,
-        )
-        for year in range((_parse_iso_date(asset.get("placed_in_service_date")) or date(tax_year, 1, 1)).year, tax_year + 1)
-    ), 2)
+    accumulated_months = sum(m for yr, m in rental_months.items() if yr <= tax_year)
+    total_months = recovery_period * 12
+    accumulated = round(prior + (basis / total_months) * accumulated_months, 2) if total_months else prior
     remaining = round(max(basis - accumulated, 0.0), 2)
     return {
         **asset,
@@ -422,7 +436,10 @@ def _serialize_depreciation_asset(asset, prop, tax_year: int, is_base_building: 
         "current_year_depreciation": current,
         "accumulated_depreciation": min(accumulated, round(basis, 2)),
         "remaining_basis": remaining,
-        "fully_depreciated_date": _fully_depreciated_date(asset.get("placed_in_service_date"), recovery_period),
+        "rental_months_to_date": sum(rental_months.values()),
+        "fully_depreciated_date": _estimated_fully_depreciated_date(
+            basis, recovery_period, prior, rental_months, currently_rental,
+        ),
         "is_base_building": is_base_building,
         "warning": _asset_warning(asset.get("asset_type", "depreciation"), asset.get("description", ""), prop.property_type),
     }
@@ -430,6 +447,32 @@ def _serialize_depreciation_asset(asset, prop, tax_year: int, is_base_building: 
 
 def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict[str, Any]:
     tax_year = tax_year or date.today().year
+
+    if not _has_rental_history(prop):
+        return {
+            "tax_year": tax_year,
+            "eligible": False,
+            "currently_rental": False,
+            "reason": "Depreciation only applies to rental-use property. This property has no rental history — add a rental period on the Rental tab once it's rented out.",
+            "assets": [],
+            "timeline": [],
+            "rollup": {
+                "total_annual_depreciation": 0.0,
+                "total_current_year_depreciation": 0.0,
+                "total_accumulated_depreciation": 0.0,
+                "total_remaining_basis": 0.0,
+                "total_current_year_amortization": 0.0,
+            },
+            "schedule_e": {
+                "line_18_depreciation": None,
+                "model_total": 0.0,
+                "delta": None,
+                "status": "not_applicable",
+                "common_causes": [],
+            },
+        }
+
+    currently_rental = _is_currently_rental(prop)
     base_basis = _depreciable_basis(prop)
     base_placed = prop.purchase_date or prop.recorded_date
     assets = []
@@ -447,7 +490,7 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
             "recovery_period": prop.depreciation_years or 27.5,
             "prior_depreciation": 0.0,
             "notes": "Derived from purchase price less land value.",
-        }, prop, tax_year, True))
+        }, prop, tax_year, currently_rental, True))
 
     for row in prop.depreciation_assets:
         assets.append(_serialize_depreciation_asset({
@@ -463,7 +506,7 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
             "recovery_period": row.recovery_period or 27.5,
             "prior_depreciation": row.prior_depreciation or 0.0,
             "notes": row.notes or "",
-        }, prop, tax_year, False))
+        }, prop, tax_year, currently_rental, False))
 
     filed = next((e.depreciation for e in prop.tax_entries if e.tax_year == tax_year and e.property_kind == "rental"), None)
     model_total = round(sum(a["current_year_depreciation"] for a in assets if a["asset_type"] == "depreciation"), 2)
@@ -479,14 +522,28 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
         for a in assets
     ])
     start_year = min(start_years + [tax_year])
+
+    rental_months_by_year = _rental_months_by_year(prop)
+    rental_years = set(rental_months_by_year.keys())
+    asset_rental_months = [
+        (asset, _rental_months_by_year(prop, floor=_parse_iso_date(asset.get("placed_in_service_date"))))
+        for asset in assets
+    ]
     timeline = []
     for year in range(start_year, min(end_year, start_year + 40) + 1):
-        row = {"year": year, "total": 0.0}
-        for asset in assets:
-            value = _mid_month_depreciation_for_year(
+        rental_months = rental_months_by_year.get(year, 0)
+        row = {
+            "year": year,
+            "total": 0.0,
+            "is_rental_year": year in rental_years,
+            "rental_months": rental_months,
+            "use_status": "Rental" if rental_months >= 12 else "Mixed" if rental_months > 0 else "Primary / paused",
+        }
+        for asset, rental_months in asset_rental_months:
+            value = _depreciation_for_year(
                 asset["depreciable_basis"],
-                asset.get("placed_in_service_date"),
                 asset.get("recovery_period") or 27.5,
+                rental_months,
                 year,
             )
             row[asset["description"]] = value
@@ -496,13 +553,16 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
     common_causes = []
     if delta not in (None, 0):
         common_causes = [
-            "Mid-month convention first/last year proration",
+            "Rental-period gaps (primary-residence years don't accrue depreciation)",
             "Missing capital improvement asset",
             "Land/building split differs from filed return",
         ]
 
     return {
         "tax_year": tax_year,
+        "eligible": True,
+        "currently_rental": currently_rental,
+        "reason": None,
         "assets": assets,
         "timeline": timeline,
         "rollup": {
@@ -546,6 +606,10 @@ def list_properties(
 
     def _to_summary(p, shared_by_user=None):
         m = compute_property_metrics(p)
+        has_rental_history = _has_rental_history(p)
+        currently_rental = _is_currently_rental(p)
+        is_primary = (p.usage_type or "").lower() == "primary"
+        residency_status = "Mixed" if is_primary and has_rental_history else ("Rental" if currently_rental else "Primary")
         return PropertySummary(
             id=p.id,
             property_uid=p.property_uid,
@@ -561,6 +625,9 @@ def list_properties(
             monthly_mortgage=m["monthly_mortgage"],
             monthly_cash_flow=m["monthly_cash_flow"],
             equity=m["equity"],
+            has_rental_history=has_rental_history,
+            currently_rental=currently_rental,
+            residency_status=residency_status,
             shared_by_name=shared_by_user.name if shared_by_user else None,
             shared_by_email=shared_by_user.email if shared_by_user else None,
         )
@@ -726,7 +793,13 @@ def get_property(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    return _get_accessible_property(prop_id, db, current_user)
+    prop = _get_accessible_property(prop_id, db, current_user)
+    # Show the internally-computed balance, not a possibly-stale manual value
+    # or one that depends on a 1098/mortgage statement having been uploaded.
+    # Not committed — this is display-only, the stored value is untouched.
+    for loan in prop.loans:
+        loan.current_balance = current_loan_balance(loan)
+    return prop
 
 
 @router.put("/{prop_id}", response_model=PropertyOut)
@@ -804,7 +877,6 @@ def _collect_doc_history(prop: models.Property):
         by account (same logic as interest) — used for principal-delta calc
     """
     snapshots = []
-    tax_1098_entries = {}
     tax_fallback_by_year = {}
     interest_entries = {}  # year -> list of (account_or_None, interest)
     balance_entries = {}   # year -> list of 1098 Box 2 balance entries
@@ -859,33 +931,18 @@ def _collect_doc_history(prop: models.Property):
                         "document_id": d.id,
                         "upload_date": str(d.upload_date) if d.upload_date else None,
                     })
-        # Collect tax data. 1098 real-estate taxes are preferred over
-        # property-tax documents for the same year; do not count both.
-        tax_val = data.get("property_tax_amount") or data.get("taxes_paid")
-        if tax_val:
-            if d.doc_category == "mortgage_statement":
-                # Monthly amount -> annualize
-                annual_tax = round(tax_val * 12, 2)
-            elif d.doc_category == "1098":
-                # Annual amount. Key by account so transfer-year 1098s from
-                # different servicers can both contribute, while duplicate
-                # uploads for the same account collapse.
-                annual_tax = round(tax_val, 2)
-                acct = d.loan_account_number or data.get("account_number")
-                tax_1098_entries.setdefault(year, []).append((acct, annual_tax))
-                continue
-            else:
-                # Already annual (tax bill, tax return, 1098, 1099, etc.)
-                annual_tax = round(tax_val, 2)
+        # Collect property-tax bills only for tax fallback. Cash-flow/tax
+        # summaries use: Schedule E first, property-tax document second,
+        # manual property field last.
+        tax_val = (
+            (data.get("property_tax_amount") or data.get("taxes_paid"))
+            if d.doc_category == "property_tax" else None
+        )
+        if tax_val is not None:
+            annual_tax = round(tax_val, 2)
             tax_fallback_by_year[year] = max(tax_fallback_by_year.get(year, 0), annual_tax)
     snapshots.sort(key=lambda s: s["date"])
-    tax_1098_by_year = {
-        y: _dedup_interest(entries) for y, entries in tax_1098_entries.items()
-    }
-    tax_by_year = {
-        **tax_fallback_by_year,
-        **tax_1098_by_year,
-    }
+    tax_by_year = dict(tax_fallback_by_year)
     interest_by_year = {
         y: _dedup_interest(entries) for y, entries in interest_entries.items()
     }
@@ -1196,6 +1253,205 @@ def _scheduled_principal_cumulative(loan, year: int, end_month: int = 12) -> Opt
     return round(total, 2)
 
 
+def current_loan_balance(loan: models.Loan, today: Optional[date] = None) -> float:
+    """Outstanding principal today, computed internally from the loan's own
+    amortization schedule (original amount, rate, term, origination date) —
+    no mortgage statement or 1098 upload required. Falls back to the
+    manually recorded current_balance when there isn't enough data to
+    schedule a payoff (e.g. no origination date on file)."""
+    today = today or date.today()
+    original = float(getattr(loan, "original_amount", 0) or 0)
+    if original <= 0:
+        return float(getattr(loan, "current_balance", 0) or 0)
+    paid = _scheduled_principal_cumulative(loan, today.year, today.month)
+    if paid is None:
+        return float(getattr(loan, "current_balance", 0) or 0)
+    return round(max(0.0, original - paid), 2)
+
+
+def _interest_by_year_by_account(prop: models.Property) -> Dict[Optional[str], Dict[int, float]]:
+    """Form 1098 Box-1 interest, per year, split out by loan account number —
+    unlike `_collect_doc_history`'s interest_by_year (which blends every
+    account into one property-wide total), this keeps each loan's 1098s
+    separate so a refinance or a second loan doesn't get attributed to the
+    wrong loan's debt breakdown."""
+    by_account: Dict[Optional[str], Dict[int, list]] = {}
+    for d in prop.documents:
+        if d.doc_category != "1098" or not d.extracted_data:
+            continue
+        data = json.loads(d.extracted_data)
+        if not data.get("mortgage_interest"):
+            continue
+        dt = _parse_statement_date(data.get("statement_date") or data.get("tax_year"))
+        if dt:
+            year = dt.year
+        else:
+            year = d.statement_year or data.get("statement_year") or data.get("tax_year")
+            if isinstance(year, str):
+                m = re.search(r'(?:19|20)\d{2}', year)
+                year = int(m.group(0)) if m else None
+            if not year:
+                continue
+        acct = d.loan_account_number or data.get("account_number")
+        by_account.setdefault(acct, {}).setdefault(year, []).append(round(data["mortgage_interest"], 2))
+    return {
+        acct: {yr: round(max(vals), 2) for yr, vals in years.items()}
+        for acct, years in by_account.items()
+    }
+
+
+def _loan_debt_waterfall(
+    loan: models.Loan,
+    prop: models.Property,
+    interest_by_year: Dict[int, float],
+    tax_return_interest_by_year: Dict[int, float],
+    interest_by_account: Dict[Optional[str], Dict[int, float]],
+    today: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Per-loan interest/balance accumulation using the best available source
+    for each period, in priority order:
+      1. Form 1098 (Box 1) — exact annual interest, per loan account.
+      2. Schedule E mortgage interest (tax return) — kept as a cross-check
+         value alongside 1098 when both exist, otherwise used on its own.
+      3. Projection — for any period neither source covers (typically the
+         current, still-in-progress year), project forward month-by-month
+         from the loan's last known statement (balance, rate, P&I split)
+         to today. Only the undocumented gap is ever projected; a year
+         with a 1098 or Schedule E figure is never overwritten.
+    """
+    today = today or date.today()
+
+    loan_interest_by_year = interest_by_account.get(loan.account_number)
+    if loan_interest_by_year is None:
+        # No 1098 is attributed to this exact account number. With only one
+        # loan on the property, the property-wide total is unambiguously
+        # this loan's; with more than one, we can't safely guess which loan
+        # an unattributed document belongs to, so leave 1098 data out rather
+        # than risk double-counting it onto every loan.
+        loan_interest_by_year = interest_by_year if len(prop.loans) == 1 else {}
+    loan_tax_return_interest = tax_return_interest_by_year if len(prop.loans) == 1 else {}
+
+    years: Dict[int, Dict[str, Any]] = {}
+    for yr, amt in loan_tax_return_interest.items():
+        years[yr] = {"year": yr, "interest": round(amt, 2), "source": "tax_return"}
+    for yr, amt in loan_interest_by_year.items():
+        entry = years.setdefault(yr, {"year": yr})
+        if entry.get("source") == "tax_return":
+            entry["tax_return_interest"] = entry["interest"]
+        entry["interest"] = round(amt, 2)
+        entry["source"] = "1098"
+
+    documented_years = set(years.keys())
+
+    orig = _parse_statement_date(loan.origination_date) if loan.origination_date else None
+    stmt_date = _parse_statement_date(loan.statement_date) if loan.statement_date else None
+
+    rate_m = (loan.interest_rate or 0) / 12 / 100
+    pni = (loan.principal_due or 0) + (loan.interest_due or 0)
+    if pni <= 0:
+        pni = max((loan.monthly_payment or 0) - (loan.escrow_amount or 0), 0)
+
+    gap_interest = 0.0
+    gap_months = 0
+    is_arm = (loan.loan_type or "").upper() == "ARM"
+
+    if stmt_date:
+        anchor_date, anchor_balance = stmt_date, loan.current_balance or 0.0
+        if stmt_date.year not in documented_years:
+            # The statement's own YTD figure covers Jan 1 -> statement_date
+            # for its year more precisely than an amortization guess would.
+            gap_interest += loan.interest_paid_ytd or 0.0
+            gap_months += stmt_date.month
+    elif orig:
+        anchor_date, anchor_balance = orig, loan.original_amount or 0.0
+    else:
+        anchor_date = None
+
+    if anchor_date and rate_m > 0 and pni > 0:
+        balance = anchor_balance
+        y, m = anchor_date.year, anchor_date.month + 1
+        if m > 12:
+            m, y = 1, y + 1
+        while (y < today.year) or (y == today.year and m <= today.month):
+            interest_m = round(balance * rate_m, 2)
+            principal_m = max(pni - interest_m, 0)
+            if y not in documented_years:
+                gap_interest += interest_m
+                gap_months += 1
+            balance = max(balance - principal_m, 0)
+            m += 1
+            if m > 12:
+                m, y = 1, y + 1
+
+    total_interest = round(
+        sum(y["interest"] for y in years.values()) + gap_interest, 2)
+
+    current_year = today.year
+    if current_year in loan_interest_by_year:
+        source = "1098"
+    elif current_year in loan_tax_return_interest:
+        source = "tax_return"
+    elif gap_months > 0:
+        source = "projected"
+    else:
+        source = "no_data"
+
+    return {
+        "loan_id": loan.id,
+        "lender_name": loan.lender_name,
+        "account_number": loan.account_number,
+        "source": source,
+        "current_balance": current_loan_balance(loan, today),
+        "accumulated_interest": total_interest,
+        "last_known_statement_date": loan.statement_date,
+        "gap_months_projected": gap_months,
+        "estimated_vs_reported": "estimated" if gap_months > 0 else "reported",
+        "rate_assumption_flag": is_arm and gap_months > 0,
+        "years": sorted(years.values(), key=lambda y: y["year"]),
+    }
+
+
+def _projected_interest_by_year(loan: models.Loan, today: Optional[date] = None) -> Dict[int, float]:
+    """Month-by-month amortization projection of a loan's interest, by year,
+    from origination (or the loan's own statement-date anchor) to today.
+
+    Used by the lifetime summary to fill years with no 1098, tax return, or
+    mortgage-statement interest on file — without this, an undocumented loan
+    reports $0 total interest paid even though a rate and balance are known.
+    """
+    today = today or date.today()
+    rate_m = (loan.interest_rate or 0) / 12 / 100
+    pni = (loan.principal_due or 0) + (loan.interest_due or 0)
+    if pni <= 0:
+        pni = max((loan.monthly_payment or 0) - (loan.escrow_amount or 0), 0)
+    if rate_m <= 0 or pni <= 0:
+        return {}
+
+    orig = _parse_statement_date(loan.origination_date) if loan.origination_date else None
+    stmt_date = _parse_statement_date(loan.statement_date) if loan.statement_date else None
+
+    if orig and loan.original_amount:
+        anchor_date, balance = orig, loan.original_amount
+    elif stmt_date and loan.current_balance is not None:
+        anchor_date, balance = stmt_date, loan.current_balance
+    else:
+        return {}
+
+    by_year: Dict[int, float] = {}
+    y, m = anchor_date.year, anchor_date.month + 1
+    if m > 12:
+        m, y = 1, y + 1
+    while (y < today.year) or (y == today.year and m <= today.month):
+        interest_m = round(balance * rate_m, 2)
+        principal_m = max(pni - interest_m, 0)
+        by_year[y] = round(by_year.get(y, 0) + interest_m, 2)
+        balance = max(balance - principal_m, 0)
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return by_year
+
+
 def _statement_end_month_for_year(snapshots: list, year: int) -> int:
     dates = [
         _parse_statement_date(s.get("date"))
@@ -1239,6 +1495,83 @@ def _rental_income_by_year(prop: models.Property) -> dict:
             min(d["occupied_months"] / months_elapsed * 100, 100), 1
         ) if months_elapsed else 0
     return result
+
+
+def _rental_months_by_year(prop: models.Property, floor: Optional[date] = None) -> Dict[int, float]:
+    """Calendar months per year the property was an active rental. When
+    RentalPeriod rows exist they're authoritative — a year they don't cover
+    is a primary-residence/unrented year, even if other years were rented
+    (handles rent → primary → rent → primary switching). When no periods
+    have ever been recorded, falls back to treating every month as rental
+    for as long as usage_type is "Rental", so simple always-rental
+    properties keep working without granular lease tracking. `floor`
+    excludes months before a given date (e.g. an asset's own
+    placed-in-service date)."""
+    now = datetime.now()
+    result: Dict[int, int] = {}
+
+    if prop.rental_periods:
+        for rp in prop.rental_periods:
+            if not rp.start_year or not rp.start_month:
+                continue
+            if rp.end_year is None and rp.end_month is None:
+                end_year, end_month = now.year, now.month  # ongoing
+            else:
+                end_year = rp.end_year or rp.start_year
+                end_month = rp.end_month or 12
+            y, m = rp.start_year, rp.start_month
+            while (y < end_year) or (y == end_year and m <= end_month):
+                if (y > now.year) or (y == now.year and m > now.month):
+                    break  # never count future months
+                if floor is None or (y, m) >= (floor.year, floor.month):
+                    result[y] = result.get(y, 0) + 1
+                m += 1
+                if m > 12:
+                    m, y = 1, y + 1
+        return result
+
+    if (prop.usage_type or "Rental").lower() != "rental":
+        return result  # never rented, no periods on file
+
+    start = floor or _parse_iso_date(prop.purchase_date) or date(now.year, now.month, 1)
+    y, m = start.year, start.month
+    first = True  # IRS mid-month convention: the placed-in-service month only counts as half
+    while (y < now.year) or (y == now.year and m <= now.month):
+        result[y] = result.get(y, 0) + (0.5 if first else 1.0)
+        first = False
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return result
+
+
+def _has_rental_history(prop: models.Property) -> bool:
+    """Depreciation only applies to rental-use property. True if the
+    property has ever been rented — either it has recorded RentalPeriod
+    history, or it's flagged Rental with no granular periods tracked yet."""
+    if prop.rental_periods:
+        return True
+    return (prop.usage_type or "Rental").lower() == "rental"
+
+
+def _is_currently_rental(prop: models.Property) -> bool:
+    """Whether the property is an active rental right now — used to show
+    whether depreciation is currently accruing or paused pending a
+    conversion back to rental use."""
+    today = date.today()
+    for rp in prop.rental_periods:
+        if not rp.start_year or not rp.start_month:
+            continue
+        start = (rp.start_year, rp.start_month)
+        if rp.end_year is None and rp.end_month is None:
+            end = (today.year, today.month)  # ongoing
+        else:
+            end = (rp.end_year or rp.start_year, rp.end_month or 12)
+        if start <= (today.year, today.month) <= end:
+            return True
+    if prop.rental_periods:
+        return False
+    return (prop.usage_type or "Rental").lower() == "rental"
 
 
 # ── Tax return import ───────────────────────────────────────────────────────────
@@ -1466,6 +1799,7 @@ def get_performance(
     statement_balance_by_year = _latest_statement_balance_by_year(snapshots)
     # Actual per-year rent/occupancy from recorded lease periods
     rental_by_year = _rental_income_by_year(prop)
+    rental_months_map = _rental_months_by_year(prop)
     # Schedule E figures from tax returns (highest-confidence source)
     _tax_entries = db.query(models.TaxReturnEntry).filter(
         models.TaxReturnEntry.property_id == prop_id,
@@ -1479,6 +1813,12 @@ def get_performance(
     tax_return_interest_by_year = {
         e.tax_year: e.mortgage_interest for e in _tax_entries if e.mortgage_interest
     }
+    # Amortization-projected interest by year — fills years with no 1098,
+    # tax return, or statement interest on file.
+    projected_interest_by_year: Dict[int, float] = {}
+    for _loan in prop.loans:
+        for _yr, _amt in _projected_interest_by_year(_loan).items():
+            projected_interest_by_year[_yr] = round(projected_interest_by_year.get(_yr, 0) + _amt, 2)
     # Schedule E total_expenses includes interest + depreciation; strip them out
     # to get operating-only expenses (insurance, taxes, maintenance, etc.)
     tax_return_opex_by_year = {
@@ -1627,6 +1967,10 @@ def get_performance(
                 source = "annualized"
         elif ss:
             interest_paid = round(sum(s["interest"] or 0 for s in ss) / len(ss) * months_owned, 2)
+        elif year in projected_interest_by_year:
+            interest_paid = projected_interest_by_year[year]
+            if source == "estimated":
+                source = "annualized"
         else:
             interest_paid = round(sum(l.interest_due or 0 for l in prop.loans) * months_owned, 2)
 
@@ -1638,8 +1982,10 @@ def get_performance(
             interest_paid = tax_return_interest_by_year[year]
             source = "tax_return"
 
-        # Use actual taxes: document extracts first, then filed tax return, then static field.
-        year_tax = tax_by_year.get(year) or _prop_tax_by_year.get(year)
+        # Property tax priority: Schedule E, then property-tax document, then manual property field.
+        year_tax = _prop_tax_by_year.get(year)
+        if year_tax is None:
+            year_tax = tax_by_year.get(year)
         op_property_tax = year_tax if year_tax is not None else prop.property_tax
         # Schedule E total (minus interest and depreciation) beats static field estimates
         if year in tax_return_opex_by_year:
@@ -1673,10 +2019,14 @@ def get_performance(
             rent_source = "none"
 
         # Depreciation: Schedule E filed value (highest trust) > days-rented proration
-        # > IRS mid-month purchase-year convention > full-year straight-line.
+        # > IRS mid-month purchase-year convention > full-year straight-line >
+        # 0 (depreciation only applies to rental-use property; a year with no
+        # rental evidence at all — e.g. this stayed a primary residence, or a
+        # gap between rental stints — never accrues depreciation).
         # "days_rented" from Schedule E lines 2/3 handles mixed-use years
         # (e.g. 6 months primary + 6 months rental) automatically.
         _days_rented = days_rented_by_year.get(year)
+        _is_rental_year = year in rental_months_map
         if tax_return_depr_by_year.get(year):
             year_depreciation = tax_return_depr_by_year[year]
         elif _days_rented:
@@ -1685,7 +2035,7 @@ def get_performance(
             import calendar as _cal
             year_days = 366 if _cal.isleap(year) else 365
             year_depreciation = round(annual_depreciation * _days_rented / year_days, 2)
-        elif purchase_year and year == purchase_year and prop.purchase_date:
+        elif purchase_year and year == purchase_year and prop.purchase_date and _is_rental_year:
             # IRS mid-month convention: residential rental placed in service in
             # month M → available months = (12 - M + 0.5)
             try:
@@ -1694,8 +2044,10 @@ def get_performance(
                 year_depreciation = annual_depreciation * _months / 12
             except Exception:
                 year_depreciation = annual_depreciation
-        else:
+        elif _is_rental_year:
             year_depreciation = annual_depreciation
+        else:
+            year_depreciation = 0.0
 
         debt_service = interest_paid + principal_paid
         cash_flow = round(year_rent - operating_expenses - debt_service, 2)
@@ -1820,6 +2172,7 @@ def get_lifetime_summary(
     statement_balance_by_year = _latest_statement_balance_by_year(snapshots)
     # Actual per-year rent/occupancy from recorded lease periods
     rental_by_year = _rental_income_by_year(prop)
+    rental_months_map = _rental_months_by_year(prop)
     # Schedule E figures from uploaded tax returns (highest-confidence source)
     _tax_entries = db.query(models.TaxReturnEntry).filter(
         models.TaxReturnEntry.property_id == prop_id,
@@ -1839,6 +2192,12 @@ def get_lifetime_summary(
         )
         for e in _tax_entries if e.total_expenses
     }
+    # Amortization-projected interest by year — fills years with no 1098,
+    # tax return, or statement interest on file.
+    projected_interest_by_year: Dict[int, float] = {}
+    for _loan in prop.loans:
+        for _yr, _amt in _projected_interest_by_year(_loan).items():
+            projected_interest_by_year[_yr] = round(projected_interest_by_year.get(_yr, 0) + _amt, 2)
     # Per-year property taxes from filed returns: prefer Schedule E entries
     # (total_expenses > 0 means it came from an actual return, not just a 1098)
     _prop_tax_by_year: dict[int, float] = {}
@@ -1969,6 +2328,10 @@ def get_lifetime_summary(
         # Interest from mortgage statements or loan estimate
         if ss:
             interest_paid = round(sum(s["interest"] or 0 for s in ss) / len(ss) * months_owned, 2)
+        elif year in projected_interest_by_year:
+            interest_paid = projected_interest_by_year[year]
+            if source == "estimated":
+                source = "annualized"
         else:
             interest_paid = round(sum(l.interest_due or 0 for l in prop.loans) * months_owned, 2)
 
@@ -1981,8 +2344,10 @@ def get_lifetime_summary(
             interest_paid = tax_return_interest_by_year[year]
             source = "tax_return"
 
-        # Use actual taxes: document extracts first, then filed tax return, then static field.
-        year_tax = tax_by_year.get(year) or _prop_tax_by_year.get(year)
+        # Property tax priority: Schedule E, then property-tax document, then manual property field.
+        year_tax = _prop_tax_by_year.get(year)
+        if year_tax is None:
+            year_tax = tax_by_year.get(year)
         op_property_tax = year_tax if year_tax is not None else prop.property_tax
         # Schedule E total (minus interest and depreciation) beats static field estimates
         if year in tax_return_opex_by_year:
@@ -2017,17 +2382,22 @@ def get_lifetime_summary(
             rent_source = "none"
 
         # Depreciation: tax return (Schedule E line 18) > IRS mid-month calculation
+        # > full-year straight-line > 0 (depreciation only applies to rental-use
+        # property; no rental evidence for this year means no depreciation).
+        _is_rental_year = year in rental_months_map
         if tax_return_depr_by_year.get(year):
             year_depreciation = tax_return_depr_by_year[year]
-        elif purchase_year and year == purchase_year and prop.purchase_date:
+        elif purchase_year and year == purchase_year and prop.purchase_date and _is_rental_year:
             try:
                 _pd = datetime.strptime(prop.purchase_date[:10], '%Y-%m-%d')
                 _months = 12 - _pd.month + 0.5
                 year_depreciation = annual_depreciation * _months / 12
             except Exception:
                 year_depreciation = annual_depreciation
-        else:
+        elif _is_rental_year:
             year_depreciation = annual_depreciation
+        else:
+            year_depreciation = 0.0
 
         debt_service = interest_paid + principal_paid
         cash_flow = round(year_rent - operating_expenses - debt_service, 2)
@@ -2102,13 +2472,22 @@ def get_lifetime_summary(
         if yearly_details else None
     )
 
+    # A year with no statement/1098/tax-return/rental evidence of any kind
+    # never enters yearly_details at all (see the `continue` above) — so a
+    # fully undocumented loan would otherwise report $0 lifetime interest.
+    # Fill those missing years from the amortization projection too.
+    _covered_years = {y["year"] for y in yearly_details}
+    _missing_years_interest = round(sum(
+        amt for yr, amt in projected_interest_by_year.items() if yr not in _covered_years
+    ), 2)
+
     lifetime = {
         "years_owned": years_owned,
         "purchase_year": purchase_year,
         "years_filled": len(yearly_details),
         "total_rental_income": round(sum(y["rental_income"] for y in yearly_details), 2),
         "total_operating_expenses": round(sum(y["operating_expenses"] for y in yearly_details), 2),
-        "total_interest_paid": round(sum(y["interest_paid"] for y in yearly_details), 2),
+        "total_interest_paid": round(sum(y["interest_paid"] for y in yearly_details) + _missing_years_interest, 2),
         "total_principal_paid": _principal_paid_actual,
         "principal_paid_source": _principal_paid_source,
         "principal_paid_note": _principal_paid_note,
@@ -2326,7 +2705,7 @@ def get_raw_data(
         "loans": [
             {
                 "lender": l.lender_name,
-                "current_balance": l.current_balance,
+                "current_balance": current_loan_balance(l),
                 "interest_rate": l.interest_rate,
                 "monthly_payment": l.monthly_payment,
                 "interest_due": l.interest_due,
@@ -2764,6 +3143,46 @@ def get_arm_schedule(
     return {"schedule": schedule}
 
 
+@router.get("/{prop_id}/debt")
+def get_debt(
+    prop_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Per-loan balance and accumulated-interest breakdown using the best
+    available source per period: Form 1098 > Schedule E (tax return) >
+    a month-by-month amortization projection filling only the gap between
+    the loan's last known statement and today."""
+    prop = _get_accessible_property(prop_id, db, current_user)
+
+    _, _, interest_by_year, _, _ = _collect_doc_history(prop)
+    interest_by_account = _interest_by_year_by_account(prop)
+    tax_return_interest_by_year = {
+        e.tax_year: e.mortgage_interest
+        for e in db.query(models.TaxReturnEntry).filter(
+            models.TaxReturnEntry.property_id == prop_id,
+        ).all()
+        if e.mortgage_interest
+    }
+
+    today = date.today()
+    loans = [
+        _loan_debt_waterfall(
+            loan, prop, interest_by_year, tax_return_interest_by_year,
+            interest_by_account, today,
+        )
+        for loan in prop.loans
+    ]
+
+    return {
+        "loans": loans,
+        "rollup": {
+            "total_current_balance": round(sum(l["current_balance"] for l in loans), 2),
+            "total_accumulated_interest": round(sum(l["accumulated_interest"] for l in loans), 2),
+        },
+    }
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @router.get("/dashboard/summary")
@@ -2797,7 +3216,7 @@ def dashboard_summary(
     total_properties = len(props)
     total_market_value = sum(p.market_value for p in props)
     total_loan_balance = sum(
-        sum(l.current_balance for l in p.loans) for p in props
+        sum(current_loan_balance(l) for l in p.loans) for p in props
     )
     total_monthly_mortgage = sum(
         sum(max(l.monthly_payment - l.escrow_amount, 0) for l in p.loans) for p in props
@@ -2828,7 +3247,7 @@ def dashboard_summary(
         total_monthly_cf += m["monthly_cash_flow"]
         _orig_loans = [l for l in p.loans if (l.original_amount or 0) > 0]
         prop_original_loan = sum(l.original_amount for l in _orig_loans)
-        prop_principal_paid = sum(l.original_amount - (l.current_balance or 0) for l in _orig_loans)
+        prop_principal_paid = sum(l.original_amount - current_loan_balance(l) for l in _orig_loans)
         properties_detail.append({
             "id": p.id,
             "property_uid": p.property_uid,
@@ -2858,7 +3277,7 @@ def dashboard_summary(
                     "lender_name": l.lender_name,
                     "loan_type": l.loan_type,
                     "original_amount": l.original_amount or 0,
-                    "current_balance": l.current_balance,
+                    "current_balance": current_loan_balance(l),
                     "interest_rate": l.interest_rate,
                     "monthly_payment": l.monthly_payment,
                     "escrow_amount": l.escrow_amount,
@@ -2876,12 +3295,12 @@ def dashboard_summary(
     all_loans = [l for p in props for l in p.loans]
     loans_with_original = [l for l in all_loans if (l.original_amount or 0) > 0]
     total_original_loan = sum(l.original_amount for l in loans_with_original)
-    total_principal_paid = sum(l.original_amount - (l.current_balance or 0) for l in loans_with_original)
+    total_principal_paid = sum(l.original_amount - current_loan_balance(l) for l in loans_with_original)
 
     # Weighted average interest rate = Σ(balance × rate) / Σ(balance)
-    balance_sum = sum(l.current_balance or 0 for l in all_loans)
+    balance_sum = sum(current_loan_balance(l) for l in all_loans)
     weighted_avg_rate = round(
-        sum((l.current_balance or 0) * (l.interest_rate or 0) for l in all_loans) / balance_sum, 2
+        sum(current_loan_balance(l) * (l.interest_rate or 0) for l in all_loans) / balance_sum, 2
     ) if balance_sum > 0 else 0
 
     # Interest paid till date — from TaxReturnEntry (1098 / Schedule E) across all properties

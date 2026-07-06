@@ -8,7 +8,7 @@ const DEFAULTS = {
   loan_product: '',
   loan_type: 'FIXED',
   original_amount: 0,
-  current_balance: 0,
+  current_balance: '',
   interest_rate: 0,
   rate_note: '',
   monthly_payment: 0,
@@ -63,6 +63,30 @@ function monthlyPI(principal, annualRate, years) {
   return roundMoney(amount * (monthlyRate * (1 + monthlyRate) ** months) / ((1 + monthlyRate) ** months - 1))
 }
 
+function paymentsMadeSinceLoanStart(loanDate, today = new Date()) {
+  if (!loanDate) return 0
+  const start = new Date(`${loanDate}T00:00:00`)
+  if (Number.isNaN(start.getTime())) return 0
+  const firstPayment = new Date(start.getFullYear(), start.getMonth() + 1, 1)
+  const currentMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+  if (currentMonth < firstPayment) return 0
+  return ((currentMonth.getFullYear() - firstPayment.getFullYear()) * 12) + currentMonth.getMonth() - firstPayment.getMonth() + 1
+}
+
+function amortizedBalance(originalAmount, downPayment, annualRate, loanDate, monthlyPayment, years) {
+  const startingPrincipal = toNumber(originalAmount)
+  if (!startingPrincipal) return 0
+  const totalMonths = Math.max(1, Math.round(toNumber(years || 30) * 12))
+  const paidMonths = Math.min(paymentsMadeSinceLoanStart(loanDate), totalMonths)
+  if (!paidMonths) return roundMoney(startingPrincipal)
+  const payment = toNumber(monthlyPayment) || monthlyPI(startingPrincipal, annualRate, years)
+  const monthlyRate = toNumber(annualRate) / 100 / 12
+  const balance = monthlyRate
+    ? startingPrincipal * (1 + monthlyRate) ** paidMonths - payment * (((1 + monthlyRate) ** paidMonths - 1) / monthlyRate)
+    : startingPrincipal - payment * paidMonths
+  return roundMoney(Math.max(0, Math.min(startingPrincipal, balance)))
+}
+
 function addYears(dateString, years) {
   if (!dateString) return ''
   const date = new Date(`${dateString}T00:00:00`)
@@ -78,17 +102,33 @@ function firstPaymentSplit(balance, annualRate, monthlyPayment) {
 }
 
 export default function LoanModal({ propId, property, loan, onClose, onSaved }) {
-  const [form, setForm] = useState(() => ({ ...DEFAULTS, ...(loan || {}) }))
+  const needsCurrentBalance = !loan?.id || toNumber(loan?.current_balance) <= 0
+  const [form, setForm] = useState(() => ({
+    ...DEFAULTS,
+    ...(loan || {}),
+    current_balance: needsCurrentBalance ? '' : loan.current_balance,
+  }))
   const [loading, setLoading] = useState(false)
-  const [autoCalc, setAutoCalc] = useState(!loan?.id)
+  const [autoCalc, setAutoCalc] = useState(!loan?.id || needsCurrentBalance)
   const isEdit = Boolean(loan?.id)
 
   const calculated = useMemo(() => {
     const purchasePrice = toNumber(property?.purchase_price)
     const originalAmount = toNumber(form.original_amount)
+    const balanceStartDate = form.origination_date || property?.purchase_date
+    const scheduledBalance = amortizedBalance(
+      form.original_amount,
+      form.down_payment,
+      form.interest_rate,
+      balanceStartDate,
+      form.monthly_payment,
+      form.loan_term_years
+    )
     const payment = monthlyPI(form.original_amount, form.interest_rate, form.loan_term_years)
-    const split = firstPaymentSplit(form.current_balance || form.original_amount, form.interest_rate, payment)
+    const effectiveBalance = form.current_balance === '' ? scheduledBalance : toNumber(form.current_balance)
+    const split = firstPaymentSplit(effectiveBalance || form.original_amount, form.interest_rate, payment)
     return {
+      current_balance: scheduledBalance,
       monthly_payment: payment,
       principal_due: split.principal,
       interest_due: split.interest,
@@ -99,6 +139,7 @@ export default function LoanModal({ propId, property, loan, onClose, onSaved }) 
     }
   }, [
     property?.purchase_price,
+    property?.purchase_date,
     form.original_amount,
     form.current_balance,
     form.interest_rate,
@@ -114,7 +155,7 @@ export default function LoanModal({ propId, property, loan, onClose, onSaved }) 
     setForm((current) => ({
       ...current,
       ...calculated,
-      current_balance: current.current_balance || current.original_amount,
+      current_balance: current.current_balance === '' ? calculated.current_balance : current.current_balance,
     }))
   }, [autoCalc, calculated])
 
@@ -156,6 +197,8 @@ export default function LoanModal({ propId, property, loan, onClose, onSaved }) 
     numericFields.forEach((field) => {
       data[field] = toNumber(data[field])
     })
+    if (form.current_balance === '') data.current_balance = calculated.current_balance
+    if (!data.origination_date && property?.purchase_date) data.origination_date = property.purchase_date
     data.loan_term_years = Math.max(1, Math.round(data.loan_term_years || 30))
     return data
   }
@@ -185,7 +228,7 @@ export default function LoanModal({ propId, property, loan, onClose, onSaved }) 
     setForm((current) => ({
       ...current,
       ...calculated,
-      current_balance: current.current_balance || current.original_amount,
+      current_balance: calculated.current_balance,
     }))
     setAutoCalc(true)
   }

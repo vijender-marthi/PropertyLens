@@ -35,6 +35,8 @@ export const authAPI = {
     return axios.post('/api/auth/token', form)
   },
   me: () => api.get('/auth/me'),
+  listUsers: () => api.get('/auth/admin/users'),
+  updateUserRole: (userId, role) => api.patch(`/auth/admin/users/${userId}/role`, { role }),
 }
 
 // ── Properties ────────────────────────────────────────────────────────────────
@@ -66,6 +68,7 @@ export const propAPI = {
     api.get(`/properties/${propId}/loans/${loanId}/amortization?extra_monthly=${extra}`),
   armSchedule: (propId, loanId) =>
     api.get(`/properties/${propId}/loans/${loanId}/arm-schedule`),
+  debt: (propId) => api.get(`/properties/${propId}/debt`),
   // Tax return entries
   taxEntries: (propId) => api.get(`/properties/${propId}/tax-entries`),
   upsertYearEntry: (propId, data) => api.post(`/properties/${propId}/tax-entries`, data),

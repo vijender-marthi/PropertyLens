@@ -27,6 +27,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
+    role = Column(String, default="demo")  # demo | admin | superuser
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     properties = relationship("Property", back_populates="owner")
