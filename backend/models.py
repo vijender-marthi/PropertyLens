@@ -27,7 +27,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     name = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
-    role = Column(String, default="demo")  # demo | admin | superuser
+    role = Column(String, default="demo")  # demo | premium | admin | superuser
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     properties = relationship("Property", back_populates="owner")
@@ -68,6 +68,7 @@ class Property(Base):
     held_period = Column(String)
     purchase_date = Column(String)
     purchase_price = Column(Float, default=0.0)
+    down_payment = Column(Float, default=0.0)
     settlement_total_amount = Column(Float, default=0.0)
     closing_costs = Column(Float, default=0.0)
 
@@ -77,6 +78,7 @@ class Property(Base):
 
     # Expenses (monthly)
     property_tax = Column(Float, default=0.0)
+    property_tax_history = Column(Text, default="{}")
     insurance = Column(Float, default=0.0)
     hoa_flag = Column(Boolean, default=False)
     hoa_fee = Column(Float, default=0.0)
@@ -116,6 +118,9 @@ class Property(Base):
     rental_periods = relationship(
         "RentalPeriod", back_populates="property",
         cascade="all, delete-orphan", order_by="RentalPeriod.start_year, RentalPeriod.start_month")
+    usage_periods = relationship(
+        "UsagePeriod", back_populates="property",
+        cascade="all, delete-orphan", order_by="UsagePeriod.start_date")
     tax_entries = relationship(
         "TaxReturnEntry", back_populates="property", cascade="all, delete-orphan")
     depreciation_assets = relationship(
@@ -137,6 +142,7 @@ class Loan(Base):
     rate_note = Column(String)  # e.g. "Until 10/2032 pmt" for ARM intro rates
     monthly_payment = Column(Float, nullable=False)
     estimated_total_monthly_payment = Column(Float, default=0.0)
+    extra_monthly_payment = Column(Float, default=0.0)
     loan_term_years = Column(Integer, nullable=False)
     origination_date = Column(String)
     maturity_date = Column(String)
@@ -165,9 +171,6 @@ class Loan(Base):
     arm_cap = Column(Float)  # lifetime rate cap
     arm_margin = Column(Float)  # margin over index
     arm_index = Column(String)  # e.g., "SOFR", "LIBOR"
-
-    # Down payment
-    down_payment = Column(Float, default=0.0)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -225,6 +228,28 @@ class RentalPeriod(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     property = relationship("Property", back_populates="rental_periods")
+
+
+class UsagePeriod(Base):
+    """Ownership usage timeline. Drives primary/rental calculations over time."""
+    __tablename__ = "usage_periods"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False)
+    usage_type = Column(String, nullable=False)  # PRIMARY | RENTAL
+    start_date = Column(String, nullable=False)
+    end_date = Column(String)  # null = current
+    fmv_at_start = Column(Float, default=0.0)
+    monthly_rent = Column(Float, default=0.0)
+    vacancy_allowance = Column(Float, default=0.0)
+    property_management_fee = Column(Float, default=0.0)
+    accumulated_depreciation_at_start = Column(Float, default=0.0)
+    suspended_losses_at_start = Column(Float, default=0.0)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship("Property", back_populates="usage_periods")
 
 
 class DepreciationAsset(Base):

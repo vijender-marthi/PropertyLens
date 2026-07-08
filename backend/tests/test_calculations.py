@@ -7,6 +7,7 @@ namespace objects to drive the functions directly.
 import pytest
 from types import SimpleNamespace
 from routers.properties import (
+    build_summary_dto,
     compute_property_metrics,
     _principal_from_1098,
     _principal_from_1098_segments,
@@ -14,6 +15,7 @@ from routers.properties import (
     _statement_end_month_for_year,
     _dedup_balance,
 )
+from services.loan_calculator import payoff_analysis
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ def _make_prop(**overrides):
         capex_reserve=0.0,
         other_expenses=0.0,
         usage_type="Rental",
+        id=1,
         loans=[],
     )
     defaults.update(overrides)
@@ -51,8 +54,8 @@ def _make_loan(**overrides):
         monthly_payment=2_023.0,
         escrow_amount=0.0,
         interest_rate=6.5,
-        principal_due=398.0,
-        interest_due=1_625.0,
+        principal_due=0.0,
+        interest_due=0.0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -64,6 +67,68 @@ class TestComputePropertyMetrics:
         prop = _make_prop(monthly_rent=4_000.0, occupancy_rate=90.0)
         m = compute_property_metrics(prop)
         assert m["effective_rent"] == pytest.approx(3_600.0)
+
+    def test_summary_dto_uses_backend_summary_metrics_for_returns(self):
+        prop = _make_prop(
+            monthly_rent=3_200.0,
+            market_value=700_000.0,
+            property_tax=2_057.0,
+            insurance=1_200.0,
+            down_payment=0.0,
+            closing_costs=0.0,
+        )
+        summary_metrics = {
+            "noi": 35_143.0,
+            "annual_debt_service": 68_813.0,
+            "annual_cash_flow": -33_670.0,
+            "monthly_cash_flow": -2_805.83,
+            "monthly_cost_to_own": 5_734.42,
+            "cap_rate": 5.02,
+            "dscr": 0.51,
+            "cash_on_cash_return": None,
+            "total_return_ytd": -33_670.0,
+        }
+
+        dto = build_summary_dto(prop, summary_metrics)
+
+        assert dto["source"] == "backend_engine"
+        assert dto["metrics"]["monthlyCashFlow"]["display"] == "-$2,806"
+        assert dto["metrics"]["annualCashFlow"]["display"] == "-$33,670"
+        assert dto["metrics"]["noi"]["display"] == "$35,143"
+        assert dto["metrics"]["capRate"]["display"] == "5.0%"
+        assert dto["metrics"]["dscr"]["display"] == "0.51"
+        assert dto["metrics"]["capRate"]["tone"] == "positive"
+        assert dto["metrics"]["dscr"]["tone"] == "positive"
+        assert dto["metrics"]["capRate"]["formula"] == "NOI ÷ market value"
+        assert dto["metrics"]["capRate"]["computation"] == "$35,143 ÷ $700,000"
+        assert dto["metrics"]["capRate"]["result"] == "5.02%"
+        assert dto["metrics"]["cashOnCashReturn"]["computation"] is None
+        assert dto["metrics"]["cashOnCashReturn"]["result"] is None
+        assert "downPayment" in dto["metrics"]["cashOnCashReturn"]["missingInputs"]
+        assert dto["metrics"]["cashOnCashReturn"]["hint"] == "Enter down payment to calculate"
+        for metric in dto["metrics"].values():
+            assert metric.get("formula") != "Provided by " + "backend engine."
+            assert metric.get("source") in {"CALCULATED", "DOCUMENT", "USER_INPUT", "ESTIMATED"}
+        assert dto["signSanity"]["cap_rate_non_negative_when_noi_positive"] is True
+        assert dto["signSanity"]["dscr_non_negative_when_noi_positive"] is True
+
+    def test_payoff_analysis_returns_single_consistent_result_object(self):
+        analysis = payoff_analysis(
+            principal=440_446.34,
+            annual_rate=3.625,
+            years=30,
+            extra_monthly=500,
+            base_monthly_payment=2_705.80,
+        )
+
+        assert analysis["monthly_payment"] == pytest.approx(3_205.80, abs=0.01)
+        assert analysis["total_interest"] > 0
+        assert analysis["payoff_time"]
+        assert analysis["months_to_payoff"] > 0
+        assert analysis["interest_saved"] == pytest.approx(
+            analysis["base_total_interest"] - analysis["total_interest"],
+            abs=0.01,
+        )
 
     def test_primary_home_zero_rent(self):
         prop = _make_prop(monthly_rent=3_000.0, usage_type="Primary")
@@ -143,7 +208,7 @@ class TestComputePropertyMetrics:
         m = compute_property_metrics(prop)
         assert m["monthly_mortgage"] == pytest.approx(2_000.0)
 
-    def test_escrow_counts_as_expense_when_tax_insurance_missing(self):
+    def test_escrow_not_counted_as_parallel_operating_expense(self):
         loan = _make_loan(monthly_payment=4_274.51, escrow_amount=1_913.46)
         prop = _make_prop(
             monthly_rent=3_200.0,
@@ -153,8 +218,9 @@ class TestComputePropertyMetrics:
         )
         m = compute_property_metrics(prop)
         assert m["monthly_mortgage"] == pytest.approx(2_361.05)
-        assert m["tax_ins_monthly"] == pytest.approx(1_913.46)
-        assert m["monthly_cash_flow"] == pytest.approx(-1_074.51)
+        assert m["tax_ins_monthly"] == pytest.approx(0.0)
+        assert m["monthly_expenses"] == pytest.approx(0.0)
+        assert m["monthly_cash_flow"] == pytest.approx(838.95)
 
     def test_property_tax_is_prorated_monthly_into_expenses(self):
         prop = _make_prop(

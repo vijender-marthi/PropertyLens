@@ -246,7 +246,7 @@ for lm in LOAN_META:
         monthly_payment=round(mp, 2), loan_term_years=lm["years"],
         origination_date=lm["orig_date"], maturity_date=lm["maturity"],
         account_number=lm["account"], borrowers=lm["borrowers"],
-        escrow_amount=lm["escrow"], down_payment=lm["down"],
+        escrow_amount=lm["escrow"],
         principal_due=prin_due, interest_due=int_due,
         statement_date=f"{CURRENT_YEAR}-{CURRENT_MONTH:02d}-01",
         payment_due_date=f"{CURRENT_YEAR}-{CURRENT_MONTH:02d}-15",

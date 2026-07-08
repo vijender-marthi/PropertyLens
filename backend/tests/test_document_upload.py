@@ -2,6 +2,17 @@ import models
 from tests.conftest import auth_headers
 
 
+def test_duplicate_upload_hash_is_content_based(tmp_path):
+    from routers.documents import _file_hash
+
+    first = tmp_path / "statement-a.pdf"
+    second = tmp_path / "renamed-statement.pdf"
+    first.write_bytes(b"same mortgage statement bytes")
+    second.write_bytes(b"same mortgage statement bytes")
+
+    assert _file_hash(first) == _file_hash(second)
+
+
 def test_tax_return_upload_reports_import_error(client, db, user, monkeypatch):
     from routers import documents as documents_router
 

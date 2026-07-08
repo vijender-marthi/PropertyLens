@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Building2, Home, MapPin, Plus, TrendingDown, TrendingUp, Upload } from 'lucide-react'
+import { AlertTriangle, Building2, Home, MapPin, Plus, Trash2, TrendingDown, TrendingUp, Upload } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { propAPI } from '../services/api'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
@@ -26,7 +26,27 @@ export default function PropertiesPage() {
     propAPI.checklistSummary()
       .then((r) => setChecklistSummary(r.data))
       .catch(() => setChecklistSummary(null))
-  }, [])
+}, [])
+
+const refreshProperties = () => {
+propAPI.list()
+.then((r) => setProperties(r.data || []))
+.catch(() => toast.error('Failed refresh properties'))
+propAPI.checklistSummary()
+.then((r) => setChecklistSummary(r.data))
+.catch(() => setChecklistSummary(null))
+}
+
+const handleDeleteProperty = async (property) => {
+if (!confirm(`Delete ${propertyLabel(property)}? This cannot be undone.`)) return
+try {
+await propAPI.delete(property.id)
+toast.success('Property deleted')
+refreshProperties()
+} catch (err) {
+toast.error(err.response?.data?.detail || 'Failed delete property')
+}
+}
 
 const summary = useMemo(() => {
 const rental = properties.filter((p) => (p.usage_type || 'Rental').toLowerCase() !== 'primary')
@@ -167,8 +187,8 @@ return groups
                 <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">{primaryProperties.length}</span>
               </div>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {primaryProperties.map((property) => (
-                  <PropertyCard key={property.id} property={property} featured />
+{primaryProperties.map((property) => (
+<PropertyCard key={property.id} property={property} featured onDelete={handleDeleteProperty} />
                 ))}
               </div>
             </section>
@@ -192,8 +212,8 @@ return groups
                       <span className="text-sm text-gray-400">({group.properties.length})</span>
                     </div>
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {group.properties.map((property) => (
-                        <PropertyCard key={property.id} property={property} />
+{group.properties.map((property) => (
+<PropertyCard key={property.id} property={property} onDelete={handleDeleteProperty} />
                       ))}
                     </div>
                   </div>
@@ -225,12 +245,17 @@ function SummaryTile({ label, value, suffix, tone }) {
   )
 }
 
-function PropertyCard({ property: p, featured = false }) {
+function PropertyCard({ property: p, featured = false, onDelete }) {
   const isPrimary = (p.usage_type || '').toLowerCase() === 'primary'
-  const isMixedUse = p.residency_status === 'Mixed' || (isPrimary && p.has_rental_history)
-  const positive = (p.monthly_cash_flow || 0) >= 0
+const isMixedUse = p.residency_status === 'Mixed' || (isPrimary && p.has_rental_history)
+const positive = (p.monthly_cash_flow || 0) >= 0
+const deleteProperty = (event) => {
+event.preventDefault()
+event.stopPropagation()
+onDelete?.(p)
+}
 
-  return (
+return (
 <Link
 to={`/properties/${p.id}`}
 className={`card block transition-shadow hover:shadow-md ${featured ? 'border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-900/10' : 'dark:hover:border-gray-600'}`}
@@ -246,8 +271,19 @@ className={`card block transition-shadow hover:shadow-md ${featured ? 'border-am
             <p className="mt-1 text-xs font-medium text-gray-400 dark:text-gray-500">ID {shortPropertyUid(p)}</p>
           ) : null}
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <span className="badge-blue">{p.property_type || 'Property'}</span>
+<div className="flex shrink-0 flex-col items-end gap-1">
+{onDelete ? (
+<button
+type="button"
+onClick={deleteProperty}
+className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+title="Delete property"
+aria-label={`Delete ${propertyLabel(p)}`}
+>
+<Trash2 className="h-4 w-4" />
+</button>
+) : null}
+<span className="badge-blue">{p.property_type || 'Property'}</span>
           <span className={isMixedUse ? 'badge-yellow' : isPrimary ? 'badge-yellow' : 'badge-green'}>
             {isMixedUse ? 'Mixed Use' : isPrimary ? 'Primary Home' : 'Rental'}
           </span>

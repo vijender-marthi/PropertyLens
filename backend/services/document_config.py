@@ -115,7 +115,7 @@ DOCUMENT_TYPE_CONFIG: dict[str, DocumentTypeConfig] = {
             FieldMapping("annual_insurance", "property.insurance", "Annual Insurance", "authoritative", "insurance"),
             FieldMapping("hoa_annual", "property.hoa_fee", "Annual HOA", "annual_to_monthly"),
             FieldMapping("original_amount", "loan.original_amount", "Original Loan Amount", "identity"),
-            FieldMapping("down_payment", "loan.down_payment", "Down Payment", "identity"),
+            FieldMapping("down_payment", "property.down_payment", "Down Payment", "identity"),
             FieldMapping("original_ltv", "loan.original_ltv", "Original LTV", "identity"),
             FieldMapping("loan_product", "loan.loan_product", "Loan Product", "identity"),
             FieldMapping("escrow_included", "loan.escrow_included", "Escrow Included", "identity"),

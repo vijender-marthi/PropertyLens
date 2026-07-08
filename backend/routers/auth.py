@@ -45,8 +45,18 @@ class UserRoleUpdate(BaseModel):
     role: str
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
 ADMIN_EMAIL = "vijender.marthi@gmail.com"
-ALLOWED_ROLES = {"demo", "admin", "superuser"}
+ALLOWED_ROLES = {"demo", "premium", "admin", "superuser"}
+PASSWORD_RESET_EXPIRE_MINUTES = 15
 
 
 def _prep(password: str) -> str:
@@ -98,7 +108,7 @@ def normalize_user_role(user: models.User, db: Session | None = None) -> str:
     current = (getattr(user, "role", None) or "").lower()
     if email == ADMIN_EMAIL:
         effective = "admin"
-    elif current in {"admin", "superuser", "demo"}:
+    elif current in ALLOWED_ROLES:
         effective = current
     else:
         effective = "demo"
@@ -172,6 +182,49 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    access_token = create_access_token(
+        data={"sub": user.email},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return Token(
+        access_token=access_token,
+        token_type="bearer",
+        user=serialize_user(user),
+    )
+
+
+@router.post("/password-reset/request")
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="No account found for that email")
+    reset_token = create_access_token(
+        data={"sub": user.email, "purpose": "password_reset"},
+        expires_delta=timedelta(minutes=PASSWORD_RESET_EXPIRE_MINUTES),
+    )
+    return {
+        "reset_token": reset_token,
+        "expires_minutes": PASSWORD_RESET_EXPIRE_MINUTES,
+    }
+
+
+@router.post("/password-reset/confirm", response_model=Token)
+def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)):
+    if len(payload.new_password or "") < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    try:
+        token_data = jwt.decode(payload.token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = token_data.get("sub")
+        purpose = token_data.get("purpose")
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    if purpose != "password_reset" or not email:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.hashed_password = hash_password(payload.new_password)
+    normalize_user_role(user, db)
     access_token = create_access_token(
         data={"sub": user.email},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),

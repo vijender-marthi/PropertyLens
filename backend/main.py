@@ -41,8 +41,9 @@ MIGRATIONS = {
 "rental_start_date": "VARCHAR",
 "rental_end_date": "VARCHAR",
 "recorded_date": "VARCHAR",
-"held_period": "VARCHAR",
-"settlement_total_amount": "FLOAT DEFAULT 0.0",
+        "held_period": "VARCHAR",
+        "down_payment": "FLOAT DEFAULT 0.0",
+        "settlement_total_amount": "FLOAT DEFAULT 0.0",
 "closing_costs": "FLOAT DEFAULT 0.0",
 "hoa_flag": "BOOLEAN DEFAULT 0",
 "hoa_history": "TEXT DEFAULT '[]'",
@@ -50,6 +51,7 @@ MIGRATIONS = {
         "solar_ownership": "VARCHAR DEFAULT 'None'",
         "solar_monthly_payment": "FLOAT DEFAULT 0.0",
         "solar_purchase_price": "FLOAT DEFAULT 0.0",
+        "property_tax_history": "TEXT DEFAULT '{}'",
         "vacancy_allowance": "FLOAT DEFAULT 0.0",
         "capex_reserve": "FLOAT DEFAULT 0.0",
         "construction_price": "FLOAT DEFAULT 0.0",
@@ -96,13 +98,38 @@ MIGRATIONS = {
 "interest_paid_ytd": "FLOAT DEFAULT 0.0",
 "principal_paid_ytd": "FLOAT DEFAULT 0.0",
 "projected_principal_fy": "FLOAT DEFAULT 0.0",
-"projected_interest_fy": "FLOAT DEFAULT 0.0",
-"estimated_total_monthly_payment": "FLOAT DEFAULT 0.0",
-"original_ltv": "FLOAT DEFAULT 0.0",
+        "projected_interest_fy": "FLOAT DEFAULT 0.0",
+        "estimated_total_monthly_payment": "FLOAT DEFAULT 0.0",
+        "extra_monthly_payment": "FLOAT DEFAULT 0.0",
+        "original_ltv": "FLOAT DEFAULT 0.0",
 "escrow_included": "BOOLEAN DEFAULT 0",
 },
 }
+
+TABLE_MIGRATIONS = [
+    """
+    CREATE TABLE IF NOT EXISTS usage_periods (
+        id INTEGER PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        usage_type VARCHAR NOT NULL,
+        start_date VARCHAR NOT NULL,
+        end_date VARCHAR,
+        fmv_at_start FLOAT DEFAULT 0.0,
+        monthly_rent FLOAT DEFAULT 0.0,
+        vacancy_allowance FLOAT DEFAULT 0.0,
+        property_management_fee FLOAT DEFAULT 0.0,
+        accumulated_depreciation_at_start FLOAT DEFAULT 0.0,
+        suspended_losses_at_start FLOAT DEFAULT 0.0,
+        notes TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        FOREIGN KEY(property_id) REFERENCES properties (id)
+    )
+    """,
+]
 with engine.connect() as conn:
+    for ddl in TABLE_MIGRATIONS:
+        conn.execute(text(ddl))
     for table, columns in MIGRATIONS.items():
         existing = [row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))]
         for col, ddl in columns.items():

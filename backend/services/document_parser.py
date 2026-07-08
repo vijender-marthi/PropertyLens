@@ -1580,10 +1580,6 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
         v = _parse_amount(m.group(1))
         if v:
             data['down_payment'] = v
-    # ALTA: computed from sale price − loan amount
-    elif data.get('purchase_price') and data.get('original_amount'):
-        data['down_payment'] = round(data['purchase_price'] - data['original_amount'], 2)
-
     # ── Deposit / earnest money (ALTA) ────────────────────────────────────────
     m = re.search(r'^deposit\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE | re.MULTILINE)
     if m:

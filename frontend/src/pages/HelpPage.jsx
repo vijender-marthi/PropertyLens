@@ -88,557 +88,249 @@ function SectionHeading({ icon: Icon, label, color = 'blue' }) {
 // Numbers use a consistent example portfolio: 6 properties, ~$5.6M value, ~$3.3M debt
 
 const METRICS = [
-  // ── Portfolio Value & Equity ──────────────────────────────────────────────
   {
-    id: 'num-props', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Number of Properties',
-    tags: [{ label: 'Count', color: 'blue' }],
-    description: 'Total count of all properties added to the portfolio — rentals and primary residences combined.',
-    formula: 'Count of all active properties',
-    search: 'count properties total owned',
-    example: <p>6 properties added → <strong>6</strong></p>,
+    id: 'architecture',
+    section: 'architecture',
+    sectionLabel: 'Architecture & Source of Truth',
+    title: 'Backend Calculation Engine',
+    tags: [{ label: 'Non-negotiable', color: 'red' }],
+    description: 'All derived numbers are computed by backend engines and returned as DTOs. The UI renders value, display, source, tone, formula, inputs, computation, result, missingInputs, and warning.',
+    formula: 'Controller -> Manager/Service -> Engine -> DTO\nUI renders DTO only; no client-side math',
+    search: 'backend engine dto source truth ui computes nothing',
+    example: 'If Summary, Taxes, Loans, and Raw Data show cash flow, they all read the same backend value.',
   },
   {
-    id: 'portfolio-value', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Total Portfolio Value',
-    tags: [{ label: 'Market Value', color: 'blue' }],
-    description: 'Sum of the current estimated market value set on each property. Update each property\'s Market Value field to keep this accurate — Zillow or recent comparable sales are good sources.',
-    formula: 'Portfolio Value = Σ (Market Value per property)',
-    search: 'portfolio value market sum appreciation total',
-    example: <>
-      <p>$1,050k + $1,025k + $875k + $930k + $1,200k + $520k</p>
-      <p>= <strong>$5,600,000</strong></p>
-    </>,
+    id: 'metric-dto',
+    section: 'architecture',
+    sectionLabel: 'Architecture & Source of Truth',
+    title: 'Metric Tooltip DTO',
+    tags: [{ label: 'Tooltip', color: 'blue' }],
+    description: 'Every metric tooltip must show the exact formula and exact plugged-in inputs the engine used. Stubs like "Provided by backend engine" are invalid.',
+    formula: '{ value, display, period, source, tone, formula, inputs, computation, result, missingInputs, warning, hint }',
+    search: 'tooltip formula inputs computation result source missing inputs',
+    example: 'Total Return: $2,222 + $16,163 + $45,000 = $63,385.',
   },
   {
-    id: 'loan-balance', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Outstanding Loan Balance',
-    tags: [{ label: 'Debt', color: 'red' }],
-    description: 'Total remaining principal owed across all active loans, summed from each loan\'s Current Balance field. Populated automatically from uploaded mortgage statements.',
-    formula: 'Total Loan Balance = Σ (Current Balance per loan)',
-    search: 'loan balance outstanding debt owed mortgage',
-    example: <>
-      <p>$733k + $442k + $497k + $438k + $830k + $393k</p>
-      <p>= <strong>$3,333,000</strong></p>
-    </>,
+    id: 'resolve-monthly-rent',
+    section: 'rent-cashflow',
+    sectionLabel: 'Rent, NOI & Cash Flow',
+    title: 'Rent Resolution',
+    tags: [{ label: 'Single Source', color: 'green' }],
+    description: 'Monthly rent is resolved once in the backend. Current-year lease periods win; property details rent is fallback. Partial-year collected rent is not divided by 12 for current rent.',
+    formula: 'monthlyRent = latest current-year rental-period amount\nfallback = property.monthly_rent\nannualRent = monthlyRent × 12',
+    search: 'rent monthly rental tab lease ytd annualize current year',
+    example: 'Mission: Lease C = $3,200/mo, so annual run-rate rent = $38,400.',
   },
   {
-    id: 'equity', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Total Equity',
-    tags: [{ label: 'Net Worth', color: 'green' }],
-    description: 'The portion of portfolio value you own outright — market value minus outstanding debt. Grows through appreciation and principal paydown.',
-    formula: 'Total Equity = Portfolio Value − Total Loan Balance',
-    search: 'equity net worth ownership value',
-    example: <p>$5,600,000 − $3,333,000 = <strong>$2,267,000</strong></p>,
-  },
-  {
-    id: 'equity-pct', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Portfolio Equity %',
-    tags: [{ label: 'Ratio', color: 'green' }],
-    description: 'Equity as a share of total portfolio value. Inverse of LTV — Equity % + LTV = 100%.',
-    formula: 'Equity % = (Total Equity ÷ Portfolio Value) × 100',
-    search: 'equity percentage fraction ownership share',
-    example: <p>$2,267,000 ÷ $5,600,000 × 100 = <strong>40.5%</strong></p>,
-  },
-  {
-    id: 'ltv', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Loan-to-Value (LTV)',
-    tags: [{ label: 'Ratio', color: 'amber' }],
-    description: 'What percentage of your portfolio\'s market value is still financed. Lower is safer — below 60% is healthy, 60–80% moderate, above 80% high risk.',
-    formula: 'LTV = (Total Loan Balance ÷ Portfolio Value) × 100',
-    search: 'ltv loan to value ratio leverage percentage debt',
-    example: <>
-      <p>$3,333,000 ÷ $5,600,000 × 100 = <strong>59.5%</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: &lt;60% Healthy · 60–80% Moderate · &gt;80% High risk</p>
-    </>,
-  },
-  {
-    id: 'appreciation', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Appreciation Gain',
-    tags: [{ label: 'Gain/Loss', color: 'purple' }],
-    description: 'Market value growth since purchase across all properties. Independent of principal paydown — measures only how much values have risen.',
-    formula: 'Appreciation Gain = Portfolio Value − Total Purchase Price',
-    search: 'appreciation gain value growth purchase price increase',
-    example: <>
-      <p>$5,600,000 (current) − $5,200,000 (purchased) = <strong>+$400,000</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Purchase price is the sum of original purchase prices entered per property.</p>
-    </>,
-  },
-  {
-    id: 'original-ltv-portfolio', section: 'portfolio', sectionLabel: 'Portfolio Value & Equity',
-    title: 'Original LTV (at Purchase)',
-    tags: [{ label: 'Historical', color: 'blue' }],
-    description: 'Combined loan-to-value at the time of purchase. Compares the original loan amounts to the original purchase prices. Only loans with a recorded original amount are included.',
-    formula: 'Original LTV = Σ(Original Loan Amounts) ÷ Σ(Purchase Prices) × 100',
-    search: 'original ltv purchase leverage pmi historical',
-    example: <>
-      <p>Original loans: $4,200,000 · Purchase prices: $5,200,000</p>
-      <p>$4,200,000 ÷ $5,200,000 × 100 = <strong>80.8%</strong></p>
-    </>,
-  },
-
-  // ── Cash Flow Metrics ─────────────────────────────────────────────────────
-  {
-    id: 'effective-rent', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Effective Monthly Rent',
-    tags: [{ label: 'Income', color: 'green' }],
-    description: 'Gross rent adjusted for the occupancy rate. Primary residences contribute $0. A property with 95% occupancy on $4,500/mo contributes $4,275.',
-    formula: 'Effective Rent = Monthly Rent × (Occupancy Rate ÷ 100)\nPortfolio: Σ(Effective Rent per rental property)',
-    search: 'gross rent effective monthly income collected occupancy',
-    example: <>
-      <p>San Salvador: $4,500 × 100% = $4,500</p>
-      <p>Syrah Dr: $4,833 × 100% = $4,833</p>
-      <p>Mission Ln: $3,075 × 100% = $3,075</p>
-      <p>… all 5 rentals = <strong>$19,000/mo total</strong></p>
-    </>,
-  },
-  {
-    id: 'operating-expenses', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Monthly Operating Expenses',
-    tags: [{ label: 'Expenses', color: 'amber' }],
-    description: 'All property-level expenses excluding mortgage principal & interest. Taxes and insurance are entered annually and divided by 12. All other fields are monthly.',
-    formula: 'Op Expenses = (Property Tax + Insurance) ÷ 12\n            + HOA + Maintenance + Mgmt Fee\n            + Utilities + Vacancy + CapEx + Other',
-    search: 'operating expenses monthly property tax insurance hoa maintenance management',
-    example: <>
-      <p>Property tax: $6,000/yr ÷ 12 = $500</p>
-      <p>Insurance: $2,400/yr ÷ 12 = $200</p>
-      <p>HOA: $0 · Maintenance: $300 · Mgmt: $450</p>
-      <p>Total = <strong>$1,450/mo</strong> for one property</p>
-    </>,
-  },
-  {
-    id: 'noi', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
+    id: 'noi',
+    section: 'rent-cashflow',
+    sectionLabel: 'Rent, NOI & Cash Flow',
     title: 'Net Operating Income (NOI)',
-    tags: [{ label: 'Key Metric', color: 'blue' }, { label: 'Income', color: 'green' }],
-    description: 'Income after operating expenses but before debt service. NOI is independent of financing — it measures a property\'s earning power on its own. Used to calculate cap rate and DSCR.',
-    formula: 'NOI/mo = Effective Rent − Operating Expenses\nNOI/yr  = NOI/mo × 12',
-    search: 'noi net operating income earning power cap rate dscr',
-    example: <>
-      <p>Effective rent: $4,500</p>
-      <p>Operating expenses: −$1,450</p>
-      <p>NOI = <strong>$3,050/mo</strong> · <strong>$36,600/yr</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Mortgage P&amp;I is NOT included — NOI is pre-financing.</p>
-    </>,
+    tags: [{ label: 'Key Metric', color: 'blue' }],
+    description: 'NOI measures property operations before financing and before tax-only non-cash deductions. Mortgage principal, mortgage interest, and depreciation are not operating expenses.',
+    formula: 'EGI = grossRent - vacancy\nNOI = EGI - operatingExpenses',
+    search: 'noi effective gross income operating expenses no mortgage no depreciation',
+    example: '$38,400 rent - $3,708 operating expenses = $34,692 NOI.',
   },
   {
-    id: 'cap-rate', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
+    id: 'annual-cash-flow',
+    section: 'rent-cashflow',
+    sectionLabel: 'Rent, NOI & Cash Flow',
+    title: 'Annual Cash Flow',
+    tags: [{ label: 'Cash', color: 'green' }],
+    description: 'Cash flow is operating income after all loan principal and interest payments. Depreciation is never included in cash flow.',
+    formula: 'annualDebtService = Σ all loans annual P&I\nannualCashFlow = NOI - annualDebtService\nmonthlyCashFlow = annualCashFlow / 12',
+    search: 'cash flow debt service annual monthly depreciation excluded',
+    example: '$34,692 NOI - $32,470 debt service = $2,222/yr = $185/mo.',
+  },
+  {
+    id: 'operating-expenses',
+    section: 'rent-cashflow',
+    sectionLabel: 'Rent, NOI & Cash Flow',
+    title: 'Operating Expenses',
+    tags: [{ label: 'Expense', color: 'amber' }],
+    description: 'Operating expenses include recurring property costs only. Property tax and insurance are annual inputs; management, maintenance, HOA, utilities, vacancy allowance, capex reserve, and other expenses are monthly where entered that way.',
+    formula: 'operatingExpenses = propertyTax + insurance + HOA + maintenance + utilities + management + capexReserve + vacancyAllowance + other',
+    search: 'operating expenses property tax insurance hoa maintenance utilities capex vacancy',
+    example: 'Mortgage principal and depreciation are excluded.',
+  },
+  {
+    id: 'debt-service',
+    section: 'loans',
+    sectionLabel: 'Loans & Amortization',
+    title: 'Debt Service',
+    tags: [{ label: 'All Loans', color: 'purple' }],
+    description: 'Debt service is the sum of every loan’s principal and interest. Missing a second loan causes cash flow, DSCR, and tooltips to disagree.',
+    formula: 'monthlyDebtService = Σ loan.monthlyP&I\nannualDebtService = monthlyDebtService × 12',
+    search: 'debt service monthly pi all loans mortgage payment',
+    example: 'Loan A P&I + Loan B P&I are both included.',
+  },
+  {
+    id: 'amortization',
+    section: 'loans',
+    sectionLabel: 'Loans & Amortization',
+    title: 'Amortization Schedule',
+    tags: [{ label: 'Invariant', color: 'blue' }],
+    description: 'Schedules start at each loan start date, run month by month, and bucket interest, principal, and ending balance into calendar years.',
+    formula: 'originalAmount - Σ principalPaid = currentBalance\nΣ annualInterest(y) ties to Taxes.mortgageInterest(y)',
+    search: 'amortization principal interest balance invariant start date',
+    example: 'Loan card latest split shows the current/latest month, not payment #1.',
+  },
+  {
+    id: 'payoff-simulator',
+    section: 'loans',
+    sectionLabel: 'Loans & Amortization',
+    title: 'Payoff Simulator',
+    tags: [{ label: 'Scenario', color: 'teal' }],
+    description: 'Simulator stats and charts come from one accelerated amortization run. Base monthly P&I is required; extra payments, lump sums, payoff date, interest saved, and charts all read that run.',
+    formula: 'scenarioPayment = baseMonthlyPI + extraMonthly\ntotalInterest = Σ acceleratedSchedule.interest\ninterestSaved = baselineInterest - totalInterest',
+    search: 'payoff simulator extra payment lump sum interest saved',
+    example: 'It is invalid to show $0 total interest with non-zero interest saved.',
+  },
+  {
+    id: 'depreciation',
+    section: 'depreciation',
+    sectionLabel: 'Depreciation',
+    title: 'Rental Depreciation',
+    tags: [{ label: 'Schedule E', color: 'purple' }],
+    description: 'Residential rental depreciation is straight-line over 27.5 years with mid-month convention. It accrues only in rental-use months and is N/A for primary-use years.',
+    formula: 'depreciableBasis = purchasePrice - landValue + improvements\nannualDepreciation = depreciableBasis / 27.5',
+    search: 'depreciation basis land 27.5 mid month rental months',
+    example: 'Land is excluded. If land value is 0, the app flags overstated basis.',
+  },
+  {
+    id: 'recapture',
+    section: 'depreciation',
+    sectionLabel: 'Depreciation',
+    title: 'Recapture If Sold Today',
+    tags: [{ label: 'Illustrative', color: 'amber' }],
+    description: 'Accumulated depreciation is retained even if the property later becomes primary. The page shows illustrative unrecaptured Section 1250 exposure.',
+    formula: 'recaptureIfSoldToday = accumulatedDepreciation × 25%',
+    search: 'recapture accumulated depreciation sale section 1250',
+    example: '$90,924 accumulated × 25% = $22,731 illustrative recapture.',
+  },
+  {
+    id: 'primary-taxes',
+    section: 'taxes',
+    sectionLabel: 'Taxes',
+    title: 'Primary Residence Deductions',
+    tags: [{ label: 'Primary', color: 'blue' }],
+    description: 'Primary homes use itemized-deduction rules. They never use Schedule E and never depreciate.',
+    formula: 'deductibleInterest = interestPaid × min(1, debtLimit / avgBalance)\nSALT property tax deduction capped at $10,000',
+    search: 'primary residence mortgage interest salt cap standard deduction',
+    example: 'Show itemizable total versus standard deduction verdict.',
+  },
+  {
+    id: 'schedule-e',
+    section: 'taxes',
+    sectionLabel: 'Taxes',
+    title: 'Rental Schedule E',
+    tags: [{ label: 'Rental', color: 'green' }],
+    description: 'Rental tax uses Schedule E. Mortgage interest and property tax are fully deductible rental expenses. Principal is not tax-relevant.',
+    formula: 'netScheduleE = rentalIncome - operatingExpenses - mortgageInterest - depreciation',
+    search: 'schedule e rental taxable income depreciation interest property tax principal excluded',
+    example: '$38,400 - $3,257 - $30,865 - $22,727 = -$18,449 taxable Schedule E result.',
+  },
+  {
+    id: 'passive-loss',
+    section: 'taxes',
+    sectionLabel: 'Taxes',
+    title: 'Passive Loss Allowance',
+    tags: [{ label: 'Form 8582', color: 'amber' }],
+    description: 'Rental losses may be suspended at high MAGI. Only suspended losses carry forward; losses already allowed do not.',
+    formula: 'allowance = clamp(25000 - max(0, MAGI - 100000) × 0.5, 0, 25000)',
+    search: 'passive loss suspended form 8582 magi allowance',
+    example: 'If netScheduleE < 0 and MAGI > $150k, flag possible suspended loss.',
+  },
+  {
+    id: 'cap-rate',
+    section: 'returns',
+    sectionLabel: 'Return Metrics',
     title: 'Cap Rate',
-    tags: [{ label: 'Return', color: 'teal' }, { label: 'Key Metric', color: 'blue' }],
-    description: 'Annual NOI as a percentage of market value. Shows the unlevered return — what the property earns independent of how it is financed. Higher is better; 5–8% is typical for residential rentals.',
-    formula: 'Cap Rate = (Annual NOI ÷ Market Value) × 100',
-    search: 'cap rate capitalization return market value noi yield',
-    example: <>
-      <p>Annual NOI: $36,600 · Market Value: $875,000</p>
-      <p>$36,600 ÷ $875,000 × 100 = <strong>4.2%</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Benchmark: &lt;4% Low · 4–6% Average · &gt;6% Strong</p>
-    </>,
-  },
-  {
-    id: 'gross-yield', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Gross Yield',
     tags: [{ label: 'Return', color: 'teal' }],
-    description: 'Annual effective rent as a percentage of market value. A quick screen before factoring in expenses. Higher than cap rate because it ignores operating costs.',
-    formula: 'Gross Yield = (Annual Effective Rent ÷ Market Value) × 100',
-    search: 'gross yield rental return market value rent',
-    example: <>
-      <p>Annual rent: $4,500 × 12 = $54,000 · Market value: $875,000</p>
-      <p>$54,000 ÷ $875,000 × 100 = <strong>6.2%</strong></p>
-    </>,
+    description: 'Cap rate is unlevered return. It must be positive whenever NOI is positive.',
+    formula: 'capRate = NOI / marketValue',
+    search: 'cap rate noi market value sign sanity',
+    example: '$35,143 ÷ $700,000 = 5.02%.',
   },
   {
-    id: 'mortgage-payment', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Mortgage Payment (Principal & Interest)',
-    tags: [{ label: 'Debt Service', color: 'red' }],
-    description: 'Principal and interest portion only. Escrow is counted under tax/insurance expenses when annual tax and insurance fields are missing or lower, avoiding double-counting.',
-    formula: 'Monthly Principal & Interest = Σ (Statement Payment − Escrow Amount) per loan\n            = Σ monthly_payment − Σ escrow_amount',
-    search: 'mortgage payment principal interest escrow monthly loan debt service',
-    example: <>
-      <p>Loan statement: $3,847/mo PITI · Escrow: $647/mo</p>
-      <p>P&amp;I = $3,847 − $647 = <strong>$3,200/mo</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Escrow covers property tax + insurance already in Operating Expenses above.</p>
-    </>,
+    id: 'dscr',
+    section: 'returns',
+    sectionLabel: 'Return Metrics',
+    title: 'DSCR',
+    tags: [{ label: 'Debt Coverage', color: 'purple' }],
+    description: 'Debt Service Coverage Ratio shows how many times NOI covers annual principal and interest. It uses the same NOI as cap rate and cash flow.',
+    formula: 'DSCR = NOI / annualDebtService',
+    search: 'dscr noi annual debt service',
+    example: '$35,143 ÷ $42,000 = 0.84x.',
   },
   {
-    id: 'cash-flow', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Monthly Cash Flow',
-    tags: [{ label: 'Bottom Line', color: 'blue' }],
-    description: 'Net cash remaining after all expenses and principal & interest payments. Positive means the property funds itself; negative means you top it up from other income.',
-    formula: 'Cash Flow = Effective Rent − Operating Expenses − Mortgage Principal & Interest',
-    search: 'cash flow monthly bottom line profit loss',
-    example: <>
-      <p>Effective rent: $4,500</p>
-      <p>− Operating expenses: $1,450</p>
-      <p>− Mortgage P&amp;I: $3,200</p>
-      <p>= <strong>−$150/mo</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Slight negative cash flow is common on leveraged investment properties — appreciation and equity buildup often offset it.</p>
-    </>,
+    id: 'cash-on-cash',
+    section: 'returns',
+    sectionLabel: 'Return Metrics',
+    title: 'Cash-on-Cash Return',
+    tags: [{ label: 'Needs Inputs', color: 'amber' }],
+    description: 'Cash-on-cash requires cash invested. If down payment or closing costs are missing, show — and prompt for the missing input.',
+    formula: 'cashOnCash = annualCashFlow / cashInvested\ncashInvested = downPayment + closingCosts',
+    search: 'cash on cash down payment closing costs missing input',
+    example: 'Missing down payment -> display —, not 0%.',
   },
   {
-    id: 'cf-margin', section: 'cashflow', sectionLabel: 'Cash Flow Metrics',
-    title: 'Cash Flow Margin',
-    tags: [{ label: 'Efficiency', color: 'purple' }],
-    description: 'Cash flow as a percentage of gross rent. Measures how efficiently collected rent converts to take-home income after all costs.',
-    formula: 'Cash Flow Margin = (Monthly Cash Flow ÷ Effective Monthly Rent) × 100',
-    search: 'cash flow margin efficiency percentage rent ratio',
-    example: <>
-      <p>−$150 ÷ $4,500 × 100 = <strong>−3.3%</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Target: &gt;10% healthy · 0–10% break-even · &lt;0% subsidized</p>
-    </>,
-  },
-
-  // ── Financing & Debt Metrics ──────────────────────────────────────────────
-  {
-    id: 'original-loan', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Original Loan Amount',
-    tags: [{ label: 'Historical', color: 'blue' }],
-    description: 'Total loan principal at time of purchase, summed across all loans that have a recorded original amount. Loans without an original amount entered are excluded.',
-    formula: 'Σ (Original Loan Amount) for loans where original_amount > 0',
-    search: 'original loan amount purchase financing debt start',
-    example: <>
-      <p>$840k + $700k + $400k + $350k + $880k + $416k</p>
-      <p>= <strong>$3,586,000</strong> total at purchase</p>
-    </>,
+    id: 'equity-ltv',
+    section: 'returns',
+    sectionLabel: 'Return Metrics',
+    title: 'Equity and LTV',
+    tags: [{ label: 'Balance Tie-out', color: 'blue' }],
+    description: 'Equity and LTV use the same market value and loan balances shown on the page. No parallel balance calculations.',
+    formula: 'equity = marketValue - Σ loanBalance\nLTV = Σ loanBalance / marketValue',
+    search: 'equity ltv market value balance drift',
+    example: '$700,000 - $438,502 = $261,498 equity.',
   },
   {
-    id: 'original-ltv', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Original LTV',
-    tags: [{ label: 'Historical', color: 'blue' }],
-    description: 'Portfolio LTV at the time of purchase. Compares original loan amounts to original purchase prices to show how leveraged you started.',
-    formula: 'Original LTV = Σ(Original Loans) ÷ Σ(Purchase Prices) × 100',
-    search: 'original ltv loan to value purchase leverage pmi historical',
-    example: <>
-      <p>$3,586,000 ÷ $5,200,000 × 100 = <strong>69.0%</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Below 80% at purchase avoids PMI on conventional loans.</p>
-    </>,
+    id: 'total-return',
+    section: 'returns',
+    sectionLabel: 'Return Metrics',
+    title: 'Total Return',
+    tags: [{ label: 'Additive Assertion', color: 'red' }],
+    description: 'Total Return is additive. The metric value, tooltip computation, and result must all come from the same inputs.',
+    formula: 'totalReturn = cashFlow + principalPaid + appreciation',
+    search: 'total return cash flow principal appreciation additive assertion',
+    example: '$2,222 + $16,163 + $45,000 = $63,385.',
   },
   {
-    id: 'principal-paid', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Principal Paid Till Date',
-    tags: [{ label: 'Equity Buildup', color: 'green' }],
-    description: 'Equity created through loan repayment (not appreciation) — the difference between each loan\'s original amount and current balance. Only loans with a recorded original amount count.',
-    formula: 'Principal Paid = Σ (Original Loan Amount − Current Balance)\n               per loan where original_amount recorded',
-    search: 'principal paid equity buildup paydown loan reduction',
-    example: <>
-      <p>San Salvador: $840,000 − $733,000 = $107,000</p>
-      <p>Palermo: $880,000 − $830,000 = $50,000</p>
-      <p>… all 6 loans → Total = <strong>$253,000 paid down</strong></p>
-    </>,
+    id: 'usage-periods',
+    section: 'data',
+    sectionLabel: 'Data, Provenance & Assertions',
+    title: 'Usage Period Timeline',
+    tags: [{ label: 'Type-aware', color: 'green' }],
+    description: 'Property behavior is driven by usage periods, not a single static type flag. Primary years hide rental economics; rental years show Schedule E and depreciation.',
+    formula: 'yearUse = split usagePeriods by calendar year/day\nprimary -> deductions model\nrental -> Schedule E model',
+    search: 'usage periods primary rental conversion mixed year',
+    example: 'A rental-to-primary conversion stops future depreciation but keeps accumulated depreciation for recapture.',
   },
   {
-    id: 'interest-paid', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Interest Paid Till Date',
-    tags: [{ label: 'Historical', color: 'amber' }],
-    description: 'Total mortgage interest paid across all years where a tax return or 1098 has been uploaded. Sourced from Schedule E (mortgage interest line) and 1098 forms. Upload more returns to improve accuracy.',
-    formula: 'Σ (mortgage_interest field from each TaxReturnEntry / 1098 record)',
-    search: 'interest paid till date historical tax return 1098 schedule e total',
-    example: <>
-      <p>2022 Schedule E (all properties): $123,000</p>
-      <p>2023 Schedule E (all properties): $118,000</p>
-      <p>2024 Schedule E (all properties): $113,000</p>
-      <p>Total (3 years) = <strong>$354,000</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Requires uploaded tax returns or 1098s. Only covers years with documents.</p>
-    </>,
+    id: 'source-tier',
+    section: 'data',
+    sectionLabel: 'Data, Provenance & Assertions',
+    title: 'Source Tier',
+    tags: [{ label: 'Audit', color: 'blue' }],
+    description: 'Every figure carries provenance. Reported document facts override calculated/projected values for the same period.',
+    formula: 'REPORTED > CALCULATED > APPROX > PROJECTED\nRaw Data = MANUAL + CALCULATED + REPORTED',
+    search: 'source tier reported calculated approx projected raw data',
+    example: 'Uploading a statement flips projected months to reported and all tabs update from one rebuild.',
   },
   {
-    id: 'weighted-rate', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Weighted Average Interest Rate',
-    tags: [{ label: 'Key Formula', color: 'purple' }],
-    description: 'A single blended rate representing the cost of all debt, weighted by each loan\'s current balance. Larger loans carry more weight than smaller ones.',
-    formula: 'Weighted Rate = Σ(Current Balance × Interest Rate) ÷ Σ(Current Balances)',
-    search: 'weighted average interest rate debt cost blended formula',
-    example: <>
-      <table className="w-full text-xs mt-1 mb-2">
-        <thead>
-          <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-gray-700">
-            <th className="text-left pb-1">Property</th>
-            <th className="text-right pb-1">Balance</th>
-            <th className="text-right pb-1">Rate</th>
-            <th className="text-right pb-1">Bal × Rate</th>
-          </tr>
-        </thead>
-        <tbody>
-          {[
-            ['San Salvador','$733,000','5.125%','$3,756,625'],
-            ['Syrah Dr',    '$393,000','2.875%','$1,130,063'],
-            ['Mission Ln',  '$442,000','3.625%','$1,602,250'],
-            ['Electra Way', '$497,000','6.500%','$3,230,500'],
-            ['Palermo Way', '$830,000','2.875%','$2,386,250'],
-            ['Osprey Dr',   '$438,000','7.625%','$3,339,750'],
-          ].map(([n,b,r,p]) => (
-            <tr key={n} className="border-b border-gray-50 dark:border-gray-800">
-              <td className="py-0.5 text-gray-600 dark:text-gray-300 pr-2">{n}</td>
-              <td className="text-right">{b}</td>
-              <td className="text-right">{r}</td>
-              <td className="text-right font-medium">{p}</td>
-            </tr>
-          ))}
-          <tr className="font-semibold pt-1">
-            <td>Total</td>
-            <td className="text-right">$3,333,000</td>
-            <td/>
-            <td className="text-right">$15,445,438</td>
-          </tr>
-        </tbody>
-      </table>
-      <p className="font-semibold">$15,445,438 ÷ $3,333,000 = <strong>4.63%</strong> weighted avg rate</p>
-    </>,
-  },
-  {
-    id: 'annual-debt-service', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Annual Debt Service',
-    tags: [{ label: 'Debt Service', color: 'red' }],
-    description: 'Total annual principal & interest payments across all loans. Escrow is excluded — taxes and insurance are counted under Operating Expenses. Used as the denominator in DSCR.',
-    formula: 'Annual Debt Service = Σ(Monthly Payment − Escrow Amount) per loan × 12\n                     = Total Monthly Principal & Interest × 12',
-    search: 'annual debt service mortgage yearly obligation piti escrow',
-    example: <>
-      <p>Total monthly P&amp;I across all loans: $18,300/mo</p>
-      <p>$18,300 × 12 = <strong>$219,600/yr</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Escrow (taxes/insurance via lender) is NOT included here — those costs appear in Operating Expenses.</p>
-    </>,
-  },
-  {
-    id: 'dscr', section: 'financing', sectionLabel: 'Financing & Debt Metrics',
-    title: 'Portfolio DSCR',
-    tags: [{ label: 'Key Metric', color: 'blue' }, { label: 'Lender Threshold', color: 'purple' }],
-    description: 'Debt Service Coverage Ratio — how many times annual NOI covers annual debt service. The primary underwriting metric lenders use. Below 1.0 means rent income doesn\'t cover mortgage payments.',
-    formula: 'DSCR = Annual NOI ÷ Annual Debt Service',
-    search: 'dscr debt service coverage ratio noi lender underwriting',
-    example: <>
-      <p>Annual NOI (all rentals): $228,000/yr</p>
-      <p>Annual Debt Service (P&amp;I only): $219,600/yr</p>
-      <p>DSCR = $228,000 ÷ $219,600 = <strong>1.04</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: ≥1.25 Strong · 1.0–1.25 Marginal · &lt;1.0 Income below debt</p>
-    </>,
-  },
-
-  // ── Risk Metrics ──────────────────────────────────────────────────────────
-  {
-    id: 'concentration', section: 'risk', sectionLabel: 'Risk Metrics',
-    title: 'Concentration Risk',
-    tags: [{ label: 'Diversification', color: 'amber' }],
-    description: 'Share of total portfolio equity held by the single largest property. High concentration means one bad event has an outsized impact on total net worth.',
-    formula: 'Concentration Risk = (Largest Single Property Equity ÷ Total Portfolio Equity) × 100',
-    search: 'concentration risk diversification single property equity',
-    example: <>
-      <p>Palermo Way equity: $630,000 (largest)</p>
-      <p>Total portfolio equity: $2,267,000</p>
-      <p>$630,000 ÷ $2,267,000 × 100 = <strong>27.8%</strong> — Diversified</p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: &lt;35% Diversified · 35–50% Moderate · &gt;50% Concentrated</p>
-    </>,
-  },
-  {
-    id: 'arm-exposure', section: 'risk', sectionLabel: 'Risk Metrics',
-    title: 'ARM Exposure',
-    tags: [{ label: 'Rate Risk', color: 'red' }],
-    description: 'Percentage of total loan balance on adjustable-rate mortgages. ARM loans reset after the initial fixed period and can increase significantly when market rates rise.',
-    formula: 'ARM Exposure = (Σ ARM Loan Balances ÷ Total Loan Balance) × 100',
-    search: 'arm adjustable rate mortgage exposure risk variable',
-    example: <>
-      <p>All loans are fixed-rate → ARM balance = $0</p>
-      <p>$0 ÷ $3,333,000 × 100 = <strong>0%</strong> — No rate risk</p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: 0% None · &lt;25% Low · 25–50% Moderate · &gt;50% High</p>
-    </>,
-  },
-  {
-    id: 'high-rate', section: 'risk', sectionLabel: 'Risk Metrics',
-    title: 'High Interest Debt',
-    tags: [{ label: 'Rate Risk', color: 'red' }],
-    description: 'Share of loan balance carrying a rate above 6%. These loans are the strongest refinance candidates when market rates decline.',
-    formula: 'High-Rate Exposure = (Σ Balances where Rate > 6% ÷ Total Loan Balance) × 100',
-    search: 'high interest debt rate above 6% refinance expensive',
-    example: <>
-      <p>Electra Way: $497,000 @ 6.5% + Osprey Dr: $438,000 @ 7.625%</p>
-      <p>High-rate balance: $935,000</p>
-      <p>$935,000 ÷ $3,333,000 × 100 = <strong>28.1%</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: 0% Clean · &lt;10% Manageable · &gt;30% Refinance candidate</p>
-    </>,
-  },
-  {
-    id: 'vacancy-rate', section: 'risk', sectionLabel: 'Risk Metrics',
-    title: 'Economic Vacancy Rate',
-    tags: [{ label: 'Occupancy', color: 'amber' }],
-    description: 'The income gap between full occupancy and actual collection. Covers physical vacancy (empty unit) and any rent discounts.',
-    formula: 'Vacancy Rate = (1 − Occupancy Rate ÷ 100) × 100\n             = (Scheduled Rent − Effective Rent) ÷ Scheduled Rent × 100',
-    search: 'economic vacancy rate occupancy actual scheduled rent empty',
-    example: <>
-      <p>Property at 95% occupancy → vacancy rate = <strong>5%</strong></p>
-      <p>Scheduled: $4,500/mo · Effective: $4,275/mo</p>
-      <p>($4,500 − $4,275) ÷ $4,500 × 100 = <strong>5%</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: &lt;7% Healthy · 7–10% Watch · &gt;10% High</p>
-    </>,
-  },
-  {
-    id: 'debt-weighted-rate', section: 'risk', sectionLabel: 'Risk Metrics',
-    title: 'Debt-Weighted Interest Rate',
-    tags: [{ label: 'Key Formula', color: 'purple' }],
-    description: 'Same calculation as Weighted Average Rate in the Financing tab — shown here because a rising portfolio rate is a risk signal. Large loans skew the average more than small ones.',
-    formula: 'Weighted Rate = Σ(Current Balance × Interest Rate) ÷ Σ(Current Balances)',
-    search: 'debt weighted interest rate blended average cost risk',
-    example: <>
-      <p>Σ(Balance × Rate) = $15,445,438</p>
-      <p>Σ(Balance) = $3,333,000</p>
-      <p>= <strong>4.63%</strong> (see Financing tab for full breakdown)</p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Zones: ≤5% Low · 5–6.5% Moderate · &gt;6.5% High — refinance candidates</p>
-    </>,
-  },
-  {
-    id: 'portfolio-occupancy', section: 'risk', sectionLabel: 'Risk Metrics',
-    title: 'Portfolio Occupancy',
-    tags: [{ label: 'Occupancy', color: 'teal' }],
-    description: 'Effective rent collected as a share of what all properties would earn at 100% occupancy. Inverse of vacancy rate.',
-    formula: 'Portfolio Occupancy = (Total Effective Rent ÷ Total Scheduled Rent) × 100\nTotal Scheduled Rent = Σ (Monthly Rent for all rentals)',
-    search: 'portfolio occupancy effective rent scheduled full total',
-    example: <>
-      <p>Scheduled (all 5 rentals at 100%): $20,000/mo</p>
-      <p>Effective (after occupancy rates): $19,000/mo</p>
-      <p>$19,000 ÷ $20,000 × 100 = <strong>95%</strong></p>
-    </>,
-  },
-
-  // ── Property Analytics ────────────────────────────────────────────────────
-  {
-    id: 'depreciation', section: 'analytics', sectionLabel: 'Property Analytics',
-    title: 'Annual Depreciation',
-    tags: [{ label: 'Tax Deduction', color: 'purple' }],
-    description: 'IRS allows residential rental property to be depreciated over 27.5 years. Only the structure depreciates — not the land. The first year uses the mid-month convention: you get credit for only the fraction of months remaining after placed in service.',
-    formula: 'Full Year:   (Purchase Price − Land Value) ÷ 27.5\nFirst Year:  Full Year × (12 − Month Placed + 0.5) ÷ 12',
-    search: 'depreciation irs 27.5 years tax deduction residential rental mid-month',
-    extra: <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Source priority: Tax Return (Schedule E line 18) → IRS mid-month calculation → full-year estimate. Upload tax returns to get the exact filed figure.</p>,
-    example: <>
-      <p>Purchase price: $875,000 · Land value: $175,000</p>
-      <p>Depreciable basis: $875,000 − $175,000 = $700,000</p>
-      <p>Full year: $700,000 ÷ 27.5 = <strong>$25,455/yr</strong></p>
-      <p>First year (placed in service Sep): × (12 − 9 + 0.5) ÷ 12 = × 0.292</p>
-      <p>First-year deduction: <strong>$7,433</strong></p>
-    </>,
-  },
-  {
-    id: 'taxable-income', section: 'analytics', sectionLabel: 'Property Analytics',
-    title: 'Taxable Income (Schedule E)',
-    tags: [{ label: 'Tax', color: 'purple' }],
-    description: 'Net rental profit or loss per IRS Schedule E. Rental losses (common with depreciation) can offset other income subject to passive activity rules and income limits.',
-    formula: 'Taxable Income = Rental Income − Operating Expenses − Mortgage Interest − Depreciation',
-    search: 'taxable income schedule e rental loss profit irs passive activity',
-    example: <>
-      <p>Rent: $54,000</p>
-      <p>− Operating expenses: $18,500</p>
-      <p>− Mortgage interest: $39,153</p>
-      <p>− Depreciation: $25,452</p>
-      <p>= <strong>−$29,105 (rental loss)</strong></p>
-    </>,
-  },
-  {
-    id: 'total-return', section: 'analytics', sectionLabel: 'Property Analytics',
-    title: 'Total Annual Return',
-    tags: [{ label: 'Combined Return', color: 'green' }],
-    description: 'Cash return plus equity built through principal paydown in a given year. Does not include appreciation (unrealized) or tax benefits from depreciation.',
-    formula: 'Total Return = Annual Cash Flow + Annual Principal Paid',
-    search: 'total return annual cash flow principal equity buildup combined',
-    example: <>
-      <p>Annual cash flow: −$1,800</p>
-      <p>Principal paid (from 1098 balance delta): +$8,400</p>
-      <p>Total return: <strong>$6,600/yr</strong></p>
-      <p className="text-xs text-gray-400 dark:text-gray-500">Even with negative cash flow, principal paydown creates real equity.</p>
-    </>,
-  },
-  {
-    id: 'cumulative-net-income', section: 'analytics', sectionLabel: 'Property Analytics',
-    title: 'Cumulative Net Income',
-    tags: [{ label: 'Historical', color: 'teal' }],
-    description: 'Running total of taxable income across all years owned. Negative cumulative income reflects the tax losses that have accumulated — useful for understanding your tax position over time.',
-    formula: 'Cumulative Net Income (year N) = Σ Taxable Income from purchase year to year N',
-    search: 'cumulative net income running total taxable loss historical years',
-    example: <>
-      <p>2022: −$6,202 · 2023: −$28,846 · 2024: −$15,758</p>
-      <p>Cumulative through 2024: <strong>−$50,806</strong></p>
-    </>,
-  },
-
-  // ── Operating Expenses ────────────────────────────────────────────────────
-  {
-    id: 'prop-tax', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Property Taxes',
-    tags: [{ label: 'Annual $', color: 'amber' }],
-    description: 'Annual county property tax bill. Entered as a yearly amount, divided by 12 for monthly calculations. If your lender escrows taxes, the escrow covers this — so property_tax and insurance together should match the escrow amount to avoid double-counting.',
-    formula: 'Monthly contribution = Annual Property Tax ÷ 12',
-    search: 'property tax annual county assessor escrow',
-    example: <p>$6,000/yr ÷ 12 = <strong>$500/mo</strong> in operating expenses</p>,
-  },
-  {
-    id: 'insurance', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Insurance',
-    tags: [{ label: 'Annual $', color: 'amber' }],
-    description: 'Annual homeowner / landlord insurance premium. Entered yearly, divided by 12. If escrowed, included in the escrow amount on your mortgage statement.',
-    formula: 'Monthly contribution = Annual Insurance ÷ 12',
-    search: 'insurance homeowner landlord premium annual',
-    example: <p>$2,400/yr ÷ 12 = <strong>$200/mo</strong></p>,
-  },
-  {
-    id: 'hoa', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'HOA Fee',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Monthly homeowners association dues. Enter 0 if the property has no HOA.',
-    formula: 'Direct monthly expense',
-    search: 'hoa homeowners association fee monthly dues',
-    example: <p>HOA: <strong>$350/mo</strong></p>,
-  },
-  {
-    id: 'maintenance', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Repairs & Maintenance',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Routine ongoing maintenance — landscaping, appliance repairs, pest control, turnover cleaning. Rule of thumb: 1% of property value per year.',
-    formula: 'Rough guide: (Property Value × 1%) ÷ 12',
-    search: 'repairs maintenance routine landscaping appliance cleaning',
-    example: <p>$875,000 × 1% ÷ 12 = <strong>$729/mo</strong></p>,
-  },
-  {
-    id: 'mgmt-fee', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Property Management Fee',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Fee paid to a property manager, typically 8–12% of monthly rent collected. Enter 0 if self-managing.',
-    formula: 'Rough guide: Monthly Rent × 8–12%',
-    search: 'property management fee company 8% 10% 12% manager',
-    example: <p>$4,500 rent × 10% = <strong>$450/mo</strong></p>,
-  },
-  {
-    id: 'utilities', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Utilities',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Water, gas, electric, trash — any utility the landlord pays instead of the tenant. Common in multi-family with master meters.',
-    formula: 'Direct monthly expense',
-    search: 'utilities water electric gas trash landlord pays',
-    example: <p>Water + trash: <strong>$150/mo</strong></p>,
-  },
-  {
-    id: 'vacancy-allowance', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Vacancy Allowance',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Cash reserve for turnover costs: cleaning, advertising, leasing commissions. Complements the Occupancy Rate (which reduces effective rent) — this reserves actual cash for the turnover period.',
-    formula: 'Rough guide: Monthly Rent × 5–8%',
-    search: 'vacancy allowance reserve turnover empty unit advertising leasing',
-    example: <p>$4,500 × 5% = <strong>$225/mo</strong> reserve</p>,
-  },
-  {
-    id: 'capex', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'CapEx Reserve',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Monthly savings for large infrequent replacements: roof, HVAC, water heater, flooring, appliances. Typically 5–10% of gross rent.',
-    formula: 'Rough guide: Monthly Rent × 5–10%',
-    search: 'capex capital expenditure reserve roof hvac appliance replacement',
-    example: <p>$4,500 × 8% = <strong>$360/mo</strong> CapEx reserve</p>,
-  },
-  {
-    id: 'other-expenses', section: 'expenses', sectionLabel: 'Operating Expenses',
-    title: 'Other Expenses',
-    tags: [{ label: 'Monthly $', color: 'amber' }],
-    description: 'Catch-all for any recurring cost not listed above: accounting, legal, advertising, licensing fees, etc.',
-    formula: 'Direct monthly expense',
-    search: 'other expenses miscellaneous accounting legal advertising licensing',
-    example: <p>Accounting + misc: <strong>$100/mo</strong></p>,
+    id: 'assertions',
+    section: 'data',
+    sectionLabel: 'Data, Provenance & Assertions',
+    title: 'Universal Assertions',
+    tags: [{ label: 'Safety Net', color: 'red' }],
+    description: 'DTOs run consistency checks before returning. A failing assertion means there are two source paths and the source must be fixed.',
+    formula: 'monthlyCashFlow × 12 = annualCashFlow\nincome - opex - debtService = cashFlow\nvalue = sum(inputs) for additive metrics\ncapRate > 0 and DSCR > 0 when NOI > 0',
+    search: 'assertions golden file invariant cashflow tooltip mismatch',
+    example: 'The +$63,385 shown as -$815 bug is caught by value == sum(inputs).',
   },
 ]
-
-// ── Guide section (static, not in METRICS) ───────────────────────────────────
 
 const GUIDE_STEPS = [
   {
@@ -808,63 +500,27 @@ function GuideSection() {
 // ── main page ──────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
-  { id: 'guide',     label: 'Getting Started',           icon: Map },
-  { id: 'portfolio', label: 'Portfolio Value & Equity',   icon: TrendingUp },
-  { id: 'cashflow',  label: 'Cash Flow Metrics',          icon: DollarSign },
-  { id: 'financing', label: 'Financing & Debt Metrics',   icon: Landmark },
-  { id: 'risk',      label: 'Risk Metrics',               icon: Shield },
-  { id: 'analytics', label: 'Property Analytics',         icon: BarChart3 },
-  { id: 'expenses',  label: 'Operating Expenses',         icon: Calculator },
+ { id: 'guide', label: 'Getting Started', icon: Map },
+ { id: 'architecture', label: 'Architecture & Source', icon: BookOpen },
+ { id: 'rent-cashflow', label: 'Rent, NOI & Cash Flow', icon: DollarSign },
+ { id: 'loans', label: 'Loans & Amortization', icon: Landmark },
+ { id: 'depreciation', label: 'Depreciation', icon: BarChart3 },
+ { id: 'taxes', label: 'Taxes', icon: FileText },
+ { id: 'returns', label: 'Return Metrics', icon: TrendingUp },
+ { id: 'data', label: 'Data & Assertions', icon: Shield },
 ]
 
-const SECTION_ICON = { portfolio: TrendingUp, cashflow: DollarSign, financing: Landmark, risk: Shield, analytics: BarChart3, expenses: Calculator }
-const SECTION_COLOR_MAP = { portfolio: 'blue', cashflow: 'green', financing: 'purple', risk: 'red', analytics: 'teal', expenses: 'amber' }
+const SECTION_ICON = { architecture: BookOpen, 'rent-cashflow': DollarSign, loans: Landmark, depreciation: BarChart3, taxes: FileText, returns: TrendingUp, data: Shield }
+const SECTION_COLOR_MAP = { architecture: 'blue', 'rent-cashflow': 'green', loans: 'purple', depreciation: 'teal', taxes: 'amber', returns: 'blue', data: 'red' }
 
 // ── field mapping data (sources and input variables per metric) ───────────────
-const FIELD_SOURCES = {
-  'num-props':              { variables: 'Count of properties',                           source: 'System — auto-counted from all created properties' },
-  'portfolio-value':        { variables: 'market_value per property',                     source: 'Manual entry: Property Details → Market Value field; or Zillow refresh' },
-  'loan-balance':           { variables: 'current_balance per loan',                      source: 'Manual entry: Loan Details → Current Balance; or uploaded mortgage statement (PDF)' },
-  'equity':                 { variables: 'market_value, current_balance',                 source: 'Derived: Portfolio Value − Total Loan Balance' },
-  'equity-pct':             { variables: 'total_equity, total_market_value',              source: 'Derived: Total Equity ÷ Portfolio Value' },
-  'ltv':                    { variables: 'total_loan_balance, total_market_value',        source: 'Derived: Total Loan Balance ÷ Portfolio Value' },
-  'appreciation':           { variables: 'market_value, purchase_price',                  source: 'Manual entry: Property Details → Market Value & Purchase Price' },
-  'original-ltv-portfolio': { variables: 'original_loan_amount, purchase_price',          source: 'Manual entry: Loan Details → Original Loan Amount; Property Details → Purchase Price' },
-  'effective-rent':         { variables: 'monthly_rent, occupancy_rate',                  source: 'Manual entry: Property Details → Monthly Rent + Rental Periods (occupancy)' },
-  'operating-expenses':     { variables: 'property_tax, insurance, hoa, maintenance, mgmt_fee, utilities, vacancy_allowance, capex, other_expenses', source: 'Manual entry: Property page → Expenses section (all fields)' },
-  'noi':                    { variables: 'effective_rent, operating_expenses',             source: 'Derived: Effective Rent − Operating Expenses' },
-  'cap-rate':               { variables: 'annual_noi, market_value',                      source: 'Derived: (NOI × 12) ÷ Market Value' },
-  'gross-yield':            { variables: 'monthly_rent, market_value',                    source: 'Derived: (Monthly Rent × 12) ÷ Market Value' },
-  'mortgage-payment':       { variables: 'monthly_payment, escrow_amount',                source: 'Manual entry: Loan Details → Monthly Principal & Interest; or uploaded mortgage statement (PDF)' },
-  'cash-flow':              { variables: 'effective_rent, operating_expenses, monthly_payment', source: 'Derived: Effective Rent − Op Expenses − Mortgage Principal & Interest' },
-  'cf-margin':              { variables: 'monthly_cash_flow, effective_rent',              source: 'Derived: Cash Flow ÷ Effective Rent' },
-  'original-loan':          { variables: 'original_loan_amount',                          source: 'Manual entry: Loan Details → Original Loan Amount; or uploaded mortgage statement' },
-  'original-ltv':           { variables: 'original_loan_amount, purchase_price',          source: 'Manual entry: Loan Details → Original Loan Amount; Property Details → Purchase Price' },
-  'principal-paid':         { variables: 'original_loan_amount, current_balance',         source: 'Manual entry: Loan Details → Original Loan Amount & Current Balance' },
-  'interest-paid':          { variables: 'mortgage_interest (per year)',                  source: 'Uploaded tax returns (Schedule E) or 1098 forms — one entry per year' },
-  'weighted-rate':          { variables: 'current_balance, interest_rate per loan',       source: 'Manual entry: Loan Details → Current Balance & Interest Rate; or uploaded statement' },
-  'annual-debt-service':    { variables: 'monthly_payment, escrow_amount per loan',       source: 'Manual entry: Loan Details → Monthly Principal & Interest; or uploaded mortgage statement (PDF)' },
-  'dscr':                   { variables: 'annual_noi, annual_debt_service',               source: 'Derived: Annual NOI ÷ Annual Debt Service' },
-  'concentration':          { variables: 'largest_property_equity, total_equity',         source: 'Derived from market_value & current_balance per property' },
-  'arm-exposure':           { variables: 'loan_type, current_balance',                    source: 'Manual entry: Loan Details → Loan Type (Fixed / ARM)' },
-  'high-rate':              { variables: 'interest_rate, current_balance',                source: 'Manual entry: Loan Details → Interest Rate & Current Balance' },
-  'vacancy-rate':           { variables: 'occupancy_rate, monthly_rent',                  source: 'Manual entry: Rental Periods → Occupancy % (per property)' },
-  'debt-weighted-rate':     { variables: 'current_balance, interest_rate per loan',       source: 'Manual entry: Loan Details → Current Balance & Interest Rate' },
-  'portfolio-occupancy':    { variables: 'effective_rent, scheduled_rent',                source: 'Derived from monthly_rent × occupancy_rate vs monthly_rent at 100%' },
-  'depreciation':           { variables: 'purchase_price, land_value, placed_in_service_date', source: 'Tax return (Schedule E line 18); fallback: IRS 27.5-yr mid-month formula' },
-  'taxable-income':         { variables: 'rental_income, operating_expenses, mortgage_interest, depreciation', source: 'Uploaded tax returns (Schedule E) — all four lines' },
-  'total-return':           { variables: 'annual_cash_flow, annual_principal_paid',       source: 'Derived: Annual Cash Flow + Principal Paydown in period' },
-  'cumulative-net-income':  { variables: 'net_income per year',                           source: 'Uploaded tax returns (Schedule E net income line) — running sum across years' },
-  'prop-tax':               { variables: 'property_tax (annual)',                          source: 'Manual entry: Property Expenses → Property Taxes (annual $)' },
-  'insurance':              { variables: 'insurance (annual)',                             source: 'Manual entry: Property Expenses → Insurance (annual $)' },
-  'hoa':                    { variables: 'hoa (monthly)',                                  source: 'Manual entry: Property Expenses → HOA Fee (monthly $)' },
-  'maintenance':            { variables: 'maintenance (monthly)',                          source: 'Manual entry: Property Expenses → Repairs & Maintenance (monthly $)' },
-  'mgmt-fee':               { variables: 'mgmt_fee (monthly)',                             source: 'Manual entry: Property Expenses → Property Management Fee (monthly $)' },
-  'utilities':              { variables: 'utilities (monthly)',                            source: 'Manual entry: Property Expenses → Utilities (monthly $)' },
-  'vacancy-allowance':      { variables: 'vacancy_allowance (monthly)',                   source: 'Manual entry: Property Expenses → Vacancy Allowance (monthly $)' },
-  'capex':                  { variables: 'capex (monthly)',                                source: 'Manual entry: Property Expenses → CapEx Reserve (monthly $)' },
-  'other-expenses':         { variables: 'other_expenses (monthly)',                       source: 'Manual entry: Property Expenses → Other Expenses (monthly $)' },
-}
+const FIELD_SOURCES = Object.fromEntries(METRICS.map((metric) => [
+ metric.id,
+ {
+  variables: Array.isArray(metric.tags) ? metric.tags.map((tag) => tag.label).join(', ') : '',
+  source: metric.description,
+ },
+]))
 
 function downloadFieldMapping() {
   const rows = METRICS.map(m => {

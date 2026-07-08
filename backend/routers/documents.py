@@ -341,16 +341,9 @@ def _apply_extracted(db, prop, data, category=None) -> dict:
         prop.hoa_fee = round(data["hoa_annual"] / 12, 2)
         applied["property.hoa_fee"] = prop.hoa_fee
 
-    # Down payment from closing statement → write to the matching loan
-    if data.get("down_payment") is not None and prop.loans:
-        # Match the loan by original_amount if possible; else use first loan
-        target_loan = next(
-            (l for l in prop.loans
-             if data.get("original_amount") and abs((l.original_amount or 0) - data["original_amount"]) < 100),
-            prop.loans[0],
-        )
-        target_loan.down_payment = data["down_payment"]
-        applied["loan.down_payment"] = data["down_payment"]
+    if data.get("down_payment") is not None:
+        prop.down_payment = data["down_payment"]
+        applied["property.down_payment"] = data["down_payment"]
 
     return applied
 
