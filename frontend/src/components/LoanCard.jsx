@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { docAPI, propAPI } from '../services/api'
-import DataTable from './DataTable'
-import { formatDate, formatInterestRate, formatMonthYear } from '../utils/formatters'
+import { formatCurrency, formatDate, formatInterestRate, formatMonthYear } from '../utils/formatters'
 import {
+  ArrowRight,
   BarChart2,
   Calculator as CalcIcon,
   AlertTriangle,
@@ -12,9 +12,11 @@ import {
   FileCheck,
   FileText,
   HelpCircle,
+  Home,
   Info,
   Pencil,
   Power,
+  RefreshCw,
   Trash2,
   Upload,
   X,
@@ -68,6 +70,7 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   const [fieldOverrides, setFieldOverrides] = useState({})
   const [duplicateChoice, setDuplicateChoice] = useState('keep')
   const [selectedIssueYear, setSelectedIssueYear] = useState(null)
+  const [openSourceYear, setOpenSourceYear] = useState(null)
   const statusMeta = metrics.status || {}
   const statusLabel = l.status === 'CLOSED' || closed ? 'Closed' : 'Open'
   const projectedMonths = Number(statusMeta.gapMonthsProjected ?? debt?.gap_months_projected ?? 0)
@@ -178,136 +181,106 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   }
 
   return (
-    <div className={closed ? 'card border-gray-200 bg-gray-50 dark:bg-gray-800/50' : 'card'}>
-      <div className="mb-4 flex items-start justify-between gap-3">
+    <div className="rounded-2xl border border-gray-200 bg-white p-6 text-gray-900 shadow-sm dark:border-neutral-700/70 dark:bg-neutral-900 dark:text-neutral-100">
+      <div className="mb-7 flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h4 className="truncate text-lg font-semibold text-gray-900 dark:text-white">
+          <h4 className="truncate text-2xl font-semibold text-gray-950 dark:text-white">
             {loanName}
           </h4>
-          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-            originated {originationDate} · matures {maturity}
+          <p className="mt-1 text-base text-gray-500 dark:text-neutral-400">
+            {term} {rateTypeLabel.toLowerCase()} {rateDisplay} · originated {originationDate} · matures {maturity}
           </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          {projectedMonths > 0 ? (
+            <div className="mt-3">
+              <ProjectedBadge months={projectedMonths} helpText={statusMeta.projectedGapHelp} />
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex shrink-0 items-start gap-3">
+          <div className="flex flex-wrap justify-end gap-2">
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              className={`rounded-full px-4 py-2 text-base font-medium ${
                 rateTypeLabel === 'ARM'
-                  ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
-                  : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                  ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300'
+                  : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
               }`}
             >
-              {rateDisplay} {rateTypeLabel.toLowerCase()}
+              {rateTypeLabel} {rateDisplay}
             </span>
-            {projectedMonths > 0 ? <ProjectedBadge months={projectedMonths} helpText={statusMeta.projectedGapHelp} /> : null}
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+              className={`inline-flex items-center gap-1 rounded-full px-4 py-2 text-base font-medium ${
                 closed
-                  ? 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                  ? 'bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
               }`}
             >
               <CheckCircle2 className="h-3 w-3" />
               {statusLabel}
             </span>
           </div>
-        </div>
-
-        <div className="flex shrink-0 gap-1">
-          <button type="button" onClick={handleOpenUploadModal} className="icon-btn" title="Upload statement or 1098" disabled={uploadingStatement}>
-            <Upload className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={onAmortize} className="icon-btn" title="Amortize">
-            <BarChart2 className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={onEdit} className="icon-btn" title="Edit">
-            <Pencil className="h-4 w-4" />
-          </button>
-          {!closed ? (
-            <button type="button" onClick={handleClose} className="icon-btn" title="Close loan">
-              <Power className="h-4 w-4" />
+          <div className="flex gap-1 pt-1">
+            <button type="button" onClick={handleOpenUploadModal} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white" title="Upload statement or 1098" disabled={uploadingStatement}>
+              <Upload className="h-4 w-4" />
             </button>
-          ) : null}
-          <button type="button" onClick={handleDelete} className="icon-btn text-red-500" title="Delete">
-            <Trash2 className="h-4 w-4" />
-          </button>
+            <button type="button" onClick={onAmortize} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white" title="Amortize">
+              <BarChart2 className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={onEdit} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white" title="Edit">
+              <Pencil className="h-4 w-4" />
+            </button>
+            {!closed ? (
+              <button type="button" onClick={handleClose} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white" title="Close loan">
+                <Power className="h-4 w-4" />
+              </button>
+            ) : null}
+            <button type="button" onClick={handleDelete} className="rounded-md p-1.5 text-red-500 hover:bg-red-50 hover:text-red-600 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300" title="Delete">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
       <ServicerTimeline segments={servicerSegments} />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mt-8 grid grid-cols-2 gap-6 border-t border-gray-200 pt-6 dark:border-neutral-700 md:grid-cols-4">
         <LoanMetric label="Balance" value={l.currentBalanceDisplay || debt?.remaining_balance_display || metrics.balance?.displayValue || '—'} bold />
         <LoanMetric label="Original" value={l.originalAmountDisplay || metrics.originalAmount?.displayValue || '—'} />
         <LoanMetric label="Payment / mo" value={l.payment?.monthlyPIDisplay || metrics.paymentMonthly?.displayValue || '—'} />
         <LoanMetric label="Rate" value={rateDisplay || '—'} />
       </div>
 
-      <div className="mt-4 border-t border-gray-100 pt-4 dark:border-gray-700">
+      <div className="mt-8">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h5 className="text-sm font-semibold text-gray-900 dark:text-white">By year</h5>
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h5 className="text-xl font-semibold text-gray-950 dark:text-white">By year</h5>
+            <span className="text-lg text-gray-500 dark:text-neutral-500">· one continuous timeline across servicers</span>
           </div>
-          <button type="button" onClick={handleOpenUploadModal} className="btn-secondary flex items-center gap-1.5 text-xs" disabled={uploadingStatement}>
-            <Upload className="h-3.5 w-3.5" />
-            {uploadingStatement ? 'Uploading...' : 'Upload 1098 / statement'}
+          <button
+            type="button"
+            onClick={handleOpenUploadModal}
+            className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-5 py-3 text-base font-medium text-gray-800 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-60 dark:border-neutral-600 dark:text-white dark:hover:border-neutral-400 dark:hover:bg-neutral-800"
+            disabled={uploadingStatement}
+          >
+            <Upload className="h-5 w-5" />
+            {uploadingStatement ? 'Uploading...' : 'Upload 1098'}
           </button>
         </div>
-        <DataTable
+        <LoanYearTable
           rows={paydownRows}
-          columns={[
-            {
-              id: 'year',
-              header: 'Year',
-              align: 'center',
-              accessor: 'year',
-              cellClassName: 'font-medium text-gray-900 dark:text-white',
-              render: (row) => row.yearLabel || (row.isCurrentYear ? `${row.year} · now` : row.year),
-            },
-            { id: 'servicer', header: 'Servicer', accessor: 'servicerDisplay' },
-            { id: 'start', header: 'Starting balance', align: 'right', accessor: 'startingBalanceDisplay' },
-            { id: 'principal_paid', header: 'Principal paid', align: 'right', accessor: 'principalPaidDisplay' },
-            { id: 'interest_paid', header: 'Interest paid', align: 'right', accessor: 'interestPaidDisplay' },
-            {
-              id: 'end',
-              header: 'Ending balance',
-              align: 'right',
-              accessor: 'endingBalanceDisplay',
-              render: (row) => (
-                <div className="inline-flex items-center justify-end gap-1.5">
-                  <span>{row.endingBalanceDisplay || '—'}</span>
-                  <CalculatedEndingBalanceIcon metric={row.endingBalanceMetric} />
-                </div>
-              ),
-            },
-            {
-              id: 'source',
-              header: 'Source',
-              sortable: false,
-              render: (row) => <DebtSourceBadge source={row.source} labelOverride={sourceBadgeLabel(row)} />,
-            },
-            {
-              id: 'notes',
-              header: 'Notes',
-              sortable: false,
-              render: (row) => (
-                <IssueBadge
-                  row={row}
-                  reconciliationYear={reconciliationYears.find((item) => item.year === row.year)}
-                  isOpen={selectedIssueYear === row.year}
-                  onClick={() => openIssueModal(row.year)}
-                />
-              ),
-            },
-          ]}
-          getRowKey={(row) => row.rowKey || row.year}
-          defaultSort={{ id: 'year', direction: 'asc' }}
-          emptyMessage="No loan years available."
-          tableWrapperClassName="overflow-x-auto"
-          getRowProps={(row) => {
-            if (selectedIssueYear === row.year) return { className: 'bg-amber-50 ring-1 ring-inset ring-amber-200 transition-colors dark:bg-amber-950/20 dark:ring-amber-900' }
-            if (highlightedYears.includes(row.year)) return { className: 'bg-blue-50 ring-1 ring-inset ring-blue-200 transition-colors dark:bg-blue-950/20 dark:ring-blue-900' }
-            return row.sourceTier === 'PROJECTED' ? { className: 'bg-amber-50/60 hover:bg-amber-50/80 dark:bg-amber-950/10 dark:hover:bg-amber-950/20' } : {}
-          }}
+          reconciliationYears={reconciliationYears}
+          highlightedYears={highlightedYears}
+          selectedIssueYear={selectedIssueYear}
+          openIssueModal={openIssueModal}
+          openSourceYear={openSourceYear}
+          setOpenSourceYear={setOpenSourceYear}
+          uploadingStatement={uploadingStatement}
+          onReplace={handleOpenUploadModal}
+          onRemove={handleRemoveDocument}
         />
+        <p className="mt-4 text-base text-gray-500 dark:text-neutral-500">
+          One loan, one balance chain. The servicer column shows who held it that year - no duplicate tables, no "closed loan."
+        </p>
       </div>
       {selectedIssueRow ? (
         <LoanIssueModal
@@ -359,8 +332,8 @@ function DebtSourceBadge({ source, labelOverride }) {
   const cfg = SOURCE_BADGE[source] || SOURCE_BADGE.no_data
   const Icon = cfg.icon
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${cfg.className}`}>
-      {labelOverride || cfg.label}
+    <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+      <span>{labelOverride || cfg.label}</span>
       <Icon className="h-3 w-3" />
     </span>
   )
@@ -368,38 +341,290 @@ function DebtSourceBadge({ source, labelOverride }) {
 
 function ServicerTimeline({ segments = [] }) {
   if (!segments.length) return null
+  const transitionSegment = segments.find((segment, index) => index > 0 && (segment.transitionType || segment.transferDate || segment.from))
+  const transitionDate = transitionSegment?.fromDisplay
+    || formatDate(transitionSegment?.from)
+    || transitionSegment?.transferDateDisplay
+  const transitionType = String(transitionSegment?.transitionType || '').toLowerCase()
+  const isRefinance = transitionType === 'refinance'
+  const transitionLabel = transitionSegment?.transitionLabel || (isRefinance ? 'refinance' : 'servicer change')
+  const transitionClassName = isRefinance
+    ? 'bg-amber-100 text-amber-700 shadow-lg shadow-gray-200/70 dark:bg-amber-950 dark:text-amber-300 dark:shadow-neutral-950/20'
+    : 'bg-blue-100 text-blue-700 shadow-lg shadow-gray-200/70 dark:bg-blue-950 dark:text-blue-300 dark:shadow-neutral-950/20'
+
   return (
-    <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 dark:border-gray-700 dark:bg-gray-800/60">
-      <div className="flex h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700" aria-label="Servicer timeline">
-        {segments.map((segment, index) => (
-          <div
-            key={`${segment.loanId || segment.servicer}-${segment.from || index}`}
-            className={index % 2 === 0 ? 'bg-blue-500' : 'bg-emerald-500'}
-            style={{ width: `${segment.widthPercent || 0}%` }}
-            title={`${segment.servicer || 'Servicer'} · ${segment.dateRangeDisplay || ''}`}
-          />
-        ))}
-      </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        {segments.map((segment, index) => (
-          <div key={`${segment.loanId || segment.servicer}-label-${index}`} className="min-w-0 text-xs">
-            <div className="flex items-center gap-2">
-              <span className={index % 2 === 0 ? 'h-2 w-2 rounded-full bg-blue-500' : 'h-2 w-2 rounded-full bg-emerald-500'} aria-hidden="true" />
-              <span className="truncate font-semibold text-gray-900 dark:text-white">
-                {segment.servicer || 'Servicer'}{segment.current ? ' · current' : ''}
-              </span>
-            </div>
-            <p className="mt-0.5 truncate text-gray-500 dark:text-gray-400">
-              {segment.dateRangeDisplay || '—'}{segment.accountNumber ? ` · #${segment.accountNumber}` : ''}
-            </p>
-            {segment.transferDateDisplay ? (
-              <p className="mt-0.5 text-gray-500 dark:text-gray-400">Transfer {segment.transferDateDisplay}</p>
-            ) : null}
+    <div>
+      <h5 className="mb-4 text-lg font-medium text-gray-500 dark:text-neutral-400">Servicer history</h5>
+      <div className="relative pt-9">
+        {segments.length > 1 ? (
+          <div className="pointer-events-none absolute left-1/2 top-0 flex -translate-x-1/2 flex-col items-center">
+            <span className="whitespace-nowrap text-center text-sm leading-tight text-gray-500 dark:text-neutral-500">
+              {transitionLabel} · {transitionDate || ''}
+            </span>
           </div>
-        ))}
+        ) : null}
+        <div className="relative grid gap-6" style={{ gridTemplateColumns: `repeat(${segments.length}, minmax(0, 1fr))` }}>
+        {segments.map((segment, index) => {
+          const isCurrent = segment.current || index === segments.length - 1
+          return (
+            <div key={`${segment.loanId || segment.servicer}-${segment.from || index}`} className="min-w-0">
+              <div className={`h-3 rounded-full ${isCurrent ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-neutral-300'}`} aria-label={`${segment.servicer || 'Servicer'} timeline segment`} />
+              <div className="mt-4">
+                <p className="truncate text-lg font-semibold text-gray-950 dark:text-white">
+                  {segment.servicer || 'Servicer'}{isCurrent ? <span className="text-emerald-600 dark:text-emerald-400"> · current</span> : null}
+                </p>
+                <p className="mt-1 truncate text-base text-gray-500 dark:text-neutral-400">
+                  {segment.dateRangeDisplay || '—'}{segment.accountNumber ? ` · #${segment.accountNumber}` : ''}
+                </p>
+              </div>
+            </div>
+          )
+        })}
+        {segments.length > 1 ? (
+          <div className="pointer-events-none absolute left-1/2 top-[-16px] flex -translate-x-1/2 flex-col items-center">
+            <LoanTransitionBadge isRefinance={isRefinance} className={transitionClassName} />
+          </div>
+        ) : null}
+        </div>
       </div>
     </div>
   )
+}
+
+function LoanTransitionBadge({ isRefinance, className }) {
+  const ArrowIcon = isRefinance ? RefreshCw : ArrowRight
+  return (
+    <span className={`relative inline-flex h-14 w-14 items-center justify-center rounded-2xl ${className}`}>
+      <Home className="absolute left-2 top-2 h-6 w-6" aria-hidden="true" />
+      <FileText className="absolute right-2 top-2.5 h-6 w-6" aria-hidden="true" />
+      <span className="absolute bottom-1.5 inline-flex h-6 min-w-8 items-center justify-center rounded-full bg-white/90 px-1 shadow-sm dark:bg-neutral-900/90">
+        <ArrowIcon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <span className="sr-only">{isRefinance ? 'Refinance' : 'Servicer transfer'}</span>
+    </span>
+  )
+}
+
+function LoanYearTable({
+  rows = [],
+  reconciliationYears = [],
+  highlightedYears = [],
+  selectedIssueYear,
+  openIssueModal,
+  openSourceYear,
+  setOpenSourceYear,
+  uploadingStatement,
+  onReplace,
+  onRemove,
+}) {
+  const [expandedRows, setExpandedRows] = useState({})
+  const toggleRow = (rowKey) => setExpandedRows((current) => ({ ...current, [rowKey]: !current[rowKey] }))
+
+  if (!rows.length) {
+    return (
+      <div className="rounded-2xl border border-gray-200 px-5 py-8 text-center text-gray-500 dark:border-neutral-700 dark:text-neutral-400">
+        No loan years available.
+      </div>
+    )
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-gray-200 dark:border-neutral-700">
+      <table className="min-w-full divide-y divide-gray-200 text-left text-base dark:divide-neutral-700">
+        <thead className="bg-gray-50 text-gray-500 dark:bg-neutral-950/80 dark:text-neutral-400">
+          <tr>
+            <th className="px-5 py-4 font-medium">Year</th>
+            <th className="px-5 py-4 font-medium">Servicer</th>
+            <th className="px-5 py-4 text-right font-medium">Start bal.</th>
+            <th className="px-5 py-4 text-right font-medium">Principal</th>
+            <th className="px-5 py-4 text-right font-medium">Interest</th>
+            <th className="px-5 py-4 text-right font-medium">End bal.</th>
+            <th className="px-2 py-4 text-center font-medium" aria-label="Calculation"></th>
+            <th className="px-5 py-4 font-medium">Source</th>
+            <th className="px-5 py-4 text-right font-medium">Notes</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-neutral-700">
+          {loanYearDisplayRows(rows).map((row) => {
+            const issueYear = reconciliationYears.find((item) => item.year === row.year)
+            const rowKey = row.rowKey || row.year
+            const isSelected = selectedIssueYear === row.year
+            const isHighlighted = highlightedYears.includes(row.year)
+            const isProjected = row.sourceTier === 'PROJECTED'
+            const detailRows = loanYearDetailRows(row, rows)
+            const canExpand = detailRows.length > 0
+            const expanded = Boolean(expandedRows[rowKey])
+            const rowTone = isSelected
+              ? 'bg-amber-50 dark:bg-amber-950/40'
+              : isHighlighted
+                ? 'bg-blue-50 dark:bg-blue-950/30'
+                : isProjected
+                  ? 'bg-yellow-50/70 dark:bg-yellow-950/10'
+                  : 'bg-white dark:bg-neutral-900'
+            return (
+              <Fragment key={rowKey}>
+                <tr className={`${rowTone} text-gray-600 dark:text-neutral-300`}>
+                  <td className="whitespace-nowrap px-5 py-4 font-semibold text-gray-950 dark:text-white">
+                    <span className="inline-flex items-center gap-2">
+                      {canExpand ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleRow(rowKey)}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                          aria-expanded={expanded}
+                          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${row.yearLabel || row.year} loan details`}
+                        >
+                          <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? '' : '-rotate-90'}`} aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <span className="h-6 w-6" aria-hidden="true" />
+                      )}
+                      <span>{loanYearLabel(row)}</span>
+                    </span>
+                  </td>
+                  <td className="px-5 py-4 text-gray-500 dark:text-neutral-400">{row.servicerDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-5 py-4 text-right">{row.startingBalanceDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-gray-950 dark:text-white">{row.principalPaidDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-5 py-4 text-right">{row.interestPaidDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-gray-950 dark:text-white">
+                    {row.endingBalanceDisplay || '—'}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-4 text-center">
+                    <CalculatedEndingBalanceIcon metric={row.endingBalanceMetric} />
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4">
+                    <SourceCell
+                      row={row}
+                      openSourceYear={openSourceYear}
+                      setOpenSourceYear={setOpenSourceYear}
+                      uploadingStatement={uploadingStatement}
+                      onReplace={onReplace}
+                      onRemove={onRemove}
+                    />
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-4 text-right">
+                    <IssueBadge
+                      row={row}
+                      reconciliationYear={issueYear}
+                      isOpen={isSelected}
+                      onClick={() => openIssueModal(row.year)}
+                    />
+                  </td>
+                </tr>
+                {expanded ? detailRows.map((detail) => (
+                  <tr key={`${rowKey}-${detail.key}`} className="bg-gray-50/80 text-sm text-gray-500 dark:bg-neutral-950/60 dark:text-neutral-400">
+                    <td className="whitespace-nowrap px-5 py-3 pl-16 font-medium text-gray-700 dark:text-neutral-200">{detail.label}</td>
+                    <td className="px-5 py-3">{detail.servicer || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">{detail.startBalanceDisplay || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium text-gray-700 dark:text-neutral-200">{detail.principalPaidDisplay || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">{detail.interestPaidDisplay || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right font-medium text-gray-700 dark:text-neutral-200">{detail.endingBalanceDisplay || '—'}</td>
+                    <td className="whitespace-nowrap px-2 py-3 text-center">{detail.calculation ? <CalcIcon className="inline h-3.5 w-3.5 text-gray-400" aria-hidden="true" /> : null}</td>
+                    <td className="whitespace-nowrap px-5 py-3">{detail.source || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">{detail.note || '—'}</td>
+                  </tr>
+                )) : null}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function moneyDisplay(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return String(value)
+  return formatCurrency(parsed)
+}
+
+function loanYearDisplayRows(rows) {
+  const yearsWithFullProjection = new Set(
+    rows
+      .filter((row) => row.isFullYearProjection)
+      .map((row) => row.year),
+  )
+  return rows.filter((row) => !(row.isCurrentYear && yearsWithFullProjection.has(row.year)))
+}
+
+function loanYearLabel(row) {
+  const raw = row.yearLabel || (row.isCurrentYear ? `${row.year} · now` : String(row.year))
+  const shouldMarkCurrentYear = row.isCurrentYear || row.isFullYearProjection
+  if (!shouldMarkCurrentYear) return raw
+  return raw.includes('*') ? raw : `${raw} *`
+}
+
+function sourceDocLabel(document) {
+  if (!document) return 'Source'
+  if (document.docType === '1098') return '1098'
+  if (document.docType === 'mortgage_statement') return 'Statement'
+  return document.docTypeLabel || document.sourceBadge || 'Document'
+}
+
+function docFieldValue(document, keys) {
+  const parsed = document?.parsedValues || {}
+  for (const key of keys) {
+    if (document?.[key] !== null && document?.[key] !== undefined && document?.[key] !== '') return document[key]
+    if (parsed[key] !== null && parsed[key] !== undefined && parsed[key] !== '') return parsed[key]
+  }
+  return null
+}
+
+function loanYearDetailRows(row, rows) {
+  if (row.isFullYearProjection) {
+    const currentRow = rows.find((item) => item.year === row.year && item.isCurrentYear)
+    const currentPrincipal = Number(currentRow?.principalPaid || 0)
+    const currentInterest = Number(currentRow?.interestPaid || 0)
+    const projectedPrincipal = Number(row.principalPaid || 0)
+    const projectedInterest = Number(row.interestPaid || 0)
+    const remainingMonths = Number(row.projectedRemainingMonths || 0)
+    const actualThroughMonth = Number(row.actualThroughMonth || 0)
+    return [
+      {
+        key: 'now',
+        label: 'Now',
+        servicer: currentRow?.servicerDisplay || row.servicerDisplay,
+        startBalanceDisplay: currentRow?.startingBalanceDisplay || row.startingBalanceDisplay,
+        principalPaidDisplay: currentRow?.principalPaidDisplay || '—',
+        interestPaidDisplay: currentRow?.interestPaidDisplay || '—',
+        endingBalanceDisplay: currentRow?.endingBalanceDisplay || '—',
+        source: currentRow?.sourceDisplay || currentRow?.sourceLabel || 'Current row',
+        note: actualThroughMonth ? `Through month ${actualThroughMonth}` : 'Current year to date',
+      },
+      {
+        key: 'rest-of-year',
+        label: 'Rest of year',
+        servicer: row.servicerDisplay,
+        startBalanceDisplay: currentRow?.endingBalanceDisplay || row.startingBalanceDisplay,
+        principalPaidDisplay: moneyDisplay(Math.max(projectedPrincipal - currentPrincipal, 0)),
+        interestPaidDisplay: moneyDisplay(Math.max(projectedInterest - currentInterest, 0)),
+        endingBalanceDisplay: row.endingBalanceDisplay || '—',
+        source: row.sourceDisplay || row.sourceLabel || 'Projected',
+        note: remainingMonths ? `${remainingMonths} projected months` : 'Projected balance',
+      },
+    ]
+  }
+
+  const documents = rowSourceDocuments(row)
+  if (documents.length <= 1 && !String(row.servicerDisplay || '').includes('→')) return []
+  return documents.map((document, index) => {
+    const balance = docFieldValue(document, ['box2Balance', 'current_balance', 'box2_balance'])
+    const nextBalance = docFieldValue(documents[index + 1], ['box2Balance', 'current_balance', 'box2_balance'])
+    const interest = docFieldValue(document, ['box1Interest', 'mortgage_interest', 'box1_interest'])
+    return {
+      key: document.documentId || document.filename || index,
+      label: document.accountNumber ? `#${document.accountNumber}` : sourceDocLabel(document),
+      servicer: document.filename || row.servicerDisplay,
+      startBalanceDisplay: moneyDisplay(balance),
+      principalPaidDisplay: '—',
+      interestPaidDisplay: moneyDisplay(interest),
+      endingBalanceDisplay: nextBalance ? moneyDisplay(nextBalance) : (index === documents.length - 1 ? row.endingBalanceDisplay : '—'),
+      source: sourceDocLabel(document),
+      note: document.statementDate || document.parsedValues?.statementDate || 'Uploaded source',
+    }
+  })
 }
 
 function IssueBadge({ row, reconciliationYear, isOpen, onClick }) {
@@ -412,11 +637,10 @@ function IssueBadge({ row, reconciliationYear, isOpen, onClick }) {
       <button
         type="button"
         onClick={onClick}
-        className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300"
+        className="inline-flex items-center gap-1 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-300 dark:hover:text-red-200"
         aria-expanded={isOpen}
         aria-label={`Open ${row.year} blocking reconciliation issues`}
       >
-        <X className="h-3.5 w-3.5" aria-hidden="true" />
         Blocking
       </button>
     )
@@ -427,12 +651,11 @@ function IssueBadge({ row, reconciliationYear, isOpen, onClick }) {
       <button
         type="button"
         onClick={onClick}
-        className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300"
+        className="inline-flex items-center gap-1 text-sm font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
         aria-expanded={isOpen}
         aria-label={`Open ${row.year} loan reconciliation issues`}
       >
-        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-        {issueCount} {issueCount === 1 ? 'Issue' : 'Issues'}
+        {issueCount} {issueCount === 1 ? 'issue' : 'issues'}
       </button>
     )
   }
@@ -442,21 +665,17 @@ function IssueBadge({ row, reconciliationYear, isOpen, onClick }) {
       <button
         type="button"
         onClick={onClick}
-        className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300"
+        className="inline-flex items-center gap-1 text-sm font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
         aria-expanded={isOpen}
         aria-label={`Open ${row.year} reconciliation review`}
       >
-        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-        Needs Review
+        review
       </button>
     )
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300">
-      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-      Reconciled
-    </span>
+    <span className="text-sm text-gray-400 dark:text-neutral-500">—</span>
   )
 }
 
@@ -675,7 +894,7 @@ function CalculatedEndingBalanceIcon({ metric }) {
 function sourceBadgeLabel(row) {
   if (row.source === '1098') return '1098'
   if (row.source === 'statement') return 'Dec stmt'
-  if (row.source === 'projected') return 'Projected'
+  if (row.source === 'projected') return row.sourceDisplay || row.sourceLabel || 'Projected'
   return row.sourceDisplay || row.sourceLabel || SOURCE_BADGE[row.source]?.label || 'Source'
 }
 
@@ -688,6 +907,18 @@ function rowPreviewUrl(row) {
   const commentPreview = row.comments?.find((comment) => comment.previewUrl)?.previewUrl
   if (commentPreview) return commentPreview
   return rowSourceDocuments(row).find((document) => document.previewUrl)?.previewUrl
+}
+
+function documentFieldRows(document) {
+  if (Array.isArray(document.fieldValues) && document.fieldValues.length) return document.fieldValues
+  const parsed = document.parsedValues || {}
+  return Object.entries(parsed)
+    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => ({
+      key,
+      label: key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase()),
+      display: Array.isArray(value) ? value.join(', ') : String(value),
+    }))
 }
 
 function SourceCell({ row, openSourceYear, setOpenSourceYear, uploadingStatement, onReplace, onRemove }) {
@@ -709,7 +940,7 @@ function SourceCell({ row, openSourceYear, setOpenSourceYear, uploadingStatement
         aria-label={`Source details for ${row.yearLabel || row.year}`}
       >
         <DebtSourceBadge source={row.source} labelOverride={sourceBadgeLabel(row)} />
-        <ChevronDown className="h-3.5 w-3.5 text-gray-400" aria-hidden="true" />
+        <ChevronDown className="h-3.5 w-3.5 text-neutral-500" aria-hidden="true" />
       </button>
       {isOpen ? (
         <SourcePopover
@@ -734,7 +965,7 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
       const anchor = anchorRef.current
       if (!anchor) return
       const rect = anchor.getBoundingClientRect()
-      const width = 288
+      const width = documents.length > 1 ? Math.min(760, window.innerWidth - 16) : 420
       const margin = 8
       const popoverHeight = popoverRef.current?.offsetHeight || (documents.length ? 132 : 104)
       const left = Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin)
@@ -759,20 +990,34 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
   return (
     createPortal(<div
       ref={popoverRef}
-      style={position ? { top: position.top, left: position.left, width: position.width } : { visibility: 'hidden', width: 288 }}
-      className="fixed z-[100] rounded-lg border border-gray-200 bg-white p-3 text-left shadow-lg dark:border-gray-700 dark:bg-gray-900"
+      style={position ? { top: position.top, left: position.left, width: position.width } : { visibility: 'hidden', width: documents.length > 1 ? 760 : 420 }}
+      className="fixed z-[100] max-h-[70vh] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 text-left shadow-2xl shadow-gray-900/10 dark:border-neutral-700 dark:bg-neutral-950 dark:shadow-black/40"
       onClick={(event) => event.stopPropagation()}
     >
       {documents.length ? (
-        <div className="space-y-3">
-          {documents.map((document) => (
-            <div key={document.documentId || document.filename} className="min-w-0">
+        <div className={documents.length > 1 ? 'grid gap-3 md:grid-cols-2' : 'space-y-3'}>
+          {documents.map((document) => {
+            const fields = documentFieldRows(document)
+            return (
+            <div key={document.documentId || document.filename} className="min-w-0 rounded-lg border border-gray-100 p-2 dark:border-neutral-800">
               <div className="flex items-center gap-2">
                 <FileCheck className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
-                <span className="truncate text-xs font-medium text-gray-800 dark:text-gray-100" title={document.filename}>
+                <span className="truncate text-xs font-medium text-gray-800 dark:text-neutral-100" title={document.filename}>
                   {document.filename}
                 </span>
               </div>
+              {fields.length ? (
+                <dl className="ml-6 mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+                  {fields.map((field) => (
+                    <div key={field.key || field.label} className="contents">
+                      <dt className="truncate text-gray-500 dark:text-neutral-500" title={field.label}>{field.label}</dt>
+                      <dd className="truncate text-right font-medium text-gray-800 dark:text-neutral-100" title={field.display}>{field.display}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className="ml-6 mt-2 text-xs text-gray-500 dark:text-neutral-400">No extracted fields available.</p>
+              )}
               <div className="ml-6 mt-1 flex flex-wrap items-center gap-2">
                 {document.previewUrl ? (
                   <a
@@ -780,12 +1025,12 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
                     target="_blank"
                     rel="noreferrer"
                     onClick={(event) => event.stopPropagation()}
-                    className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                    className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
                   >
-                    Preview
+                    Open document
                   </a>
                 ) : null}
-                <button type="button" onClick={(event) => { event.stopPropagation(); onReplace() }} disabled={uploadingStatement} className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50 dark:text-gray-400 dark:hover:text-white">
+                <button type="button" onClick={(event) => { event.stopPropagation(); onReplace() }} disabled={uploadingStatement} className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50 dark:text-neutral-400 dark:hover:text-white">
                   Replace
                 </button>
                 {document.documentId ? (
@@ -795,12 +1040,12 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
                 ) : null}
               </div>
             </div>
-          ))}
+          )})}
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-xs text-gray-500 dark:text-gray-400">No source document for this projected row.</p>
-          <button type="button" onClick={(event) => { event.stopPropagation(); onReplace() }} disabled={uploadingStatement} className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-400">
+          <p className="text-xs text-gray-500 dark:text-neutral-400">No source document for this projected row.</p>
+          <button type="button" onClick={(event) => { event.stopPropagation(); onReplace() }} disabled={uploadingStatement} className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-xs text-gray-500 hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:border-blue-500 dark:hover:text-blue-300">
             {uploadingStatement ? 'Uploading...' : 'Upload 1098 / statement'}
           </button>
         </div>
@@ -812,8 +1057,8 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
 function LoanMetric({ label, value, bold }) {
   return (
     <div className="min-w-0">
-      <p className="truncate text-xs text-gray-400 dark:text-gray-500">{label}</p>
-      <p className={`truncate text-sm ${bold ? 'font-bold text-gray-900 dark:text-white' : 'font-medium text-gray-800 dark:text-gray-200'}`}>
+      <p className="truncate text-base text-gray-500 dark:text-neutral-500">{label}</p>
+      <p className={`mt-1 truncate text-2xl leading-tight ${bold ? 'font-semibold text-gray-950 dark:text-white' : 'font-semibold text-gray-900 dark:text-neutral-100'}`}>
         {value}
       </p>
     </div>

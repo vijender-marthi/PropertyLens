@@ -12,15 +12,19 @@ assert.deepEqual(propertyTabs.map((tab) => tab.label), [
   'Scenarios',
   'Documents',
   'Data health',
+  'Details',
   'Checklist',
   'Raw data',
 ])
 
-assert.equal(propertyTabs.some((tab) => tab.id === 'details' || tab.label === 'Details' || tab.path === 'details'), false)
+const detailsTab = propertyTabs.find((tab) => tab.id === 'details')
+assert.ok(detailsTab, 'details tab must be available after data health')
+assert.equal(detailsTab.label, 'Details')
+assert.equal(detailsTab.path, 'details')
 assert.equal(propertyTabs.some((tab) => tab.label === 'Usage'), false)
 assert.equal(propertyTabs.every((tab) => Boolean(tab.icon)), true)
 assert.deepEqual(propertyTabs.slice(0, 7).map((tab) => tab.group), Array(7).fill('analysis'))
-assert.deepEqual(propertyTabs.slice(7).map((tab) => tab.group), Array(4).fill('utility'))
+assert.deepEqual(propertyTabs.slice(7).map((tab) => tab.group), Array(5).fill('utility'))
 assert.deepEqual(propertyTabs.map((tab) => tab.icon), [
   'LayoutDashboard',
   'Landmark',
@@ -31,6 +35,7 @@ assert.deepEqual(propertyTabs.map((tab) => tab.icon), [
   'SlidersHorizontal',
   'Files',
   'HeartPulse',
+  'ClipboardList',
   'ListChecks',
   'Table2',
 ])
@@ -40,6 +45,7 @@ const dataHealthTab = propertyTabs.find((tab) => tab.id === 'verify')
 assert.ok(dataHealthTab, 'verify tab id must remain available for existing deep links')
 assert.equal(dataHealthTab.label, 'Data health')
 assert.equal(dataHealthTab.path, 'verify')
+assert.equal(propertyTabs[propertyTabs.findIndex((tab) => tab.id === 'verify') + 1].id, 'details')
 
 const expensesTab = propertyTabs.find((tab) => tab.id === 'expenses')
 assert.ok(expensesTab, 'expenses tab must be available after rental')

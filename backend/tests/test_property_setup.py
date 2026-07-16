@@ -468,7 +468,7 @@ def test_open_loan_does_not_require_closed_date(client, user, prop):
     )
 
     assert resp.status_code == 200
-    assert resp.json()["status"] == "saved"
+    assert resp.json()["status"] == "saved", resp.json()
 
 
 def test_closed_loan_requires_closed_date(client, user, prop):
@@ -528,6 +528,59 @@ def test_finalize_setup_saves_existing_property_and_returns_redirect(client, db,
     assert prop.name == "Final Mission"
     assert prop.loans[0].escrow_included is True
     assert prop.loans[0].monthly_property_tax_escrow == 300
+
+
+def test_closed_servicer_transfer_does_not_require_current_escrow(client, db, user, prop):
+    old_loan = prop.loans[0]
+    old_loan.status = "CLOSED"
+    old_loan.closed_date = "2024-09-01"
+    old_loan.origination_date = "2023-05-24"
+    old_loan.closure_reason = "Servicing transfer"
+    old_loan.transfer_reason = "Servicing transfer"
+    old_loan.is_current_servicer = False
+    old_loan.escrow_included = True
+    old_loan.escrow_amount = 0
+    current_loan = models.Loan(
+        property_id=prop.id,
+        lender_name="Rocket",
+        account_number="3550379001",
+        status="OPEN",
+        is_current_servicer=True,
+        original_amount=468750,
+        current_balance=438502,
+        interest_rate=7.625,
+        monthly_payment=4275,
+        loan_term_years=30,
+        origination_date="2023-05-24",
+        escrow_included=True,
+        escrow_amount=1913.46,
+        monthly_property_tax_escrow=887.47,
+        monthly_insurance_escrow=186.26,
+        monthly_other_escrow=839.73,
+        estimated_total_monthly_payment=6188.46,
+    )
+    db.add(current_loan)
+    db.commit()
+    payload = _finalize_payload(prop)
+    for loan in payload["loans"]:
+        if loan["id"] == old_loan.id:
+            loan["escrow_included"] = True
+            loan["escrow_amount"] = 0
+        if loan["id"] == current_loan.id:
+            loan["escrow_included"] = True
+            loan["escrow_amount"] = 1913.46
+            loan["monthly_property_tax_escrow"] = 887.47
+            loan["monthly_insurance_escrow"] = 186.26
+            loan["monthly_other_escrow"] = 839.73
+
+    resp = client.post(
+        f"/api/properties/{prop.id}/setup-finalize",
+        json=payload,
+        headers=auth_headers(user.email),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "saved", resp.json()
 
 
 def test_annual_expenses_save_by_year_and_drive_current_year_completion(client, db, user, prop):

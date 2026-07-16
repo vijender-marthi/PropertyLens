@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import json
 
 import models
+import pytest
 from jose import jwt
 from routers.documents import (
     _address_validation,
@@ -654,6 +655,108 @@ def test_apply_loan_statement_updates_reported_balance_and_clears_initial_warnin
     assert annual.insurance_source == "escrow-estimate"
 
 
+def test_apply_latest_statement_updates_matching_current_servicer_escrow(client, db, user):
+    prop = models.Property(
+        owner_id=user.id,
+        property_uid="osprey-escrow-current",
+        name="OSPREY",
+        address="911 Osprey Dr",
+        city="Lathrop",
+        state="CA",
+        zip_code="95330",
+        property_type="single_family",
+        usage_type="Rental",
+        purchase_date="2023-05-24",
+        purchase_price=625000,
+    )
+    db.add(prop)
+    db.flush()
+    old_loan = models.Loan(
+        property_id=prop.id,
+        lender_name="DHI / LoanCare",
+        account_number="0064944077",
+        status="CLOSED",
+        closed_date="2024-09-01",
+        closure_reason="Servicing transfer",
+        transfer_reason="Servicing transfer",
+        is_current_servicer=False,
+        servicer_sequence=1,
+        servicer_start_date="2023-05-26",
+        servicer_end_date="2024-09-01",
+        origination_date="2023-05-24",
+        original_amount=468750,
+        current_balance=466682,
+        interest_rate=7.625,
+        monthly_payment=3318,
+        loan_term_years=30,
+        escrow_included=True,
+        escrow_amount=0,
+    )
+    rocket = models.Loan(
+        property_id=prop.id,
+        lender_name="Rocket",
+        account_number="3550379001",
+        status="OPEN",
+        is_current_servicer=True,
+        servicer_sequence=2,
+        servicer_start_date="2024-10-01",
+        origination_date="2023-05-26",
+        original_amount=463428,
+        current_balance=438502,
+        interest_rate=7.625,
+        monthly_payment=4275,
+        loan_term_years=30,
+    )
+    db.add_all([old_loan, rocket])
+    db.flush()
+    document = models.Document(
+        property_id=prop.id,
+        owner_id=user.id,
+        filename="rocket_latest_statement.pdf",
+        original_filename="Rocket Latest Mortgage Statement.pdf",
+        display_name="Rocket Latest Mortgage Statement.pdf",
+        file_type="pdf",
+        doc_category="mortgage_statement",
+        file_size=100,
+        extracted_data=json.dumps({
+            "account_number": "3550379001",
+            "current_balance": 438502,
+            "monthly_property_tax_escrow": 887.47,
+            "monthly_insurance_escrow": 186.26,
+            "monthly_mortgage_insurance": 0,
+            "monthly_other_escrow": 839.73,
+            "escrow_amount": 1913.46,
+            "estimated_total_monthly_payment": 6188.46,
+            "statement_date": "2026-06-30",
+        }),
+    )
+    db.add(document)
+    db.commit()
+
+    response = client.post(
+        f"/api/documents/{document.id}/apply-loan-statement",
+        json={
+            "property_id": prop.id,
+            "loan_id": old_loan.id,
+            "selected_loan_fields": ["current_balance", "statement_date"],
+            "address_override": True,
+            "confirm_account_mismatch": True,
+        },
+        headers=auth_headers(user.email),
+    )
+
+    assert response.status_code == 200
+    db.refresh(old_loan)
+    db.refresh(rocket)
+    assert old_loan.escrow_amount == 0
+    assert rocket.escrow_included is True
+    assert rocket.monthly_property_tax_escrow == 887.47
+    assert rocket.monthly_insurance_escrow == 186.26
+    assert rocket.monthly_other_escrow == 839.73
+    assert rocket.escrow_amount == 1913.46
+    assert rocket.estimated_total_monthly_payment == 6188.46
+
+
 def test_apply_loan_statement_creates_new_loan_when_account_differs(client, db, user):
     prop = models.Property(
         owner_id=user.id,
@@ -1012,7 +1115,29 @@ def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db
             "mortgage_acquisition_date": "10/01/2024",
         }),
     )
-    db.add_all([loancare_doc, rocket_doc])
+    rocket_2025_doc = models.Document(
+        property_id=prop.id,
+        owner_id=user.id,
+        filename="rocket-2025-1098.pdf",
+        original_filename="Rocket 2025 1098.pdf",
+        display_name="Rocket 2025 1098.pdf",
+        file_type="pdf",
+        doc_category="1098",
+        file_size=100,
+        loan_account_number="3550379001",
+        statement_year=2025,
+        extracted_data=json.dumps({
+            "account_number": "3550379001",
+            "tax_year": "2025",
+            "statement_year": 2025,
+            "statement_date": "12/31/2025",
+            "mortgage_interest": 35088.0,
+            "current_balance": 462302.0,
+            "origination_date": "05/26/2023",
+            "mortgage_acquisition_date": "10/01/2024",
+        }),
+    )
+    db.add_all([loancare_doc, rocket_doc, rocket_2025_doc])
     db.commit()
 
     loancare_response = client.post(
@@ -1084,6 +1209,21 @@ def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db
     assert rocket.closed_date is None
     assert original.replacement_loan_id == rocket.id
     assert original.loan_group_id == rocket.loan_group_id
+
+    debt_response = client.get(
+        f"/api/properties/{prop.id}/debt",
+        headers=auth_headers(user.email),
+    )
+    assert debt_response.status_code == 200
+    loan_payload = debt_response.json()["loans"][0]
+    rows = {row["year"]: row for row in loan_payload["paydown"]["rows"] if not row.get("isFullYearProjection")}
+    assert loan_payload["original_amount"] == pytest.approx(468750)
+    assert "→" in rows[2024]["servicerDisplay"]
+    assert rows[2024]["interestPaid"] == pytest.approx(26606.53 + 8826.97)
+    assert rows[2024]["endingBalance"] == pytest.approx(rows[2025]["startingBalance"])
+    assert rows[2024]["endingBalance"] == pytest.approx(462302.0)
+    assert rows[2024]["principalPaid"] == pytest.approx(466681.81 - 462302.0)
+    assert len([doc for doc in rows[2024]["documents"] if doc["docType"] == "1098"]) == 2
 
 
 def test_apply_new_account_document_infers_refinance_replacement(client, db, user):

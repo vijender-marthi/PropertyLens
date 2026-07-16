@@ -4,7 +4,7 @@ import math
 import uuid
 import re
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -2030,7 +2030,7 @@ def _loan_setup_issues(loan: Any, index: int = 0) -> tuple[Dict[str, str], List[
     if (getattr(loan, "current_balance", 0) or 0) > (getattr(loan, "original_amount", 0) or 0) > 0:
         field_errors[f"{prefix}.current_balance"] = "Current balance cannot exceed original amount."
         section_errors.append(_validation_item("current_balance", f"{_loan_record_label(loan, index)} balance exceeds original amount.", record_id=record_id))
-    if getattr(loan, "escrow_included", False):
+    if getattr(loan, "escrow_included", False) and status not in CLOSED_LOAN_STATUSES:
         escrow_total = float(getattr(loan, "escrow_amount", 0) or 0)
         component_total = _escrow_component_total(loan)
         if escrow_total <= 0 and component_total <= 0:
@@ -4713,6 +4713,88 @@ def _document_timestamp(value: Any) -> Optional[str]:
     return str(value)
 
 
+def _document_field_label(key: str) -> str:
+    overrides = {
+        "account_number": "Account number",
+        "box1_interest": "Box 1 interest",
+        "box2_balance": "Box 2 balance",
+        "current_balance": "Current balance",
+        "mortgage_interest": "Mortgage interest",
+        "mortgage_acquisition_date": "Mortgage acquisition date",
+        "origination_date": "Origination date",
+        "statement_date": "Statement date",
+        "statement_year": "Statement year",
+        "tax_year": "Tax year",
+        "interest_paid_ytd": "Interest paid YTD",
+        "principal_paid_ytd": "Principal paid YTD",
+        "escrow_amount": "Escrow amount",
+        "monthly_payment": "Monthly payment",
+    }
+    if key in overrides:
+        return overrides[key]
+    return str(key).replace("_", " ").strip().title()
+
+
+def _document_field_display(key: str, value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    money_tokens = (
+        "amount", "balance", "interest", "principal", "payment", "tax",
+        "escrow", "insurance", "price", "cost", "fee",
+    )
+    if isinstance(value, (int, float)) and any(token in key.lower() for token in money_tokens):
+        return format_currency(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
+def _document_field_rows(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    hidden_keys = {
+        "_manual_overrides",
+        "raw_text",
+        "ocr_text",
+        "pages",
+        "tables",
+        "line_items",
+    }
+    priority = [
+        "tax_year",
+        "statement_year",
+        "statement_date",
+        "account_number",
+        "mortgage_acquisition_date",
+        "origination_date",
+        "mortgage_interest",
+        "box1_interest",
+        "current_balance",
+        "box2_balance",
+        "principal_paid_ytd",
+        "interest_paid_ytd",
+        "monthly_payment",
+        "escrow_amount",
+    ]
+    keys = [
+        key for key in priority
+        if key in data and key not in hidden_keys and data.get(key) not in (None, "")
+    ]
+    keys.extend(sorted(
+        key for key, value in data.items()
+        if key not in hidden_keys and key not in keys and value not in (None, "")
+    ))
+    return [
+        {
+            "key": key,
+            "label": _document_field_label(key),
+            "value": data.get(key),
+            "display": _document_field_display(key, data.get(key)),
+        }
+        for key in keys
+    ]
+
+
 def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[int, List[Dict[str, Any]]]:
     by_year: Dict[int, List[Dict[str, Any]]] = {}
     total_loans = len(getattr(prop, "loans", []) or [])
@@ -4737,6 +4819,8 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
             "sourceBadge": "1098" if category == "1098" else "Dec stmt" if category == "mortgage_statement" else "Document",
             "previewUrl": f"/properties/{doc.property_id}/documents?documentId={doc.id}" if doc.property_id else f"/uploads?documentId={doc.id}",
             "uploadedAt": _document_timestamp(getattr(doc, "upload_date", None)),
+            "fieldValues": _document_field_rows(data),
+            "accountNumber": getattr(doc, "loan_account_number", None) or data.get("account_number"),
             "box1Interest": data.get("mortgage_interest") if data.get("mortgage_interest") is not None else data.get("box1_interest"),
             "box2Balance": data.get("current_balance") if data.get("current_balance") is not None else data.get("box2_balance"),
             "propertyTax": data.get("property_tax_amount"),
@@ -4744,11 +4828,15 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
             "ytdPrincipal": data.get("principal_paid_ytd") or data.get("principal"),
             "endBalance": data.get("year_end_outstanding_balance") or data.get("current_balance") or data.get("ending_balance"),
             "statementDate": data.get("statement_date"),
+            "mortgageAcquisitionDate": data.get("mortgage_acquisition_date"),
+            "originationDate": data.get("origination_date"),
             "parsedValues": {
                 "box1Interest": data.get("mortgage_interest") if data.get("mortgage_interest") is not None else data.get("box1_interest"),
                 "box2Balance": data.get("current_balance") if data.get("current_balance") is not None else data.get("box2_balance"),
                 "propertyTax": data.get("property_tax_amount"),
                 "statementDate": data.get("statement_date"),
+                "mortgageAcquisitionDate": data.get("mortgage_acquisition_date"),
+                "originationDate": data.get("origination_date"),
                 "taxYear": year,
             },
             "overrides": data.get("_manual_overrides") or {},
@@ -4758,6 +4846,67 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
     return by_year
 
 
+def _loan_doc_event_date(doc: Dict[str, Any]) -> Optional[date]:
+    parsed = (
+        _parse_statement_date(doc.get("mortgageAcquisitionDate"))
+        or _parse_statement_date(doc.get("originationDate"))
+        or _parse_statement_date(doc.get("statementDate"))
+    )
+    if hasattr(parsed, "date"):
+        return parsed.date()
+    return parsed
+
+
+def _loan_doc_sort_key(doc: Dict[str, Any]) -> Tuple[Any, str, int]:
+    return (
+        _loan_doc_event_date(doc) or date.min,
+        str(doc.get("uploadedAt") or ""),
+        int(doc.get("documentId") or 0),
+    )
+
+
+def _combined_1098_doc(docs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    forms = [doc for doc in docs if doc.get("docType") == "1098"]
+    if len(forms) <= 1:
+        return None
+    ordered = sorted(forms, key=_loan_doc_sort_key)
+    first = ordered[0]
+    latest = ordered[-1]
+    interest_values = [
+        float(doc.get("box1Interest") or 0)
+        for doc in ordered
+        if doc.get("box1Interest") is not None
+    ]
+    combined = dict(latest)
+    combined["documentId"] = latest.get("documentId")
+    combined["filename"] = "Multiple 1098s"
+    combined["docType"] = "1098"
+    combined["docTypeLabel"] = "Form 1098"
+    combined["sourceBadge"] = "1098"
+    combined["box1Interest"] = round(sum(interest_values), 2) if interest_values else None
+    combined["box2Balance"] = first.get("box2Balance")
+    combined["isCombined1098"] = True
+    combined["combinedDocuments"] = ordered
+    combined["combinedDocumentIds"] = [doc.get("documentId") for doc in ordered if doc.get("documentId")]
+    combined["accountNumber"] = " → ".join(
+        str(doc.get("accountNumber"))
+        for doc in ordered
+        if doc.get("accountNumber")
+    )
+    combined["parsedValues"] = {
+        **(latest.get("parsedValues") or {}),
+        "box1Interest": combined["box1Interest"],
+        "box2Balance": combined["box2Balance"],
+        "combinedDocumentIds": combined["combinedDocumentIds"],
+        "combinedAccounts": [
+            doc.get("accountNumber")
+            for doc in ordered
+            if doc.get("accountNumber")
+        ],
+    }
+    return combined
+
+
 def _preferred_loan_doc(docs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not docs:
         return None
@@ -4765,6 +4914,9 @@ def _preferred_loan_doc(docs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     statements = [doc for doc in docs if doc.get("docType") == "mortgage_statement"]
     if statements:
         return sorted(statements, key=lambda doc: (str(doc.get("uploadedAt") or ""), int(doc.get("documentId") or 0)))[-1]
+    combined_1098 = _combined_1098_doc(docs)
+    if combined_1098:
+        return combined_1098
     forms = [doc for doc in ordered if doc.get("docType") == "1098"]
     if forms:
         return forms[-1]
@@ -4830,8 +4982,6 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
     docs_by_year = _loan_document_inventory(loan, prop)
     if active_start:
         docs_by_year = {year: docs for year, docs in docs_by_year.items() if year >= active_start.year}
-    if docs_by_year:
-        start_year = max(start_year, min(docs_by_year))
     rows = []
     total_top_up = 0.0
     total_principal_paid = 0.0
@@ -4858,6 +5008,7 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         end_balance_source_label = "Projected"
         principal_from_payment_less_interest = None
         interest = None
+        projected_source_doc = None
         scheduled_months = 12
         if active_start and year == active_start.year:
             scheduled_months = max(0, 12 - active_start.month + 1)
@@ -4946,6 +5097,17 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         scheduled_principal = scheduled["scheduledPrincipal"]
         expected_interest = scheduled["expectedInterest"]
 
+        if source == "projected" and actual_principal is None and next_doc and next_doc.get("box2Balance") is not None and start_balance is not None:
+            end_balance = next_doc.get("box2Balance")
+            end_balance_source = "reported"
+            end_balance_source_label = "Reported from next 1098"
+            actual_principal = max(0.0, round(float(start_balance) - float(end_balance), 2))
+            interest = expected_interest
+            projected_source_doc = next_doc
+            projected_year = next_doc.get("parsedValues", {}).get("taxYear") or year + 1
+            source_label = f"Projected from {projected_year} 1098"
+            source_display = source_label
+
         if source == "statement" and actual_principal is None and end_balance is not None and start_balance is not None:
             actual_principal = max(0.0, round(float(start_balance) - float(end_balance), 2))
             if interest is None:
@@ -5012,7 +5174,7 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         total_principal_paid += float(actual_principal or 0)
         total_interest_paid += float(interest or 0)
         assertion_ok = actual_principal is None or abs((scheduled_principal + top_up) - float(actual_principal)) <= 1
-        comment_doc = primary_doc or (docs[0] if docs else None)
+        comment_doc = primary_doc or projected_source_doc or (docs[0] if docs else None)
         comments = [
             {
                 "message": warning,
@@ -5096,8 +5258,8 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             "sourceLabel": source_label,
             "sourceTier": source_tier,
             "sourceDisplay": source_display or source_label,
-            "documents": docs,
-            "sourceDocument": primary_doc,
+            "documents": docs or ([projected_source_doc] if projected_source_doc else []),
+            "sourceDocument": primary_doc or projected_source_doc,
             "warnings": warnings,
             "comments": comments,
             "issues": issues,
@@ -5466,6 +5628,23 @@ def _set_metric_currency_value(metric: Optional[Dict[str, Any]], value: float, *
     }]
 
 
+def _sync_metric_currency(metric_map: Dict[str, Any], key: str, value: float, *, formula: str) -> None:
+    metric = metric_map.get(key)
+    if not metric:
+        return
+    rounded = round(float(value or 0), 4)
+    metric["value"] = rounded
+    metric["displayValue"] = _compact_money_display(rounded)
+    metric["fullDisplayValue"] = format_currency(rounded)
+    metric["computation"] = format_currency(rounded)
+    metric["formula"] = formula
+    metric["inputs"] = [{
+        "label": "Logical loan chains",
+        "value": rounded,
+        "display": format_currency(rounded),
+    }]
+
+
 def _sync_metric_vault_loan_interest_from_paydown(prop: models.Property, payload: Dict[str, Any], db: Session) -> None:
     """Keep loan strip and card metrics on the same backend source as paydown rows."""
     _, _, interest_by_year, _, _ = _collect_doc_history(prop)
@@ -5478,19 +5657,19 @@ def _sync_metric_vault_loan_interest_from_paydown(prop: models.Property, payload
         if entry.mortgage_interest
     }
     today = date.today()
-    debt_loans = [
-        _loan_debt_waterfall(
-            loan,
-            prop,
-            interest_by_year,
-            tax_return_interest_by_year,
-            interest_by_account,
-            today,
-        )
-        for loan in getattr(prop, "loans", []) or []
-    ]
+    debt_loans = _logical_debt_waterfalls(
+        prop,
+        interest_by_year,
+        tax_return_interest_by_year,
+        interest_by_account,
+        today,
+    )
     by_loan_id = {str(item.get("loan_id")): item for item in debt_loans if item.get("loan_id") is not None}
     loan_metrics = payload.get("loanMetrics") or {}
+    metric_map = payload.get("metrics") or {}
+    total_original = round(sum(float(item.get("original_amount") or 0) for item in debt_loans), 2)
+    total_balance = round(sum(float(item.get("current_balance") or 0) for item in debt_loans), 2)
+    total_principal = round(sum(float(item.get("principal_paid") or 0) for item in debt_loans), 2)
     total_interest = 0.0
     total_rows_interest = 0.0
     for loan_id, debt in by_loan_id.items():
@@ -5515,8 +5694,35 @@ def _sync_metric_vault_loan_interest_from_paydown(prop: models.Property, payload
             loan_metric.setdefault("assertions", {})["interestToDateMatchesPaydownRows"] = abs(float(interest_value or 0) - row_interest) <= 1
 
     loan_summary = payload.get("loanSummary") or {}
+    loan_summary["totalOriginal"] = total_original
+    loan_summary["totalBalance"] = total_balance
+    loan_summary["principalPaidToDate"] = total_principal
     loan_summary["interestToDate"] = round(total_interest, 2)
     loan_summary.setdefault("assertions", {})["interestToDateMatchesPaydownRows"] = abs(total_interest - total_rows_interest) <= 1
+    _sync_metric_currency(
+        metric_map,
+        "loanTotalOriginal",
+        total_original,
+        formula="Sum of original borrowed amounts by logical loan chain, not by servicer segment",
+    )
+    _sync_metric_currency(
+        metric_map,
+        "loanTotalBalance",
+        total_balance,
+        formula="Sum of current balances by logical loan chain",
+    )
+    _sync_metric_currency(
+        metric_map,
+        "loanPrincipalPaidToDate",
+        total_principal,
+        formula="Original borrowed minus current balance by logical loan chain",
+    )
+    _sync_metric_currency(
+        metric_map,
+        "loanInterestToDate",
+        total_interest,
+        formula="Sum of reported and projected yearly interest by logical loan chain",
+    )
     loan_summary["interestToDateFromRows"] = round(total_rows_interest, 2)
     metrics = payload.get("metrics") or {}
     _set_metric_currency_value(
@@ -5609,10 +5815,54 @@ def _loan_group_is_servicing_transfer(members: List[Any]) -> bool:
 
 
 def _logical_loan_groups(loans: List[Any]) -> List[List[Any]]:
-    groups: Dict[str, List[Any]] = {}
+    groups: List[List[Any]] = []
     for loan in loans or []:
-        groups.setdefault(_loan_chain_group_key(loan), []).append(loan)
-    return [_ordered_loan_group_members(members) for members in groups.values()]
+        matched = None
+        for group in groups:
+            if any(_loans_share_servicer_chain(loan, member) for member in group):
+                matched = group
+                break
+        if matched is None:
+            groups.append([loan])
+        else:
+            matched.append(loan)
+    return [_ordered_loan_group_members(members) for members in groups]
+
+
+def _loans_share_servicer_chain(left: Any, right: Any) -> bool:
+    left_key = _loan_chain_group_key(left)
+    right_key = _loan_chain_group_key(right)
+    if left_key == right_key:
+        return True
+    reasons = " ".join([
+        str(getattr(left, "transfer_reason", "") or getattr(left, "closure_reason", "") or ""),
+        str(getattr(right, "transfer_reason", "") or getattr(right, "closure_reason", "") or ""),
+    ]).lower()
+    if "refinance" in reasons and "servicing transfer" not in reasons:
+        return False
+    left_origination = _parse_setup_date(getattr(left, "origination_date", None))
+    right_origination = _parse_setup_date(getattr(right, "origination_date", None))
+    if not _same_original_loan_date(left_origination, right_origination):
+        return False
+    left_type = str(getattr(left, "loan_type", "") or "").upper()
+    right_type = str(getattr(right, "loan_type", "") or "").upper()
+    if left_type and right_type and left_type != right_type:
+        return False
+    left_term = int(getattr(left, "loan_term_years", 0) or 0)
+    right_term = int(getattr(right, "loan_term_years", 0) or 0)
+    if left_term and right_term and left_term != right_term:
+        return False
+    left_rate = float(getattr(left, "interest_rate", 0) or 0)
+    right_rate = float(getattr(right, "interest_rate", 0) or 0)
+    if left_rate and right_rate and abs(left_rate - right_rate) > 0.125:
+        return False
+    left_amount = float(getattr(left, "original_amount", 0) or 0)
+    right_amount = float(getattr(right, "original_amount", 0) or 0)
+    if left_amount and right_amount:
+        larger = max(left_amount, right_amount)
+        if larger and abs(left_amount - right_amount) / larger > 0.12:
+            return False
+    return True
 
 
 def _current_servicer_member(members: List[Any]) -> Any:
@@ -5655,8 +5905,26 @@ def _servicer_segments_for_group(members: List[Any], today: date) -> List[Dict[s
     for index, (loan, start, end, duration) in enumerate(raw_segments):
         current = index == len(raw_segments) - 1 and not _is_closed_loan_status(getattr(loan, "status", None))
         transfer_date = None
+        transition_reason = None
+        transition_type = None
+        transition_label = None
         if index > 0:
             transfer_date = start.isoformat()
+            previous = raw_segments[index - 1][0]
+            transition_reason = (
+                getattr(loan, "transfer_reason", None)
+                or getattr(loan, "closure_reason", None)
+                or getattr(previous, "transfer_reason", None)
+                or getattr(previous, "closure_reason", None)
+                or "Servicing transfer"
+            )
+            transition_text = str(transition_reason or "").lower()
+            if "refinance" in transition_text:
+                transition_type = "refinance"
+                transition_label = "refinance"
+            else:
+                transition_type = "servicer_transfer"
+                transition_label = "servicer change"
         segments.append({
             "loanId": getattr(loan, "id", None),
             "servicer": getattr(loan, "lender_name", None) or "Servicer",
@@ -5669,6 +5937,9 @@ def _servicer_segments_for_group(members: List[Any], today: date) -> List[Dict[s
             "current": current,
             "transferDate": transfer_date,
             "transferDateDisplay": _display_loan_date(transfer_date) if transfer_date else None,
+            "transitionType": transition_type,
+            "transitionLabel": transition_label,
+            "transitionReason": transition_reason,
             "widthPercent": round(duration / total_duration * 100, 2),
         })
     return segments
@@ -5688,7 +5959,7 @@ def _row_servicer_label(row: Dict[str, Any], segments: List[Dict[str, Any]]) -> 
             name = segment.get("servicer") or "Servicer"
             if name not in names:
                 names.append(name)
-    return "→".join(names) if names else "—"
+    return " → ".join(names) if names else "—"
 
 
 def _loan_chain_assertions(loan_payload: Dict[str, Any]) -> Dict[str, Any]:

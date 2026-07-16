@@ -487,7 +487,6 @@ class TestLoanPaydownTracking:
 
     def test_servicer_transfer_renders_one_logical_loan_with_consolidated_chain(self, client, db, user, prop):
         old_loan = prop.loans[0]
-        group_id = "primary-mortgage-transfer"
         old_loan.lender_name = "DHi Mortgage Company, Ltd., LP"
         old_loan.account_number = "0064944077"
         old_loan.origination_date = "2023-05-26"
@@ -497,7 +496,7 @@ class TestLoanPaydownTracking:
         old_loan.status = "CLOSED"
         old_loan.closure_reason = "Servicing transfer"
         old_loan.transfer_reason = "Servicing transfer"
-        old_loan.loan_group_id = group_id
+        old_loan.loan_group_id = None
         old_loan.servicer_sequence = 1
         old_loan.is_current_servicer = False
         old_loan.original_amount = 468_750
@@ -522,7 +521,7 @@ class TestLoanPaydownTracking:
             interest_due=0,
             loan_term_years=30,
             status="OPEN",
-            loan_group_id=group_id,
+            loan_group_id=None,
             servicer_sequence=2,
             transfer_reason="Servicing transfer",
             is_current_servicer=True,
@@ -557,7 +556,7 @@ class TestLoanPaydownTracking:
         rows = [row for row in loan["paydown"]["rows"] if not row.get("isFullYearProjection")]
         by_year = {row["year"]: row for row in rows}
         assert by_year[2023]["servicerDisplay"] == "DHi Mortgage Company, Ltd., LP"
-        assert by_year[2024]["servicerDisplay"] == "DHi Mortgage Company, Ltd., LP→Rocket"
+        assert by_year[2024]["servicerDisplay"] == "DHi Mortgage Company, Ltd., LP → Rocket"
         assert by_year[2025]["servicerDisplay"] == "Rocket"
         assert by_year[2026]["servicerDisplay"] == "Rocket"
         assert by_year[2023]["startingBalance"] == 468_750
@@ -581,6 +580,69 @@ class TestLoanPaydownTracking:
         assert loan["assertions"]["L7_originalMinusPrincipalEqualsCurrentBalance"] is True
         assert data["assertions"]["L3_totalBalanceEqualsSumLoanBalances"] is True
         assert data["assertions"]["L8_interestToDateEqualsSumLoanInterest"] is True
+
+    def test_servicer_transfer_includes_origination_year_without_1098(self, client, db, user, prop):
+        old_loan = prop.loans[0]
+        old_loan.lender_name = "DHI / LoanCare"
+        old_loan.account_number = "0064944077"
+        old_loan.origination_date = "2023-05-26"
+        old_loan.servicer_start_date = "2023-05-26"
+        old_loan.servicer_end_date = "2024-09-01"
+        old_loan.closed_date = "2024-09-01"
+        old_loan.status = "CLOSED"
+        old_loan.closure_reason = "Servicing transfer"
+        old_loan.transfer_reason = "Servicing transfer"
+        old_loan.servicer_sequence = 1
+        old_loan.is_current_servicer = False
+        old_loan.original_amount = 468_750
+        old_loan.current_balance = 463_428
+        old_loan.interest_rate = 7.625
+        old_loan.monthly_payment = 4_274.51
+        old_loan.escrow_amount = 956.73
+        old_loan.principal_due = 0
+        old_loan.interest_due = 0
+        rocket = models.Loan(
+            property_id=prop.id,
+            lender_name="Rocket",
+            account_number="3550379001",
+            origination_date="2023-05-26",
+            servicer_start_date="2024-10-01",
+            original_amount=468_750,
+            current_balance=438_502,
+            interest_rate=7.625,
+            monthly_payment=4_274.51,
+            escrow_amount=956.73,
+            principal_due=0,
+            interest_due=0,
+            loan_term_years=30,
+            status="OPEN",
+            transfer_reason="Servicing transfer",
+            is_current_servicer=True,
+            servicer_sequence=2,
+        )
+        db.add(rocket)
+        db.commit()
+        db.refresh(prop)
+        _add_1098_with_balance(db, prop, user.id, 2024, 8_827, 463_428, account="0064944077")
+        _add_1098_with_balance(db, prop, user.id, 2025, 35_088, 462_302, account="3550379001")
+        _add_mortgage_statement(
+            db, prop, user.id, 2026, 438_502,
+            account="3550379001", statement_date="07/15/2026",
+            ytd_principal=7_593, ytd_interest=16_869,
+        )
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        loan = resp.json()["loans"][0]
+        rows = [row for row in loan["paydown"]["rows"] if not row.get("isFullYearProjection")]
+        by_year = {row["year"]: row for row in rows}
+        assert 2023 in by_year
+        assert by_year[2023]["servicerDisplay"] == "DHI / LoanCare"
+        assert by_year[2023]["startingBalance"] == 468_750
+        assert by_year[2023]["endingBalance"] == 463_428
+        assert by_year[2024]["servicerDisplay"] == "DHI / LoanCare → Rocket"
+        assert by_year[2024]["startingBalance"] == 463_428
 
     def test_current_year_full_projection_is_separate_from_ytd_row(self, client, db, user, prop):
         loan = prop.loans[0]

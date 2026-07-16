@@ -726,6 +726,9 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
     extracted = _safe_extracted_data(document)
     current_balance = extracted.get("current_balance")
     escrow_total = extracted.get("escrow_amount")
+    if not escrow_total:
+        component_total = _escrow_component_total_from_mapping(extracted)
+        escrow_total = component_total if component_total > 0 else escrow_total
     statement_fields = [
         _setup_field(extracted, "account_number", "account_number", "Loan account number", "text", 0.98),
         _setup_field(extracted, "current_balance", "current_balance", "Current balance", "currency", 0.92),
@@ -777,6 +780,16 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         "addressValidation": _address_validation(getattr(document, "property", None), extracted),
         "warnings": [],
     }
+
+
+def _escrow_component_total_from_mapping(data: Dict[str, Any]) -> float:
+    return round(
+        _to_float(data.get("monthly_property_tax_escrow"))
+        + _to_float(data.get("monthly_insurance_escrow"))
+        + _to_float(data.get("monthly_mortgage_insurance"))
+        + _to_float(data.get("monthly_other_escrow")),
+        2,
+    )
 
 
 def _loan_statement_mapping_payload(prop: Optional[models.Property], extracted: Dict[str, Any], selected_loan_id: Optional[int] = None) -> Dict[str, Any]:
@@ -2545,6 +2558,11 @@ def _consolidated_loan_document_rows(prop: models.Property, docs: List[models.Do
             "interestRate": _to_float(latest_data.get("interest_rate")),
             "monthlyPayment": _to_float(latest_data.get("monthly_payment")),
             "escrowAmount": _to_float(latest_data.get("escrow_amount")),
+            "monthlyPropertyTaxEscrow": _to_float(latest_data.get("monthly_property_tax_escrow")),
+            "monthlyInsuranceEscrow": _to_float(latest_data.get("monthly_insurance_escrow")),
+            "monthlyMortgageInsurance": _to_float(latest_data.get("monthly_mortgage_insurance")),
+            "monthlyOtherEscrow": _to_float(latest_data.get("monthly_other_escrow")),
+            "estimatedTotalMonthlyPayment": _to_float(latest_data.get("estimated_total_monthly_payment")),
             "statementDate": (_parse_date(latest_statement_entry[1].get("statement_date")) or None).isoformat() if latest_statement_entry[1].get("statement_date") else None,
             "sourceDocumentIds": [doc.id for doc, _data in ordered],
             "sourceYears": sorted({_loan_doc_year(doc, data) for doc, data in ordered if _loan_doc_year(doc, data)}),
@@ -2654,9 +2672,24 @@ def apply_consolidated_loan_documents(
         loan.current_balance = _to_float(row.get("currentBalance")) or loan.current_balance
         loan.interest_rate = _to_float(row.get("interestRate")) or loan.interest_rate
         loan.monthly_payment = _to_float(row.get("monthlyPayment")) or loan.monthly_payment
-        if row.get("escrowAmount") is not None:
-            loan.escrow_amount = _to_float(row.get("escrowAmount"))
+        loan.monthly_property_tax_escrow = _to_float(row.get("monthlyPropertyTaxEscrow")) or loan.monthly_property_tax_escrow
+        loan.monthly_insurance_escrow = _to_float(row.get("monthlyInsuranceEscrow")) or loan.monthly_insurance_escrow
+        loan.monthly_mortgage_insurance = _to_float(row.get("monthlyMortgageInsurance")) or loan.monthly_mortgage_insurance
+        loan.monthly_other_escrow = _to_float(row.get("monthlyOtherEscrow")) or loan.monthly_other_escrow
+        component_total = _escrow_component_total_from_mapping({
+            "monthly_property_tax_escrow": loan.monthly_property_tax_escrow,
+            "monthly_insurance_escrow": loan.monthly_insurance_escrow,
+            "monthly_mortgage_insurance": loan.monthly_mortgage_insurance,
+            "monthly_other_escrow": loan.monthly_other_escrow,
+        })
+        latest_escrow_total = _to_float(row.get("escrowAmount")) or component_total
+        if latest_escrow_total > 0:
+            loan.escrow_amount = latest_escrow_total
             loan.escrow_included = True
+        if _to_float(row.get("estimatedTotalMonthlyPayment")) > 0:
+            loan.estimated_total_monthly_payment = _to_float(row.get("estimatedTotalMonthlyPayment"))
+        elif loan.monthly_payment and latest_escrow_total > 0:
+            loan.estimated_total_monthly_payment = round(float(loan.monthly_payment or 0) + latest_escrow_total, 2)
         loan.statement_date = row.get("statementDate") or loan.statement_date
         source_document_ids = row.get("sourceDocumentIds") or []
         if source_document_ids:
@@ -2835,6 +2868,31 @@ def apply_loan_statement(
             setattr(loan, target, value)
         else:
             setattr(loan, target, _to_float(value))
+
+    if doc.doc_category == "mortgage_statement":
+        escrow_component_fields = {
+            "monthly_property_tax_escrow",
+            "monthly_insurance_escrow",
+            "monthly_mortgage_insurance",
+            "monthly_other_escrow",
+        }
+        for target in escrow_component_fields:
+            if extracted.get(target) is not None:
+                setattr(loan, target, _to_float(extracted.get(target)))
+        component_total = _escrow_component_total_from_mapping({
+            "monthly_property_tax_escrow": loan.monthly_property_tax_escrow,
+            "monthly_insurance_escrow": loan.monthly_insurance_escrow,
+            "monthly_mortgage_insurance": loan.monthly_mortgage_insurance,
+            "monthly_other_escrow": loan.monthly_other_escrow,
+        })
+        latest_escrow_total = _to_float(extracted.get("escrow_amount")) or component_total
+        if latest_escrow_total > 0:
+            loan.escrow_amount = latest_escrow_total
+            loan.escrow_included = True
+        if extracted.get("estimated_total_monthly_payment") is not None:
+            loan.estimated_total_monthly_payment = _to_float(extracted.get("estimated_total_monthly_payment"))
+        elif loan.monthly_payment and latest_escrow_total > 0:
+            loan.estimated_total_monthly_payment = round(float(loan.monthly_payment or 0) + latest_escrow_total, 2)
 
     if selected_fields & {"monthly_property_tax_escrow", "monthly_insurance_escrow", "monthly_mortgage_insurance", "monthly_other_escrow", "escrow_amount"}:
         loan.escrow_included = True

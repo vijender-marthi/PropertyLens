@@ -15,6 +15,7 @@ export const propertyTabs = [
 
   { id: 'documents', label: 'Documents', path: 'documents', group: 'utility', icon: 'Files' },
   { id: 'verify', label: 'Data health', path: 'verify', group: 'utility', icon: 'HeartPulse' },
+  { id: 'details', label: 'Details', path: 'details', group: 'utility', icon: 'ClipboardList' },
   { id: 'checklist', label: 'Checklist', path: 'checklist', group: 'utility', icon: 'ListChecks' },
   { id: 'raw data', label: 'Raw data', path: 'raw-data', group: 'utility', icon: 'Table2' },
 ]

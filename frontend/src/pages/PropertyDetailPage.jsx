@@ -8,7 +8,7 @@ import {
 import {
 ChevronLeft, ChevronDown, ChevronRight, Pencil, Trash2, Plus, Upload,
 FileText, Building2, Home, X, Download, Info, CheckCircle2, AlertTriangle, PauseCircle, TrendingDown, Lock,
-LayoutDashboard, Landmark, KeyRound, ReceiptText, SlidersHorizontal, Files, HeartPulse, ListChecks, Table2, GitBranch
+LayoutDashboard, Landmark, KeyRound, ReceiptText, SlidersHorizontal, Files, HeartPulse, ClipboardList, ListChecks, Table2, GitBranch
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { jsPDF } from 'jspdf'
@@ -63,6 +63,7 @@ const PROPERTY_TAB_ICONS = {
   SlidersHorizontal,
   Files,
   HeartPulse,
+  ClipboardList,
   ListChecks,
   Table2,
 }
@@ -258,6 +259,116 @@ function RealEstateStat({ label, value, note, muted = false }) {
   )
 }
 
+function setupDetailText(value) {
+  if (value === null || value === undefined || value === '') return 'Not provided'
+  return String(value)
+}
+
+function setupDetailMoney(value) {
+  if (value === null || value === undefined || value === '') return 'Not provided'
+  return fmt(value)
+}
+
+function setupDetailDate(value) {
+  if (!value) return 'Not provided'
+  return formatDate(value)
+}
+
+function setupFlagEnabled(value) {
+  return Boolean(value)
+}
+
+function SetupDetailField({ label, value }) {
+  return (
+    <div className="min-w-0 border-b border-gray-100 py-3 last:border-b-0 dark:border-gray-800">
+      <dt className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</dt>
+      <dd className="mt-1 break-words text-sm font-semibold text-gray-900 dark:text-white">{value}</dd>
+    </div>
+  )
+}
+
+function SetupDetailsSection({ title, children }) {
+  return (
+    <section className="min-w-0">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{title}</h3>
+      <dl className="mt-3 rounded-xl border border-gray-200 bg-white px-4 dark:border-gray-700 dark:bg-gray-900">
+        {children}
+      </dl>
+    </section>
+  )
+}
+
+function SetupFlagPill({ enabled, label }) {
+  return (
+    <span className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${
+      enabled
+        ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-900/30 dark:text-blue-200 dark:ring-blue-800'
+        : 'bg-gray-100 text-gray-500 ring-1 ring-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:ring-gray-700'
+    }`}>
+      {label}: {enabled ? 'Yes' : 'No'}
+    </span>
+  )
+}
+
+function PropertySetupDetailsTab({ prop }) {
+  const hasLoan = Array.isArray(prop?.loans) ? prop.loans.length > 0 : setupFlagEnabled(prop?.has_loan)
+  const hasHoa = setupFlagEnabled(prop?.hoa_flag || prop?.hoa_fee || prop?.hoa_special_assessment || (prop?.hoa_history && prop.hoa_history !== '[]'))
+  const hasSolar = setupFlagEnabled((prop?.solar_ownership || 'None') !== 'None' || prop?.solar_monthly_payment || prop?.solar_purchase_price)
+  const currentResidency = prop?.current_residency_status || prop?.usage_type
+
+  return (
+    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      <div className="flex flex-col gap-3 border-b border-gray-200 pb-5 dark:border-gray-700 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Property setup</p>
+          <h2 className="mt-1 text-xl font-semibold text-gray-950 dark:text-white">Details</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Read-only view of the first Property Setup page.</p>
+        </div>
+        <Link to={`/properties/${prop.id}/edit`} className="btn-secondary inline-flex items-center gap-1.5 text-sm">
+          <Pencil className="h-3.5 w-3.5" /> Edit setup
+        </Link>
+      </div>
+
+      <div className="mt-5 grid gap-6 lg:grid-cols-2">
+        <SetupDetailsSection title="Basics">
+          <SetupDetailField label="Property name" value={setupDetailText(prop?.name)} />
+          <SetupDetailField label="Home Type" value={setupDetailText(homeTypeLabel(prop?.property_type, prop?.property_type_raw))} />
+          <SetupDetailField label="Original Residency Status" value={setupDetailText(prop?.original_residency_status)} />
+          <SetupDetailField label="Current Residency Status" value={setupDetailText(currentResidency)} />
+          <SetupDetailField label="Street" value={setupDetailText(prop?.address)} />
+          <SetupDetailField label="City" value={setupDetailText(prop?.city)} />
+          <SetupDetailField label="State" value={setupDetailText(prop?.state)} />
+          <SetupDetailField label="ZIP code" value={setupDetailText(prop?.zip_code)} />
+        </SetupDetailsSection>
+
+        <div className="grid gap-6">
+          <SetupDetailsSection title="Purchase">
+            <SetupDetailField label="Purchase date" value={setupDetailDate(prop?.purchase_date)} />
+            <SetupDetailField label="Purchase price" value={setupDetailMoney(prop?.purchase_price)} />
+            <SetupDetailField label="Down payment" value={setupDetailMoney(prop?.down_payment)} />
+            <SetupDetailField label="Closing costs" value={setupDetailMoney(prop?.closing_costs)} />
+          </SetupDetailsSection>
+
+          <SetupDetailsSection title="Valuation">
+            <SetupDetailField label="Current value" value={setupDetailMoney(prop?.market_value)} />
+            <SetupDetailField label="Valuation source" value={setupDetailText(prop?.market_value_source)} />
+            <SetupDetailField label="Valuation date" value={setupDetailDate(prop?.market_value_updated)} />
+          </SetupDetailsSection>
+
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">This property has</h3>
+            <div className="mt-3 flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
+              <SetupFlagPill enabled={hasLoan} label="Loan" />
+              <SetupFlagPill enabled={hasHoa} label="HOA" />
+              <SetupFlagPill enabled={hasSolar} label="Solar" />
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function PropertyDetailPage() {
 const { id, tab: routeTab } = useParams()
 const navigate = useNavigate()
@@ -304,13 +415,6 @@ setDocs(Array.isArray(docsRes.data) ? docsRes.data : [])
 
 useEffect(() => {
   const params = new URLSearchParams(location.search)
-  if (routeTab === 'details') {
-    params.set('showDetails', 'true')
-    navigate(`/properties/${id}/summary?${params.toString()}`, { replace: true })
-    setActiveTab('summary')
-    setShowAddress(true)
-    return
-  }
   if (routeTab === 'usage') {
     navigate(`/properties/${id}/rental${location.search || ''}`, { replace: true })
     setActiveTab('rental')
@@ -616,6 +720,11 @@ onAddLoan={() => { setEditLoan(null); setShowLoanModal(true) }}
 {activeTab === 'verify' && (
 <DataHealthTab propId={id} onJump={setActiveTab} />
 )}
+
+{activeTab === 'details' && (
+<PropertySetupDetailsTab prop={prop} />
+)}
+
       {activeTab === 'summary' && (
         <PropertyStorySummary propId={id} prop={prop} metrics={metrics} metricVault={metricVault} onJump={setActiveTab} />
       )}
@@ -1518,18 +1627,10 @@ function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize
   }
 
   const logicalLoans = debt?.loans || []
-  const portfolio = debt?.portfolio || {}
   const loanMetricRows = metricVault?.loanMetrics || {}
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <LoanPortfolioMetric label="Total balance" value={portfolio.totalBalanceDisplay || '—'} />
-        <LoanPortfolioMetric label="Paid to date" value={portfolio.paidToDateDisplay || '—'} />
-        <LoanPortfolioMetric label="Interest to date" value={portfolio.interestToDateDisplay || '—'} />
-        <LoanPortfolioMetric label="Loan count" value={portfolio.loanCountDisplay || String(logicalLoans.length)} />
-      </div>
-
+    <div className="space-y-5">
       <div className="grid gap-4">
         {logicalLoans.map((loan) => (
           <LoanCard
@@ -1556,20 +1657,20 @@ function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize
       <button
         type="button"
         onClick={onAddLoan}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 px-4 py-5 text-sm font-medium text-gray-500 hover:border-blue-300 hover:text-blue-600 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:text-blue-300"
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-8 text-center text-lg font-medium text-gray-500 hover:border-blue-300 hover:text-blue-600 dark:border-neutral-600 dark:bg-neutral-900/90 dark:text-neutral-500 dark:hover:border-neutral-400 dark:hover:text-neutral-300"
       >
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        Add loan
+        <Plus className="h-5 w-5" aria-hidden="true" />
+        Add a loan - a HELOC or second mortgage stacks here as its own card with its own year table. The portfolio strip sums all loans.
       </button>
     </div>
   )
 }
 
-function LoanPortfolioMetric({ label, value }) {
+function LoanPortfolioMetric({ label, value, tone }) {
   return (
-    <div className="rounded-lg border border-gray-100 bg-white p-3 dark:border-gray-800 dark:bg-gray-950/30">
-      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
-      <p className="mt-1 truncate text-2xl font-medium text-gray-900 dark:text-white">{value}</p>
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-900 dark:bg-neutral-950/95">
+      <p className="text-base font-medium text-gray-500 dark:text-neutral-500">{label}</p>
+      <p className={`mt-2 truncate text-3xl font-medium ${tone === 'positive' ? 'text-emerald-600 dark:text-emerald-500' : 'text-gray-950 dark:text-white'}`}>{value}</p>
     </div>
   )
 }
