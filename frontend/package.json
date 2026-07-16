@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "NODE_OPTIONS=--max-old-space-size=2048 vite build",
+    "test:formatters": "node src/utils/formatters.test.js",
+    "standards:check": "npm run test:formatters",
     "preview": "vite preview"
   },
   "dependencies": {

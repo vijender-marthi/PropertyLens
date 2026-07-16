@@ -1,0 +1,96 @@
+export const chartColors = {
+  grid: '#f0f0f0',
+  gridLight: '#f1f5f9',
+  axisText: '#111827',
+  muted: '#9ca3af',
+  mutedAxis: '#94a3b8',
+  neutral: '#6b7280',
+  neutralLight: '#cbd5e1',
+  borderLight: '#e5e7eb',
+  trackLight: '#e2e8f0',
+  surfaceVeryLight: '#f8fafc',
+  surfaceSubtle: '#f3f4f6',
+  surfaceWhite: '#ffffff',
+  dashboardAccent: '#2d4fa1',
+  tooltipBorderLight: '#e2e8f0',
+  tooltipBorderDark: '#374151',
+  tooltipBgLight: '#ffffff',
+  tooltipBgDark: '#1f2937',
+  tooltipTextLight: '#374151',
+  tooltipTextDark: '#d1d5db',
+  primary: '#2563eb',
+  primarySoft: '#3b82f6',
+  primaryTint: '#eff6ff',
+  primaryBorderSoft: '#93c5fd',
+  principal: '#22c55e',
+  positive: '#059669',
+  positiveSoft: '#10b981',
+  positiveTint: '#f0fdf4',
+  positiveBorderSoft: '#6ee7b7',
+  success: '#16a34a',
+  successStrong: '#15803d',
+  danger: '#ef4444',
+  dangerStrong: '#dc2626',
+  dangerDark: '#b91c1c',
+  expense: '#e11d48',
+  warning: '#f97316',
+  warningSoft: '#f59e0b',
+  warningStrong: '#d97706',
+  warningDark: '#b45309',
+  sky: '#0369a1',
+  skyDark: '#0c4a6e',
+  cyan: '#0891b2',
+  purple: '#7c3aed',
+  purpleStrong: '#9333ea',
+  purplePale: '#ede9fe',
+  purpleTint: '#f5f3ff',
+  purpleBorderSoft: '#c4b5fd',
+  teal: '#0f766e',
+  rose: '#f43f5e',
+  roseLight: '#fda4af',
+  rosePale: '#fecdd3',
+  slateDark: '#334155',
+  roseDark: '#4c0519',
+  cyanOverlay: 'rgba(8,145,178,0.5)',
+  roseOverlay: 'rgba(244,63,94,0.5)',
+  whiteOverlay: 'rgba(255,255,255,0.18)',
+  warningOverlay: 'rgba(245,158,11,0.35)',
+  dangerOverlay: 'rgba(239,68,68,0.35)',
+  chartCursor: 'rgba(148,163,184,0.08)',
+  positiveBadgeBg: '#eaf3de',
+  positiveBadgeText: '#3b6d11',
+  negativeBadgeBg: '#fcebeb',
+  negativeBadgeText: '#a32d2d',
+}
+
+export const chartColorRamps = {
+  blue: ['#bfdbfe', '#93c5fd', '#60a5fa', '#3b82f6', '#2563eb', '#1d4ed8', '#1e40af'],
+  green: ['#bbf7d0', '#86efac', '#4ade80', '#22c55e', '#16a34a', '#15803d', '#166534'],
+  amber: ['#fde68a', '#fcd34d', '#fbbf24', '#f59e0b', '#d97706', '#b45309', '#92400e'],
+  red: ['#fecaca', '#fca5a5', '#f87171', '#ef4444', '#dc2626', '#b91c1c', '#991b1b'],
+}
+
+export const chartTypography = {
+  tick: { fontSize: 11 },
+  mutedTick: { fontSize: 10, fill: chartColors.mutedAxis },
+  smallMutedTick: { fontSize: 9, fill: chartColors.mutedAxis },
+}
+
+export function chartTooltipStyle(dark = false) {
+  return {
+    fontSize: 11,
+    borderRadius: 8,
+    border: `1px solid ${dark ? chartColors.tooltipBorderDark : chartColors.tooltipBorderLight}`,
+    background: dark ? chartColors.tooltipBgDark : chartColors.tooltipBgLight,
+    color: dark ? chartColors.tooltipTextDark : chartColors.tooltipTextLight,
+  }
+}
+
+export function referenceLineLabel(value) {
+  return {
+    value,
+    position: 'top',
+    fill: chartColors.axisText,
+    ...chartTypography.tick,
+  }
+}

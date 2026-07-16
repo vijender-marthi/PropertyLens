@@ -1,450 +1,464 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useEffect } from 'react'
 import {
-  FileText, Download, Upload, Printer, TrendingUp, DollarSign,
-  Landmark, Shield, Building2, CheckCircle, AlertCircle, ChevronDown,
-  Calendar, X,
+  AlertCircle,
+  BarChart3,
+  BookOpen,
+  Building2,
+  CheckCircle,
+  Download,
+  FileText,
+  Landmark,
+  PiggyBank,
+  Printer,
+  Shield,
+  TrendingUp,
+  Upload,
+  X,
 } from 'lucide-react'
-import { propAPI, docAPI } from '../services/api'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
-import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
+import PageContainer from '../components/PageContainer'
+import DataTable from '../components/DataTable'
+import { docAPI, propAPI } from '../services/api'
+import { REPORT_CALLOUT_THEMES, REPORT_SECTION_THEMES, REPORT_STATUS_BADGES } from '../config/reportTheme'
 
-const fmt = (n) => {
-  if (n == null) return '—'
-  const sign = n < 0 ? '-' : ''
-  const abs = Math.abs(n)
-  const short = (v) => new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(v)
-
-  if (abs >= 1_000_000) return `${sign}$${short(abs / 1_000_000)}M`
-  if (abs >= 1_000) return `${sign}$${short(abs / 1_000)}K`
-
-  return `${sign}$${short(abs)}`
+const iconMap = {
+  'trending-up': TrendingUp,
+  'piggy-bank': PiggyBank,
+  landmark: Landmark,
 }
-const fmtPct = (n) => `${(n || 0).toFixed(2)}%`
-const isPrimary = p => (p.usage_type || 'Rental').toLowerCase() === 'primary'
 
-// ── Section wrapper ───────────────────────────────────────────────────────────
-function ReportSection({ id, icon: Icon, title, children }) {
+const severityClass = {
+  critical: 'border-red-200 bg-red-50 text-red-950',
+  warning: 'border-amber-200 bg-amber-50 text-amber-950',
+  info: 'border-blue-200 bg-blue-50 text-blue-950',
+  ok: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+}
+
+const storyThemeById = {
+  'cash-flow-story': 'cashFlow',
+  'wealth-creation-story': 'wealth',
+  'debt-financing-story': 'debt',
+  'tax-benefits-story': 'tax',
+}
+
+function metricDisplay(metric) {
+  return metric?.display ?? metric?.fullDisplay ?? '—'
+}
+
+function tableColumns(table) {
+  return (table?.columns || []).map((column) => ({
+    id: column,
+    header: column,
+    accessor: column,
+    sortable: false,
+  }))
+}
+
+function tableRows(table) {
+  return (table?.rows || []).map((row, index) => ({
+    ...row,
+    __rowKey: `${table.id}-${index}`,
+  }))
+}
+
+function sectionTheme(theme) {
+  return REPORT_SECTION_THEMES[theme] || REPORT_SECTION_THEMES.neutral
+}
+
+function ReportSection({ id, icon: Icon, eyebrow, title, question, theme = 'neutral', children }) {
+  const styles = sectionTheme(theme)
   return (
-    <section id={id} className="border-b border-slate-100 dark:border-gray-700 pb-10 mb-10 last:border-0">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-gray-700 print:bg-slate-200 shrink-0">
-          <Icon className="w-4 h-4 text-slate-500 dark:text-gray-400" />
+    <section id={id} className={`break-inside-avoid rounded-xl border p-5 pb-6 ${styles.surface} ${styles.border}`}>
+      <div className={`mb-5 h-1 w-20 rounded-full ${styles.accent}`} />
+      <div className="mb-5 flex items-start gap-3">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${styles.icon}`}>
+          <Icon className="h-4 w-4" aria-hidden="true" />
         </div>
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-white tracking-tight">{title}</h2>
+        <div>
+          {eyebrow ? <p className={`text-xs font-semibold uppercase tracking-wide ${styles.eyebrow}`}>{eyebrow}</p> : null}
+          <h2 className="text-xl font-semibold text-gray-950">{title}</h2>
+          {question ? <p className="mt-1 text-sm text-gray-500">{question}</p> : null}
+        </div>
       </div>
       {children}
     </section>
   )
 }
 
-function KV({ label, value, color }) {
+function CalloutBox({ type = 'insight', children }) {
+  const styles = REPORT_CALLOUT_THEMES[type] || REPORT_CALLOUT_THEMES.insight
+  const Icon = type === 'good' ? CheckCircle : AlertCircle
   return (
-    <div className="bg-slate-50 dark:bg-gray-700/50 rounded-xl px-4 py-3 border border-slate-100 dark:border-gray-700">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-gray-500">{label}</p>
-<p className="text-lg font-bold mt-1 leading-none text-slate-900 dark:text-white" style={color ? { color } : undefined}>{value}</p>
+    <div className={`rounded-lg border p-4 ${styles.surface} ${styles.border} ${styles.text}`}>
+      <div className="flex items-start gap-3">
+        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${styles.icon}`} aria-hidden="true" />
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide opacity-70">{styles.label}</p>
+          <div className="mt-1 text-sm leading-6">{children}</div>
+        </div>
+      </div>
     </div>
   )
 }
 
-// ── Uploaded report card ───────────────────────────────────────────────────────
-function UploadedReportCard({ doc, onDelete }) {
+function MetricCard({ metric }) {
   return (
-    <div className="flex items-center justify-between gap-4 bg-white dark:bg-gray-800 border border-slate-100 dark:border-gray-700 rounded-xl px-4 py-3 shadow-sm">
-      <div className="flex items-center gap-3 min-w-0">
-        <FileText className="w-5 h-5 text-blue-500 shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-800 dark:text-gray-200 truncate">{doc.filename}</p>
-          <p className="text-[10px] text-slate-400 dark:text-gray-500">{doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString() : '—'} · {doc.property_name || 'Portfolio'}</p>
+    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-medium text-gray-500">{metric?.label || 'Metric'}</p>
+      <p className="mt-2 text-2xl font-semibold text-gray-950">{metricDisplay(metric)}</p>
+      {metric?.description ? <p className="mt-2 text-xs text-gray-500">{metric.description}</p> : null}
+      {metric?.asOfDate ? <p className="mt-2 text-xs text-gray-400">As of {metric.asOfDate}</p> : null}
+    </div>
+  )
+}
+
+function ScorecardItem({ item }) {
+  const className = severityClass[item.status] || severityClass.info
+  const Icon = item.status === 'ok' ? CheckCircle : AlertCircle
+  return (
+    <div className={`rounded-lg border p-4 ${className}`}>
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4" aria-hidden="true" />
+        <p className="text-sm font-semibold">{item.label}</p>
+      </div>
+      <p className="mt-2 text-lg font-semibold">{item.display}</p>
+      <p className="mt-1 text-sm opacity-80">{item.description}</p>
+    </div>
+  )
+}
+
+function HighlightCard({ item }) {
+  const Icon = iconMap[item.icon] || TrendingUp
+  return (
+ <div className="rounded-lg border border-emerald-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start gap-3">
+ <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </div>
+        <div>
+ <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{item.headline}</p>
+ <h3 className="mt-1 font-semibold text-gray-950">{item.title}</h3>
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <a href={`/api/documents/${doc.id}/download`} target="_blank" rel="noreferrer"
-          className="text-xs text-blue-600 font-semibold hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50 transition-colors">View</a>
-        <button onClick={() => onDelete(doc.id)}
-          className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors">
-          <X className="w-3.5 h-3.5" />
-        </button>
+ {item.metric ? <p className="mt-4 text-2xl font-semibold text-gray-950">{metricDisplay(item.metric)}</p> : null}
+ <p className="mt-2 text-sm text-gray-600">{item.summary}</p>
+      {item.cta?.href ? (
+ <Link className="mt-4 inline-flex text-sm font-semibold text-blue-700" to={item.cta.href}>
+          {item.cta.label}
+        </Link>
+      ) : null}
+    </div>
+  )
+}
+
+function RiskCard({ item }) {
+  const className = severityClass[item.severity] || severityClass.info
+  return (
+    <div className={`rounded-lg border p-5 ${className}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-70">{item.severity || 'review'}</p>
+      <h3 className="mt-2 text-lg font-semibold">{item.issue}</h3>
+      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="font-semibold">Impact</dt>
+          <dd className="opacity-85">{item.financialImpact || '—'}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold">Confidence</dt>
+          <dd className="opacity-85">{item.confidence || '—'}</dd>
+        </div>
+      </dl>
+      <p className="mt-4 text-sm opacity-90">{item.whyItMatters}</p>
+      <p className="mt-3 text-sm font-semibold">Recommended next step: {item.recommendation}</p>
+      {item.cta?.href ? (
+        <Link className="mt-4 inline-flex text-sm font-semibold underline-offset-4 hover:underline" to={item.cta.href}>
+          {item.cta.label}
+        </Link>
+      ) : null}
+    </div>
+  )
+}
+
+function StoryPanel({ section }) {
+  const story = section.story || {}
+  return (
+    <ReportSection id={section.id} icon={BookOpen} eyebrow="Portfolio Story" title={section.title} question={section.question} theme={storyThemeById[section.id] || 'neutral'}>
+ <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+ <h3 className="text-lg font-semibold text-gray-950">{story.title || section.title}</h3>
+ <p className="mt-2 text-sm leading-6 text-gray-600">{story.explanation || 'Backend story unavailable.'}</p>
+          </div>
+          {story.link?.href ? (
+            <Link className="btn-secondary shrink-0 text-sm" to={story.link.href}>
+              {story.link.label}
+            </Link>
+          ) : null}
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {(story.metrics || []).map((metric) => <MetricCard key={metric.key || metric.label} metric={metric} />)}
+        </div>
       </div>
+    </ReportSection>
+  )
+}
+
+function UploadedReportCard({ doc, onDelete }) {
+  return (
+ <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <FileText className="h-4 w-4 shrink-0 text-red-500" aria-hidden="true" />
+        <div className="min-w-0">
+ <p className="truncate text-sm font-medium text-gray-900">{doc.filename}</p>
+ <p className="text-xs text-gray-500">{doc.document_type || 'Report'}</p>
+        </div>
+      </div>
+      <button type="button" className="rounded-md p-1 text-gray-400 hover:text-red-600 print:hidden" onClick={() => onDelete(doc.id)} aria-label={`Delete ${doc.filename}`}>
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
     </div>
   )
 }
 
 export default function ReportsPage() {
-  const [loading, setLoading]   = useState(true)
-  const [data, setData]         = useState(null)
-  const [docs, setDocs]         = useState([])
+  const [loading, setLoading] = useState(true)
+  const [report, setReport] = useState(null)
+  const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
-  const [selectedPropId, setSelectedPropId] = useState('all')
-  const fileRef = useRef()
-  const printRef = useRef()
+  const fileRef = useRef(null)
 
   useEffect(() => {
     Promise.all([propAPI.dashboard(), docAPI.listAll()])
-      .then(([dashRes, docRes]) => {
-        setData(dashRes.data)
-        setDocs((docRes.data || []).filter(d => d.content_type === 'application/pdf' || d.filename?.endsWith('.pdf')))
+      .then(([dashboardResponse, docsResponse]) => {
+        setReport(dashboardResponse.data?.portfolio_report || null)
+        setDocs((docsResponse.data || []).filter((doc) => doc.content_type === 'application/pdf' || doc.filename?.endsWith('.pdf')))
       })
-      .catch(() => toast.error('Failed to load data'))
+      .catch(() => toast.error('Failed to load report'))
       .finally(() => setLoading(false))
   }, [])
 
-  const handleUpload = async (e) => {
-    const file = e.target.files?.[0]
+  const handleUpload = async (event) => {
+    const file = event.target.files?.[0]
     if (!file) return
     setUploading(true)
     try {
       const form = new FormData()
       form.append('file', file)
-      if (selectedPropId !== 'all') form.append('property_id', selectedPropId)
-      const res = await docAPI.upload(form)
-      setDocs(prev => [res.data, ...prev])
+      const response = await docAPI.upload(form)
+      setDocs((current) => [response.data, ...current])
       toast.success('Report uploaded')
     } catch {
       toast.error('Upload failed')
     } finally {
       setUploading(false)
-      fileRef.current.value = ''
+      if (fileRef.current) fileRef.current.value = ''
     }
   }
 
   const handleDeleteDoc = async (id) => {
-    if (!confirm('Delete this report?')) return
+    if (!confirm('Delete report?')) return
     await docAPI.delete(id)
-    setDocs(prev => prev.filter(d => d.id !== id))
+    setDocs((current) => current.filter((doc) => doc.id !== id))
     toast.success('Deleted')
   }
 
   const exportXLSX = () => {
-    if (!data) return
-    const props = data.properties || []
-    const rows = props.map(p => ({
-      'Property Name':   propertyLabel(p),
-      'Property ID':     p.property_uid || '',
-      'Type':            isPrimary(p) ? 'Primary Residence' : 'Rental',
-      'Market Value':    p.market_value || 0,
-      'Purchase Price':  p.purchase_price || 0,
-      'Appreciation':    (p.market_value || 0) - (p.purchase_price || 0),
-      'Equity':          p.equity || 0,
-      'Loan Balance':    p.total_loan_balance || 0,
-      'LTV %':           p.market_value > 0 ? ((p.total_loan_balance||0)/p.market_value*100).toFixed(2) : '—',
-      'Monthly Rent':    p.effective_rent || 0,
-      'Monthly Mortgage':p.monthly_mortgage || 0,
-      'Monthly Cash Flow':p.monthly_cash_flow || 0,
-      'HOA/mo':          p.hoa_fee || 0,
-      'HOA Assessment':  p.hoa_special_assessment || 0,
-      'Solar Ownership': p.solar_ownership || 'None',
-      'Solar Lease/mo':  p.solar_monthly_payment || 0,
-      'Solar Purchase':  p.solar_purchase_price || 0,
-      'Annual NOI':      p.annual_noi || 0,
-    }))
-    const ws = XLSX.utils.json_to_sheet(rows)
-    ws['!cols'] = Array(12).fill({ wch: 18 })
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Report')
-
-    const trends = data.yearly_trends || []
-    if (trends.length) {
-      const trows = trends.map(r => ({
-        'Year': r.year,
-        'Rental Income': r.rental_income || 0,
-        'Mortgage Interest': r.mortgage_interest || 0,
-        'Property Taxes': r.property_taxes || 0,
-        'Operating Expenses': r.operating_expenses || 0,
-        'Depreciation': r.depreciation || 0,
-        'Net Income': r.net_income || 0,
-      }))
-      const ws2 = XLSX.utils.json_to_sheet(trows)
-      ws2['!cols'] = Array(7).fill({ wch: 20 })
-      XLSX.utils.book_append_sheet(wb, ws2, 'Yearly Trends')
-    }
-
-    XLSX.writeFile(wb, `PropertyLens_Report_${new Date().toISOString().slice(0,10)}.xlsx`)
+    if (!report?.appendix?.tables?.length) return
+    const workbook = XLSX.utils.book_new()
+    report.appendix.tables.forEach((table) => {
+      const worksheet = XLSX.utils.json_to_sheet(table.rows || [])
+      XLSX.utils.book_append_sheet(workbook, worksheet, table.title.slice(0, 31))
+    })
+    XLSX.writeFile(workbook, `PropertyLens_Portfolio_Report_${report.cover?.asOfDate || 'export'}.xlsx`)
   }
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
-    </div>
-  )
+  if (loading) {
+    return (
+      <PageContainer>
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+        </div>
+      </PageContainer>
+    )
+  }
 
-  if (!data) return <p className="text-slate-400 dark:text-gray-500 text-sm p-8">No data available. Add properties first.</p>
-
-  const rentalProps = (data.properties || []).filter(p => !isPrimary(p))
-  const primaryProps = (data.properties || []).filter(p => isPrimary(p))
-  const d_mv  = (data.properties || []).reduce((s,p) => s+(p.market_value||0), 0)
-  const d_eq  = (data.properties || []).reduce((s,p) => s+(p.equity||0), 0)
-  const d_lb  = (data.properties || []).reduce((s,p) => s+(p.total_loan_balance||0), 0)
-  const dr_mr = rentalProps.reduce((s,p) => s+(p.effective_rent||0), 0)
-  const dr_cf = rentalProps.reduce((s,p) => s+(p.monthly_cash_flow||0), 0)
-  const dr_noi= rentalProps.reduce((s,p) => s+(p.annual_noi||0), 0)
-  const dr_mm = rentalProps.reduce((s,p) => s+(p.monthly_mortgage||0), 0)
-  const dr_lbs= rentalProps.reduce((s,p) => s+(p.total_loan_balance||0), 0)
-  const dr_mv = rentalProps.reduce((s,p) => s+(p.market_value||0), 0)
-  const rentalLTV = dr_mv > 0 ? dr_lbs/dr_mv*100 : 0
-  const dr_ads= dr_mm * 12
-  const dscr  = dr_ads > 0 ? dr_noi/dr_ads : null
-  const d_pp  = (data.properties||[]).reduce((s,p) => s+(p.purchase_price||0), 0)
-  const allLoans = rentalProps.flatMap(p => p.loans||[])
-  const d_lbs_all= allLoans.reduce((s,l) => s+(l.current_balance||0), 0)
-  const wRate = d_lbs_all > 0
-    ? allLoans.reduce((s,l) => s+(l.current_balance||0)*(l.interest_rate||0), 0)/d_lbs_all : 0
-  const yearlyTrends = data.yearly_trends || []
-  const latestTrend  = yearlyTrends[yearlyTrends.length - 1]
-  const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' })
-  const cfMarginPct = dr_mr > 0 ? dr_cf/dr_mr*100 : 0
+  if (!report) {
+    return (
+      <PageContainer>
+ <div className="rounded-lg border border-amber-200 bg-amber-50 p-8 text-center text-amber-900">
+          <AlertCircle className="mx-auto h-8 w-8" aria-hidden="true" />
+          <h1 className="mt-3 text-lg font-semibold">Portfolio report unavailable</h1>
+          <p className="mt-1 text-sm">The backend report view model could not be loaded.</p>
+        </div>
+      </PageContainer>
+    )
+  }
 
   return (
-    <div className="max-w-4xl mx-auto">
-
-      {/* ── PAGE HEADER ───────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4 mb-8 flex-wrap">
+    <PageContainer>
+      <div className="flex flex-col gap-4 print:hidden sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Portfolio Report</h1>
-          <p className="text-sm text-slate-400 dark:text-gray-500 mt-1">Generated {today} · {data.properties?.length || 0} properties</p>
+          <h1 className="text-2xl font-bold text-gray-950">Portfolio Report</h1>
+          <p className="mt-1 text-sm text-gray-500">Professional investment report generated from backend-owned metrics and narratives.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap print:hidden">
-          <button onClick={exportXLSX}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs font-semibold text-slate-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-gray-700/50 shadow-sm transition-colors">
-            <Download className="w-3.5 h-3.5" /> Export XLSX
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={exportXLSX}>
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Export XLSX
           </button>
-          <button onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-700 shadow-sm transition-colors">
-            <Printer className="w-3.5 h-3.5" /> Print / Save PDF
+          <button type="button" className="btn-primary inline-flex items-center gap-2" onClick={() => window.print()}>
+            <Printer className="h-4 w-4" aria-hidden="true" />
+            Print / Save PDF
           </button>
         </div>
       </div>
 
-      <div ref={printRef} className="space-y-0">
+ <div className="space-y-10 rounded-xl border border-slate-200 bg-slate-50 p-6 shadow-sm print:border-0 print:bg-white print:p-0 print:shadow-none">
+ <section className="break-after-page rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-8 text-slate-950 print:min-h-screen print:border-0 print:bg-white">
+<p className="text-sm font-semibold uppercase tracking-wide text-blue-700 print:text-gray-500">PropertyLens</p>
+<h2 className="mt-6 max-w-3xl text-4xl font-semibold tracking-tight text-slate-950">{report.cover?.title}</h2>
+<p className="mt-4 max-w-2xl text-lg text-slate-600 print:text-gray-600">{report.cover?.subtitle}</p>
+          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard metric={report.executiveSummary?.primaryMetric} />
+            {(report.executiveSummary?.supportingMetrics || []).slice(0, 3).map((metric) => <MetricCard key={metric.key} metric={metric} />)}
+          </div>
+<dl className="mt-10 grid gap-4 text-sm text-slate-600 print:text-gray-600 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <dt className="font-semibold text-slate-950 print:text-gray-950">Prepared for</dt>
+              <dd>{report.cover?.preparedFor}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-slate-950 print:text-gray-950">As of date</dt>
+              <dd>{report.cover?.asOfDate}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-slate-950 print:text-gray-950">Last refreshed</dt>
+              <dd>{report.cover?.lastRefresh || '—'}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-slate-950 print:text-gray-950">Data quality</dt>
+              <dd>{report.cover?.dataQuality}</dd>
+            </div>
+          </dl>
+        </section>
 
-        {/* ── 1. PORTFOLIO OVERVIEW ─────────────────────────────────── */}
-        <ReportSection id="overview" icon={TrendingUp} title="Portfolio Overview">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <KV label="Total Market Value"   value={fmt(d_mv)} />
-            <KV label="Total Equity"         value={fmt(d_eq)} color="#2563eb" />
-            <KV label="Total Debt"           value={fmt(d_lb)} />
-            <KV label="Appreciation Gain"    value={fmt(d_mv - d_pp)} color={d_mv >= d_pp ? '#059669' : '#dc2626'} />
+        <ReportSection id="executive-summary" icon={FileText} eyebrow="1" title="Executive Summary" theme="executive">
+          <div className="rounded-lg border border-slate-200 bg-white p-5">
+            <h3 className="text-xl font-semibold text-gray-950">{report.executiveSummary?.headline}</h3>
+            <p className="mt-3 max-w-4xl text-sm leading-6 text-gray-600">{report.executiveSummary?.summary}</p>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <KV label="Rental Properties"    value={rentalProps.length} />
-            <KV label="Rental Portfolio LTV" value={fmtPct(rentalLTV)} color={rentalLTV > 80 ? '#dc2626' : rentalLTV > 65 ? '#d97706' : '#059669'} />
-            <KV label="Monthly Cash Flow"    value={fmt(dr_cf)} color={dr_cf >= 0 ? '#059669' : '#dc2626'} />
-            <KV label="Annual NOI"           value={fmt(dr_noi)} />
+          <div className="mt-4">
+            <CalloutBox type="insight">All values, narrative, priorities, and recommendations in this report come from the backend portfolio report contract.</CalloutBox>
           </div>
-          {primaryProps.length > 0 && (
-            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl px-5 py-4">
-              <p className="text-xs font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider mb-2">Primary Residence(s) — Excluded from Rental Metrics</p>
-              {primaryProps.map(p => (
-              <div key={p.id} className="flex items-center justify-between text-xs text-amber-950 dark:text-amber-100 py-1">
-                  <span className="font-medium">{propertyLabel(p)}</span>
-                  <span>Equity {fmt(p.equity||0)} · LTV {p.market_value>0?fmtPct((p.total_loan_balance||0)/p.market_value*100):'—'} · Monthly cost {fmt(p.monthly_mortgage||0)}</span>
+        </ReportSection>
+
+        <ReportSection id="portfolio-scorecard" icon={Shield} eyebrow="2" title="Portfolio Scorecard" theme="neutral">
+          <div className="grid gap-4 lg:grid-cols-3">
+            {(report.scorecard || []).map((item) => <ScorecardItem key={item.key} item={item} />)}
+          </div>
+        </ReportSection>
+
+        <ReportSection id="portfolio-snapshot" icon={BarChart3} eyebrow="3" title="Portfolio Snapshot" theme="neutral">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {(report.snapshot?.metrics || []).map((metric) => <MetricCard key={metric.key} metric={metric} />)}
+          </div>
+        </ReportSection>
+
+        <ReportSection id="performance-highlights" icon={TrendingUp} eyebrow="4" title="Performance Highlights" question="What is going well?" theme="wealth">
+          <div className="grid gap-4 lg:grid-cols-3">
+            {(report.performanceHighlights || []).map((item) => <HighlightCard key={item.id} item={item} />)}
+          </div>
+          <div className="mt-4">
+            <CalloutBox type="good">These highlights identify the strongest backend-reported contributors to portfolio performance.</CalloutBox>
+          </div>
+        </ReportSection>
+
+        <ReportSection id="risks" icon={AlertCircle} eyebrow="5" title="Risks & Areas for Improvement" question="What deserves attention?" theme="risk">
+          {(report.risks || []).length ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {report.risks.map((item) => <RiskCard key={item.id} item={item} />)}
+            </div>
+          ) : (
+            <CalloutBox type="good">No backend-prioritized risks are currently in the report.</CalloutBox>
+          )}
+        </ReportSection>
+
+        {(report.stories || []).map((section) => <StoryPanel key={section.id} section={section} />)}
+
+        <ReportSection id="property-performance" icon={Building2} eyebrow="10" title="Property-by-Property Performance" theme="neutral">
+          <div className="grid gap-4 lg:grid-cols-2">
+            {(report.properties || []).map((property) => (
+ <div key={property.id || property.name} className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+ <h3 className="font-semibold text-gray-950">{property.name}</h3>
+                    <span className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${REPORT_STATUS_BADGES[property.healthBadge] || REPORT_STATUS_BADGES.Monitor}`}>{property.healthBadge}</span>
+                  </div>
+ {property.cta?.href ? <Link className="text-sm font-semibold text-blue-700" to={property.cta.href}>{property.cta.label}</Link> : null}
                 </div>
-              ))}
-            </div>
-          )}
-        </ReportSection>
-
-        {/* ── 2. PROPERTY PERFORMANCE ───────────────────────────────── */}
-        <ReportSection id="properties" icon={Building2} title="Property Performance">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-gray-600 text-[10px] uppercase tracking-wider text-slate-400 dark:text-gray-500">
-                  <th className="py-2 text-left pr-4 font-semibold">Property</th>
-                  <th className="py-2 text-right pr-4 font-semibold">Market Value</th>
-                  <th className="py-2 text-right pr-4 font-semibold">Equity</th>
-                  <th className="py-2 text-right pr-4 font-semibold">LTV</th>
-                  <th className="py-2 text-right pr-4 font-semibold">Rent/mo</th>
-                  <th className="py-2 text-right pr-4 font-semibold">Cash Flow</th>
-                  <th className="py-2 text-right font-semibold">Annual NOI</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rentalProps.map(p => {
-                  const ltv = p.market_value > 0 ? (p.total_loan_balance||0)/p.market_value*100 : 0
-                  return (
-                    <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-gray-700/50">
-                      <td className="py-2.5 pr-4">
-                        <p className="font-medium text-slate-800 dark:text-gray-200">{propertyLabel(p)}</p>
-                        <p className="text-slate-400 dark:text-gray-500">{p.city}, {p.state}</p>
-                      </td>
-                      <td className="py-2.5 pr-4 text-right text-slate-700 dark:text-gray-300 font-medium">{fmt(p.market_value)}</td>
-                      <td className="py-2.5 pr-4 text-right font-semibold text-blue-700">{fmt(p.equity||0)}</td>
-                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: ltv>80?'#dc2626':ltv>65?'#d97706':'#059669' }}>{fmtPct(ltv)}</td>
-                      <td className="py-2.5 pr-4 text-right text-slate-700 dark:text-gray-300">{fmt(p.effective_rent||0)}</td>
-                      <td className="py-2.5 pr-4 text-right font-semibold" style={{ color:(p.monthly_cash_flow||0)>=0?'#059669':'#dc2626' }}>{fmt(p.monthly_cash_flow||0)}</td>
-                      <td className="py-2.5 text-right text-slate-700 dark:text-gray-300">{fmt(p.annual_noi||0)}</td>
-                    </tr>
-                  )
-                })}
-                <tr className="border-t-2 border-slate-300 dark:border-gray-500 bg-slate-50 dark:bg-gray-700/50 font-bold text-xs">
-                  <td className="py-2.5 pr-4 text-slate-700 dark:text-gray-300">TOTAL (Rental Portfolio)</td>
-                  <td className="py-2.5 pr-4 text-right text-slate-800 dark:text-gray-200">{fmt(dr_mv)}</td>
-                  <td className="py-2.5 pr-4 text-right text-blue-700">{fmt(d_eq - (primaryProps.reduce((s,p)=>s+(p.equity||0),0)))}</td>
-                  <td className="py-2.5 pr-4 text-right" style={{ color:rentalLTV>80?'#dc2626':rentalLTV>65?'#d97706':'#059669' }}>{fmtPct(rentalLTV)}</td>
-                  <td className="py-2.5 pr-4 text-right text-slate-800 dark:text-gray-200">{fmt(dr_mr)}</td>
-                  <td className="py-2.5 pr-4 text-right" style={{ color:dr_cf>=0?'#059669':'#dc2626' }}>{fmt(dr_cf)}</td>
-                  <td className="py-2.5 text-right text-slate-800 dark:text-gray-200">{fmt(dr_noi)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </ReportSection>
-
-        {/* ── 3. CASH FLOW ANALYSIS ─────────────────────────────────── */}
-        <ReportSection id="cashflow" icon={DollarSign} title="Cash Flow Analysis">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-            <KV label="Gross Rent / mo"       value={fmt(dr_mr)} />
-            <KV label="Net Cash Flow / mo"    value={fmt(dr_cf)} color={dr_cf>=0?'#059669':'#dc2626'} />
-            <KV label="Cash Flow Margin"      value={fmtPct(cfMarginPct)} color={cfMarginPct>10?'#059669':cfMarginPct>0?'#d97706':'#dc2626'} />
-            <KV label="Debt Service / yr"     value={fmt(dr_ads)} />
-            <KV label="DSCR"                  value={dscr!=null?`${dscr.toFixed(2)}×`:'N/A'} color={dscr==null?'#6b7280':dscr>1.25?'#059669':dscr>1?'#d97706':'#dc2626'} />
-            <KV label="Annual NOI"            value={fmt(dr_noi)} />
-          </div>
-          {yearlyTrends.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-gray-600 text-[10px] uppercase tracking-wider text-slate-400 dark:text-gray-500">
-                    <th className="py-2 text-left pr-4 font-semibold">Year</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Rental Income</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Op. Expenses</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Mortgage Int.</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Depreciation</th>
-                    <th className="py-2 text-right font-semibold">Net Income</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {yearlyTrends.map(r => (
-                    <tr key={r.year} className="hover:bg-slate-50 dark:hover:bg-gray-700/50">
-                      <td className="py-2 pr-4 font-semibold text-slate-700 dark:text-gray-300">{r.year}</td>
-                      <td className="py-2 pr-4 text-right text-slate-600 dark:text-gray-300">{fmt(r.rental_income||0)}</td>
-                      <td className="py-2 pr-4 text-right text-slate-600 dark:text-gray-300">{fmt(r.operating_expenses||0)}</td>
-                      <td className="py-2 pr-4 text-right text-slate-600 dark:text-gray-300">{fmt(r.mortgage_interest||0)}</td>
-                      <td className="py-2 pr-4 text-right text-slate-600 dark:text-gray-300">{fmt(r.depreciation||0)}</td>
-                      <td className="py-2 text-right font-semibold" style={{ color:(r.net_income||0)>=0?'#059669':'#dc2626' }}>{fmt(r.net_income||0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </ReportSection>
-
-        {/* ── 4. DEBT & FINANCING ───────────────────────────────────── */}
-        <ReportSection id="debt" icon={Landmark} title="Debt & Financing">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-            <KV label="Total Rental Debt"     value={fmt(dr_lbs)} />
-            <KV label="Rental Portfolio LTV"  value={fmtPct(rentalLTV)} color={rentalLTV>80?'#dc2626':rentalLTV>65?'#d97706':'#059669'} />
-            <KV label="Wtd Avg. Rate"         value={`${fmtPct(wRate)}`} color={wRate>7?'#dc2626':wRate>5.5?'#d97706':'#059669'} />
-          </div>
-          {allLoans.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-gray-600 text-[10px] uppercase tracking-wider text-slate-400 dark:text-gray-500">
-                    <th className="py-2 text-left pr-4 font-semibold">Property</th>
-                    <th className="py-2 text-center pr-4 font-semibold">Type</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Original</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Balance</th>
-                    <th className="py-2 text-right pr-4 font-semibold">Rate</th>
-                    <th className="py-2 text-right font-semibold">Principal & Interest / mo</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {rentalProps.flatMap(p => (p.loans||[]).map(l => ({ ...l, prop: p }))).map((l, i) => (
-                    <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-700/50">
-                      <td className="py-2 pr-4 font-medium text-slate-700 dark:text-gray-300">{propertyLabel(l.prop)}</td>
-                      <td className="py-2 pr-4 text-center">
-                        <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold"
-                          style={{ background:(l.loan_type||'Fixed').toUpperCase()==='ARM'?'#fff7ed':'#f0fdf4', color:(l.loan_type||'Fixed').toUpperCase()==='ARM'?'#c2410c':'#15803d' }}>
-                          {(l.loan_type||'Fixed').toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-4 text-right text-slate-600 dark:text-gray-300">{fmt(l.original_loan_amount||0)}</td>
-                      <td className="py-2 pr-4 text-right font-semibold text-slate-700 dark:text-gray-300">{fmt(l.current_balance||0)}</td>
-                      <td className="py-2 pr-4 text-right font-bold" style={{ color:(l.interest_rate||0)>7?'#dc2626':(l.interest_rate||0)>5.5?'#d97706':'#059669' }}>{fmtPct(l.interest_rate||0)}</td>
-                      <td className="py-2 text-right text-slate-600 dark:text-gray-300">{fmt(l.monthly_payment||0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </ReportSection>
-
-        {/* ── 5. TAX SUMMARY ────────────────────────────────────────── */}
-        {latestTrend && (
-          <ReportSection id="tax" icon={FileText} title={`Tax Summary — ${latestTrend.year}`}>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
-              <KV label="Gross Rental Income"   value={fmt(latestTrend.rental_income||0)} />
-              <KV label="Mortgage Interest"     value={fmt(latestTrend.mortgage_interest||0)} />
-              <KV label="Property Taxes"        value={fmt(latestTrend.property_taxes||0)} />
-              <KV label="Depreciation"          value={fmt(latestTrend.depreciation||0)} color="#7c3aed" />
-              <KV label="Operating Expenses"    value={fmt(latestTrend.operating_expenses||0)} />
-              <KV label="Taxable Net Income"    value={fmt(latestTrend.net_income||0)} color={(latestTrend.net_income||0)<0?'#059669':'#dc2626'} />
-            </div>
-            <div className="bg-violet-50 border border-violet-100 rounded-xl px-4 py-3 text-xs text-violet-900">
-              <strong className="text-violet-700">Note:</strong> Depreciation is a non-cash deduction — it reduces taxable income without a cash outlay. A negative taxable net income represents a passive loss that may offset other passive income or carry forward to future years.
-            </div>
-          </ReportSection>
-        )}
-
-      </div>
-
-      {/* ── UPLOAD SECTION ────────────────────────────────────────────── */}
-      <div className="mt-10 pt-10 border-t border-slate-200 dark:border-gray-600 print:hidden">
-        <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
-          <div>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Uploaded Reports</h2>
-            <p className="text-xs text-slate-400 dark:text-gray-500 mt-0.5">Attach PDF reports, tax returns, appraisals, or external statements</p>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <select value={selectedPropId} onChange={e => setSelectedPropId(e.target.value)}
-              className="text-xs border border-slate-200 dark:border-gray-600 rounded-lg px-3 py-2 text-slate-700 dark:text-gray-300 bg-white dark:bg-gray-800 shadow-sm">
-              <option value="all">Portfolio (no property)</option>
-              {(data.properties||[]).map(p => (
-                <option key={p.id} value={p.id}>{propertyLabel(p)}{isPrimary(p) ? ' (Primary)' : ''}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm">
-              <Upload className="w-3.5 h-3.5" />
-              {uploading ? 'Uploading…' : 'Upload PDF Report'}
-            </button>
-            <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={handleUpload} />
-          </div>
-        </div>
-
-        {docs.length === 0 ? (
-          <div className="bg-slate-50 dark:bg-gray-700/50 border border-dashed border-slate-200 dark:border-gray-600 rounded-2xl p-10 text-center">
-            <FileText className="w-8 h-8 text-slate-300 dark:text-gray-500 mx-auto mb-3" />
-            <p className="text-sm font-medium text-slate-500 dark:text-gray-400">No reports uploaded yet</p>
-            <p className="text-xs text-slate-400 dark:text-gray-500 mt-1">Upload tax returns, appraisals, mortgage statements, or property reports</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {docs.map(doc => (
-              <UploadedReportCard key={doc.id} doc={doc} onDelete={handleDeleteDoc} />
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <MetricCard metric={{ label: 'Cash Flow', ...property.cashFlowBadge }} />
+                  <MetricCard metric={{ label: 'Equity', ...property.equityBadge }} />
+                  <MetricCard metric={{ label: 'LTV', ...property.ltv }} />
+                  <MetricCard metric={{ label: 'DSCR', ...property.dscr }} />
+                </div>
+ <p className="mt-4 text-sm font-semibold text-gray-700">Recommendation: {property.recommendation}</p>
+ <p className="mt-1 text-xs text-gray-500">Data health: {property.dataHealth}</p>
+              </div>
             ))}
           </div>
-        )}
+        </ReportSection>
+
+        <ReportSection id="recommended-next-steps" icon={CheckCircle} eyebrow="11" title="Recommended Next Steps" question="What should be done next?" theme="recommendations">
+          <div className="mb-4">
+            <CalloutBox type="action">Recommended next steps are ordered by backend priority and should be reviewed before making new portfolio decisions.</CalloutBox>
+          </div>
+          <div className="space-y-3">
+            {(report.recommendedNextSteps || []).map((item) => <RiskCard key={item.id} item={item} />)}
+          </div>
+        </ReportSection>
+
+        <ReportSection id="appendix" icon={Landmark} eyebrow="12" title="Supporting Financial Tables" theme="neutral">
+          <div className="space-y-8">
+            {(report.appendix?.tables || []).map((table) => (
+              <div key={table.id} className="space-y-3">
+ <h3 className="font-semibold text-gray-950">{table.title}</h3>
+                <DataTable columns={tableColumns(table)} rows={tableRows(table)} getRowKey={(row) => row.__rowKey} emptyMessage="No backend rows available." />
+              </div>
+            ))}
+          </div>
+        </ReportSection>
+
+        <ReportSection id="uploaded-reports" icon={Upload} eyebrow="Appendix" title="Uploaded Reports" theme="neutral">
+ <div className="rounded-lg border border-dashed border-gray-300 p-5 print:hidden">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+ <p className="font-semibold text-gray-950">Attach supporting reports</p>
+ <p className="text-sm text-gray-500">Tax returns, appraisals, mortgage statements, or property reports.</p>
+              </div>
+              <label className="btn-secondary inline-flex cursor-pointer items-center gap-2">
+                <Upload className="h-4 w-4" aria-hidden="true" />
+                {uploading ? 'Uploading...' : 'Upload PDF'}
+                <input ref={fileRef} type="file" className="hidden" accept="application/pdf" onChange={handleUpload} disabled={uploading} />
+              </label>
+            </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            {docs.length ? docs.map((doc) => <UploadedReportCard key={doc.id} doc={doc} onDelete={handleDeleteDoc} />) : (
+ <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-500">No uploaded reports yet.</p>
+            )}
+          </div>
+        </ReportSection>
       </div>
 
-      {/* ── PRINT STYLES ───────────────────────────────────────────────── */}
       <style>{`
         @media print {
           body { background: white !important; }
           .print\\:hidden { display: none !important; }
+          a { color: inherit !important; text-decoration: none !important; }
         }
       `}</style>
-    </div>
+    </PageContainer>
   )
 }

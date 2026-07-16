@@ -37,6 +37,7 @@ function AppRoutes() {
                 <Route path="/properties" element={<PropertiesPage />} />
                 <Route path="/properties/new" element={<PropertyFormPage />} />
                 <Route path="/properties/:id" element={<PropertyDetailPage />} />
+                <Route path="/properties/:id/:tab" element={<PropertyDetailPage />} />
                 <Route path="/properties/:id/edit" element={<PropertyFormPage />} />
                 <Route path="/uploads" element={<UploadsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />

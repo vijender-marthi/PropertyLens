@@ -10,15 +10,9 @@ import {
 import toast from 'react-hot-toast'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 import { useAuth } from '../hooks/useAuth'
-
-function monthlyPI(principal, annualRatePct, years = 30) {
-  const months = years * 12
-  const monthlyRate = (annualRatePct || 0) / 100 / 12
-  if (!principal || !months) return 0
-  if (!monthlyRate) return Math.round((principal / months) * 100) / 100
-  const payment = principal * (monthlyRate * (1 + monthlyRate) ** months) / ((1 + monthlyRate) ** months - 1)
-  return Math.round(payment * 100) / 100
-}
+import { formatCurrency, formatFileSize, formatInteger, formatNumber, formatPercent } from '../utils/formatters'
+import DataTable from '../components/DataTable'
+import { chartColors } from '../utils/chartTokens'
 
 const CATEGORIES = [
   { value: 'auto',               label: 'Auto-detect' },
@@ -43,9 +37,9 @@ const METHODS = [
     title: 'Document Upload',
     badge: 'PDF / CSV / XLSX',
     desc: 'Mortgage statements, tax returns (Schedule E), 1098/1099 forms, property tax bills, and closing statements. Data is extracted automatically.',
-    accent: '#2563eb',
-    bg: '#eff6ff',
-    border: '#93c5fd',
+    accent: chartColors.primary,
+    bg: chartColors.primaryTint,
+    border: chartColors.primaryBorderSoft,
   },
   {
     id: 'spreadsheet',
@@ -53,9 +47,9 @@ const METHODS = [
     title: 'Spreadsheet Import',
     badge: 'CSV template',
     desc: 'Download our pre-filled template with your properties, enter income and expense figures for each year, then upload to import all at once.',
-    accent: '#059669',
-    bg: '#f0fdf4',
-    border: '#6ee7b7',
+    accent: chartColors.positive,
+    bg: chartColors.positiveTint,
+    border: chartColors.positiveBorderSoft,
   },
   {
     id: 'manual',
@@ -63,18 +57,13 @@ const METHODS = [
     title: 'Manual Entry',
     badge: 'Form input',
     desc: 'Select a property and tax year then type in rental income, interest, taxes, depreciation, and net income directly.',
-    accent: '#7c3aed',
-    bg: '#f5f3ff',
-    border: '#c4b5fd',
+    accent: chartColors.purple,
+    bg: chartColors.purpleTint,
+    border: chartColors.purpleBorderSoft,
   },
 ]
 
-const fmtSize = (bytes) => {
-  if (!bytes) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
+
 const catLabel = (val) => CATEGORIES.find((c) => c.value === val)?.label || val
 const CADENCE_BY_CATEGORY = {
   closing_statement: 'one_time',
@@ -91,9 +80,6 @@ const CADENCE_BY_CATEGORY = {
 const CADENCE_LABELS = { one_time: 'One-Time', annual: 'Annual', monthly: 'Monthly', other: 'Other' }
 const cadenceOf = (category) => CADENCE_BY_CATEGORY[category] || 'other'
 const CURRENT_YEAR = new Date().getFullYear()
-const fmtMoney = (n) => n === null || n === undefined
-  ? '—'
-  : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 const YEAR_FIELD_RE = /year$/i
 // Years must never pick up thousands separators ("2,024"); money/count
 // fields should. schedule1_line5_delta reads "n/a" (not "—") when the
@@ -105,7 +91,7 @@ const formatFieldValue = (key, value, allData) => {
   }
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'number') {
-    return YEAR_FIELD_RE.test(key) ? String(Math.trunc(value)) : value.toLocaleString()
+    return YEAR_FIELD_RE.test(key) ? formatInteger(value) : formatNumber(value)
   }
   return String(value)
 }
@@ -426,10 +412,6 @@ const downloadTemplate = () => {
       const currentBalance = mLoanFields.current_balance !== ''
         ? parseFloat(mLoanFields.current_balance)
         : originalAmount
-      const monthlyPayment = mLoanFields.monthly_payment !== ''
-        ? parseFloat(mLoanFields.monthly_payment)
-        : monthlyPI(originalAmount, interestRate, loanTermYears)
-
       // The update endpoint replaces the whole loan record, so start from
       // the existing loan's fields (escrow, statement data, ARM terms, etc.)
       // and only overlay what this quick-entry form actually edits.
@@ -439,8 +421,10 @@ const downloadTemplate = () => {
         interest_rate: interestRate,
         original_amount: originalAmount,
         current_balance: currentBalance,
-        monthly_payment: monthlyPayment,
         loan_term_years: loanTermYears,
+      }
+      if (mLoanFields.monthly_payment !== '') {
+        payload.monthly_payment = parseFloat(mLoanFields.monthly_payment)
       }
       delete payload.id
       delete payload.property_id
@@ -514,7 +498,46 @@ const switchMode = (id) => { selectMode(id); setResult(null) }
         ([key, value]) => key !== 'raw_text_preview' && (value === null || (!Array.isArray(value) && typeof value !== 'object'))
       )
     : []
-  const previewProperties = previewDoc?.extracted_data?.properties || []
+const previewProperties = previewDoc?.extracted_data?.properties || []
+const previewFieldRows = previewFields.map(([key, value]) => ({
+id: key,
+field: key.replace(/_/g, ' '),
+value: formatFieldValue(key, value, previewDoc.extracted_data),
+}))
+const previewPropertyRows = previewProperties.map((property, index) => ({
+...property,
+previewRowId: property.id || `${property.address || 'property'}-${index}`,
+}))
+const previewFieldColumns = [
+{ id: 'field', header: 'Field', accessor: 'field', cellClassName: 'text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap' },
+{ id: 'value', header: 'Extracted Value', accessor: 'value', cellClassName: 'text-slate-900 dark:text-gray-100' },
+]
+const previewPropertyColumns = [
+{
+id: 'property',
+header: 'Property',
+accessor: 'address',
+render: (row) => (
+<>
+{row.address || '—'}
+{row.unresolved_fields?.length > 0 && (
+<div className="mt-1 flex items-start gap-1 text-xs text-amber-600 dark:text-amber-400">
+<AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
+<span>{row.unresolved_fields.join(' ')}</span>
+</div>
+)}
+</>
+),
+cellClassName: 'text-slate-900 dark:text-gray-100',
+},
+{ id: 'kind', header: 'Kind', accessor: 'property_kind', render: (row) => row.property_kind || '—', cellClassName: 'text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap' },
+{ id: 'rents', header: 'Rents', accessor: 'rents_received', render: (row) => formatCurrency(row.rents_received), align: 'right', cellClassName: 'text-slate-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'total_expenses', header: 'Total Exp.', accessor: 'total_expenses', render: (row) => formatCurrency(row.total_expenses), align: 'right', cellClassName: 'text-slate-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'mortgage_interest', header: 'Mortgage Int.', accessor: 'mortgage_interest', render: (row) => formatCurrency(row.mortgage_interest), align: 'right', cellClassName: 'text-slate-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'depreciation', header: 'Depreciation', accessor: 'depreciation', render: (row) => formatCurrency(row.depreciation), align: 'right', cellClassName: 'text-slate-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'net_income', header: 'Net Income', accessor: 'net_income', render: (row) => formatCurrency(row.net_income), align: 'right', cellClassName: 'text-slate-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'confidence', header: 'Confidence', accessor: 'confidence', render: (row) => formatPercent(row.confidence), align: 'right', cellClassName: 'text-slate-500 dark:text-gray-400 whitespace-nowrap' },
+]
 
   const propNameById = Object.fromEntries(properties.map((p) => [p.id, p.name || p.address]))
   const docYears = [...new Set(docs.map((d) => d.statement_year).filter(Boolean))].sort((a, b) => b - a)
@@ -567,7 +590,7 @@ const switchMode = (id) => { selectMode(id); setResult(null) }
   ].filter(Boolean)
 
   return (
-<div className="max-w-5xl mx-auto space-y-6">
+<div className="max-w-7xl mx-auto space-y-6">
 
       {/* ── Header ── */}
       <div>
@@ -599,16 +622,16 @@ disabled={locked}
 className={`text-left rounded-xl border-2 p-5 transition-all focus:outline-none bg-white dark:bg-gray-800 font-medium ${locked ? 'cursor-not-allowed opacity-60' : ''}`}
 style={active
 ? { borderColor: m.accent }
-: { borderColor: '#e2e8f0' }
+: { borderColor: chartColors.trackLight }
               }
             >
               <div className="flex items-start justify-between mb-3">
 <div className="rounded-lg p-2 bg-slate-100 dark:bg-gray-700" style={active ? { background: m.accent } : undefined}>
-                  <m.Icon className="w-5 h-5" style={{ color: active ? '#fff' : '#94a3b8' }} />
+                  <m.Icon className="w-5 h-5" style={{ color: active ? chartColors.surfaceWhite : chartColors.mutedAxis }} />
                 </div>
 {active && (
 <span className="inline-flex items-center gap-1 text-[10px] font-bold rounded-full px-2 py-0.5"
-style={{ background: m.accent, color: '#fff' }}>
+style={{ background: m.accent, color: chartColors.surfaceWhite }}>
 Active
 </span>
 )}
@@ -667,7 +690,7 @@ Premium
               <p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300">Review extracted fields</p>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white mt-1">{previewDoc.original_filename}</h2>
               <p className="text-sm text-slate-500 dark:text-gray-400 mt-1">
-                {catLabel(previewDoc.category)} · {fmtSize(previewDoc.file_size)}
+                {catLabel(previewDoc.category)} · {formatFileSize(previewDoc.file_size)}
                 {previewDoc.property_address ? ` · ${previewDoc.property_address}` : ''}
               </p>
               {uploadProgress.total > 1 && (
@@ -688,83 +711,33 @@ Premium
 
           <div className="p-5">
             {previewFields.length > 0 ? (
-              <div className="max-h-80 overflow-auto rounded-lg border border-slate-200 dark:border-gray-700">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 dark:bg-gray-700 sticky top-0">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Field</th>
-                      <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Extracted Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-gray-700">
-                    {previewFields.map(([key, value]) => (
-                      <tr key={key} className="bg-white dark:bg-gray-800">
-                        <td className="px-3 py-2 text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap">
-                          {key.replace(/_/g, ' ')}
-                        </td>
-                        <td className="px-3 py-2 text-slate-900 dark:text-gray-100">
-                          {formatFieldValue(key, value, previewDoc.extracted_data)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
-                No structured fields were extracted. Cancel this upload or save it as a document record for manual review.
-              </div>
-            )}
+<DataTable
+columns={previewFieldColumns}
+rows={previewFieldRows}
+getRowKey={(row) => row.id}
+className="max-h-80"
+/>
+) : (
+<div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+No structured fields extracted. Cancel upload to skip, or save to keep the document record for manual review.
+</div>
+)}
 
-            {previewProperties.length > 0 && (
-              <div className="mt-4">
-                <p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300 mb-2">
-                  Per-property Schedule E figures ({previewProperties.length})
-                </p>
-                <div className="max-h-80 overflow-auto rounded-lg border border-slate-200 dark:border-gray-700">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 dark:bg-gray-700 sticky top-0">
-                      <tr>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Property</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Kind</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Rents</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Total Exp.</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Mortgage Int.</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Depreciation</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Net Income</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500 dark:text-gray-300">Confidence</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-gray-700">
-                      {previewProperties.map((p, i) => (
-                        <tr key={i} className="bg-white dark:bg-gray-800 align-top">
-                          <td className="px-3 py-2 text-slate-900 dark:text-gray-100">
-                            {p.address || '—'}
-                            {p.unresolved_fields?.length > 0 && (
-                              <div className="mt-1 flex items-start gap-1 text-xs text-amber-600 dark:text-amber-400">
-                                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-                                <span>{p.unresolved_fields.join(' ')}</span>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap">{p.property_kind || '—'}</td>
-                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.rents_received)}</td>
-                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.total_expenses)}</td>
-                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.mortgage_interest)}</td>
-                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.depreciation)}</td>
-                          <td className="px-3 py-2 text-right text-slate-900 dark:text-gray-100 whitespace-nowrap">{fmtMoney(p.net_income)}</td>
-                          <td className="px-3 py-2 text-right text-slate-500 dark:text-gray-400 whitespace-nowrap">
-                            {p.confidence != null ? `${Math.round(p.confidence * 100)}%` : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+{previewProperties.length > 0 && (
+<div className="mt-4">
+<p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300 mb-2">
+Per-property Schedule E figures ({previewProperties.length})
+</p>
+<DataTable
+columns={previewPropertyColumns}
+rows={previewPropertyRows}
+getRowKey={(row) => row.previewRowId}
+className="max-h-80"
+/>
+</div>
+)}
 
-            {previewDoc.extracted_data?.parse_error && (
+{previewDoc.extracted_data?.parse_error && (
               <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-200">
                 {previewDoc.extracted_data.parse_error}
               </div>
@@ -1169,12 +1142,12 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
-                    { key: 'rents_received',   label: 'Rental Income',      hint: 'Gross rent received (line 3)',      color: '#059669' },
-                    { key: 'mortgage_interest', label: 'Mortgage Interest',  hint: 'From 1098 / Schedule E line 12',   color: '#dc2626' },
-                    { key: 'property_taxes',    label: 'Property Taxes',     hint: 'Annual property tax (line 16)',     color: '#d97706' },
-                    { key: 'depreciation',      label: 'Depreciation',       hint: 'Annual depreciation (line 18)',     color: '#7c3aed' },
-                    { key: 'total_expenses',    label: 'Total Expenses',     hint: 'All deductible expenses (line 20)', color: '#0891b2' },
-                    { key: 'net_income',        label: 'Net Taxable Income', hint: 'Income minus expenses (line 21)',   color: '#2563eb' },
+                    { key: 'rents_received',   label: 'Rental Income',      hint: 'Gross rent received (line 3)',      color: chartColors.positive },
+                    { key: 'mortgage_interest', label: 'Mortgage Interest',  hint: 'From 1098 / Schedule E line 12',   color: chartColors.dangerStrong },
+                    { key: 'property_taxes',    label: 'Property Taxes',     hint: 'Annual property tax (line 16)',     color: chartColors.warningStrong },
+                    { key: 'depreciation',      label: 'Depreciation',       hint: 'Annual depreciation (line 18)',     color: chartColors.purple },
+                    { key: 'total_expenses',    label: 'Total Expenses',     hint: 'All deductible expenses (line 20)', color: chartColors.cyan },
+                    { key: 'net_income',        label: 'Net Taxable Income', hint: 'Income minus expenses (line 21)',   color: chartColors.primary },
                   ].map(({ key, label, hint, color }) => (
                     <div key={key}>
                       <label className="block text-xs font-semibold text-slate-600 dark:text-gray-300 mb-1.5">{label}</label>
@@ -1368,12 +1341,12 @@ function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onRep
   }
 
   const catColor = {
-    mortgage_statement: '#2563eb',
-    tax_return:         '#7c3aed',
-    '1098':             '#0891b2',
-    property_tax:       '#d97706',
-    closing_statement:  '#059669',
-  }[doc.doc_category] || '#94a3b8'
+    mortgage_statement: chartColors.primary,
+    tax_return:         chartColors.purple,
+    '1098':             chartColors.cyan,
+    property_tax:       chartColors.warningStrong,
+    closing_statement:  chartColors.positive,
+  }[doc.doc_category] || chartColors.mutedAxis
 
   return (
     <div className="hover:bg-slate-50 dark:hover:bg-gray-700/50 transition-colors">
@@ -1391,7 +1364,7 @@ function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onRep
             }
             <span className="text-xs text-slate-400 dark:text-gray-500">·</span>
             <span className="text-xs text-slate-500 dark:text-gray-400">{catLabel(doc.doc_category)}</span>
-            {doc.file_size > 0 && <><span className="text-xs text-slate-400 dark:text-gray-500">·</span><span className="text-xs text-slate-400 dark:text-gray-500">{fmtSize(doc.file_size)}</span></>}
+            {doc.file_size > 0 && <><span className="text-xs text-slate-400 dark:text-gray-500">·</span><span className="text-xs text-slate-400 dark:text-gray-500">{formatFileSize(doc.file_size)}</span></>}
             {doc.is_duplicate && (
               <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
                 <Copy className="w-2.5 h-2.5" /> Duplicate

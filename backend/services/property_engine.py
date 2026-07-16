@@ -55,6 +55,28 @@ def loan_monthly_pi(loan: Any) -> float:
     )
 
 
+def payoff_month_count(original: float, annual_rate: float, payment: float, fallback_months: int) -> int:
+    balance = float(original or 0)
+    monthly_rate = float(annual_rate or 0) / 100 / 12
+    monthly_payment = float(payment or 0)
+    if balance <= 0:
+        return 0
+    if monthly_payment <= 0:
+        return max(1, int(fallback_months or 1))
+    if monthly_rate <= 0:
+        return max(1, int((balance + monthly_payment - 1) // monthly_payment))
+    if monthly_payment <= balance * monthly_rate:
+        return max(1, int(fallback_months or 1))
+    months = 0
+    cap = max(int(fallback_months or 360), 600)
+    while balance > 1 and months < cap:
+        interest = balance * monthly_rate
+        principal = min(max(monthly_payment - interest, 0.0), balance)
+        balance = max(balance - principal, 0.0)
+        months += 1
+    return max(1, months)
+
+
 @dataclass(frozen=True)
 class EngineRow:
     month: date
@@ -108,11 +130,12 @@ class PropertyEngine:
             self._loan_schedules[loan_id] = []
             return []
 
-        term_months = max(1, int(getattr(loan, "loan_term_years", 30) or 30) * 12)
+        nominal_term_months = max(1, int(getattr(loan, "loan_term_years", 30) or 30) * 12)
         monthly_rate = float(getattr(loan, "interest_rate", 0) or 0) / 100 / 12
         payment = loan_monthly_pi(loan) + float(getattr(loan, "extra_monthly_payment", 0) or 0)
         if payment <= 0:
             payment = monthly_principal_interest(original, float(getattr(loan, "interest_rate", 0) or 0), int(getattr(loan, "loan_term_years", 30) or 30))
+        term_months = payoff_month_count(original, float(getattr(loan, "interest_rate", 0) or 0), payment, nominal_term_months)
 
         rows: List[EngineRow] = []
         balance = original

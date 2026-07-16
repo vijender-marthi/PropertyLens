@@ -14,6 +14,7 @@ Tests call the /api/properties/{id}/lifetime endpoint and inspect the
 returned `yearly` array.
 """
 import json
+from datetime import date
 import pytest
 from tests.conftest import auth_headers
 import models
@@ -26,10 +27,12 @@ import models
 def _add_tax_entry(db, prop_id: int, owner_id: int, year: int, *,
                    mortgage_interest=0.0, property_taxes=0.0,
                    depreciation=0.0, total_expenses=0.0,
-                   rents_received=0.0) -> models.TaxReturnEntry:
+                   rents_received=0.0, net_income=0.0,
+                   expense_breakdown=None, document_id=None) -> models.TaxReturnEntry:
     entry = models.TaxReturnEntry(
         owner_id=owner_id,
         property_id=prop_id,
+        document_id=document_id,
         tax_year=year,
         address="123 Test St",
         property_kind="rental",
@@ -38,6 +41,8 @@ def _add_tax_entry(db, prop_id: int, owner_id: int, year: int, *,
         depreciation=depreciation,
         total_expenses=total_expenses,
         rents_received=rents_received,
+        net_income=net_income,
+        expense_breakdown=json.dumps(expense_breakdown or {}),
     )
     db.add(entry)
     db.commit()
@@ -78,6 +83,159 @@ def _get_year(yearly: list, year: int) -> dict:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+class TestScheduleECaptureEndpoint:
+    def test_top_strip_line_table_and_history_use_same_backend_values(self, client, user, prop):
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year=2023",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        lines = {row["key"]: row for row in data["lines"]}
+        history = {row["year"]: row for row in data["history"]}
+
+        assert data["topStrip"]["deductibleInterest"]["value"] == lines["mortgage_interest"]["computed"]["value"]
+        assert data["topStrip"]["propertyTax"]["value"] == lines["taxes"]["computed"]["value"]
+        assert data["topStrip"]["depreciation"]["value"] == lines["depreciation"]["computed"]["value"]
+        assert data["topStrip"]["netScheduleE"]["value"] == lines["net_income"]["computed"]["value"]
+        assert history[2023]["mortgageInterest"]["value"] == data["topStrip"]["deductibleInterest"]["value"]
+        assert history[2023]["propertyTax"]["value"] == data["topStrip"]["propertyTax"]["value"]
+        assert history[2023]["depreciation"]["value"] == data["topStrip"]["depreciation"]["value"]
+        assert lines["taxes"]["computed"]["display"] != "—"
+        assert lines["depreciation"]["computed"]["value"] > 0
+        assert data["assertions"]["netLineMatchesFormula"] is True
+        assert data["assertions"]["depreciationPresentForFullRentalYears"] is True
+        assert data["assertions"]["selectedYearStripMatchesHistory"] is True
+
+    def test_partial_year_depreciation_is_less_than_full_rental_year(self, client, user, prop):
+        current_year = date.today().year
+
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year={current_year}",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        history = {row["year"]: row for row in data["history"]}
+        full_year = current_year - 1
+        assert history[full_year]["depreciation"]["value"] > 0
+        assert history[current_year]["depreciation"]["value"] < history[full_year]["depreciation"]["value"]
+        assert data["assertions"]["partialYearDepreciationBelowFullYear"] is True
+
+    def test_current_year_breakdown_splits_reported_and_projected_rows(self, client, db, user, prop):
+        current_year = date.today().year
+        db.add(models.RentalPeriod(
+            property_id=prop.id,
+            tenant_name="Current tenant",
+            start_year=current_year,
+            start_month=1,
+            monthly_rent=3_200,
+        ))
+        db.add(models.Document(
+            property_id=prop.id,
+            owner_id=user.id,
+            filename="current-statement.pdf",
+            original_filename="Current statement.pdf",
+            file_type="pdf",
+            doc_category="mortgage_statement",
+            file_size=1024,
+            statement_year=current_year,
+            period_type="monthly",
+            extracted_data=json.dumps({
+                "statement_date": f"06/15/{current_year}",
+                "interest_due": 1500.0,
+                "principal_due": 500.0,
+                "current_balance": 295000.0,
+                "property_tax_amount": 500.0,
+            }),
+        ))
+        db.commit()
+
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year={current_year}",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        breakdown = resp.json()["currentYearBreakdown"]
+        assert breakdown["year"] == current_year
+        assert breakdown["monthsReported"] == 6
+        assert breakdown["rows"][0]["kind"] == "total"
+        assert breakdown["rows"][0]["expandable"] is True
+        detail = {row["kind"]: row for row in breakdown["detailRows"]}
+        assert detail["reported"]["metrics"]["rentsReceived"]["value"] == 19200.0
+        assert detail["reported"]["metrics"]["mortgageInterest"]["value"] == 1500.0
+        assert detail["reported"]["metrics"]["propertyTax"]["value"] == 500.0
+        assert detail["projected"]["metrics"]["rentsReceived"]["value"] > 0
+
+    def test_current_year_breakdown_is_fully_projected_without_statement_or_rental_details(self, client, user, prop):
+        current_year = date.today().year
+
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year={current_year}",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        breakdown = resp.json()["currentYearBreakdown"]
+        detail = {row["kind"]: row for row in breakdown["detailRows"]}
+        assert breakdown["monthsReported"] == 0
+        assert detail["reported"]["metrics"]["mortgageInterest"]["value"] == 0.0
+        assert detail["reported"]["metrics"]["netScheduleE"]["value"] == 0.0
+        assert detail["projected"]["metrics"]["mortgageInterest"]["value"] == breakdown["rows"][0]["metrics"]["mortgageInterest"]["value"]
+
+    def test_filed_schedule_e_values_reconcile_by_line(self, client, db, user, prop):
+        doc = models.Document(
+            property_id=prop.id,
+            owner_id=user.id,
+            filename="schedule-e-2023.pdf",
+            original_filename="Filed Schedule E 2023.pdf",
+            display_name="Filed Schedule E 2023.pdf",
+            file_type="pdf",
+            doc_category="tax_return",
+            statement_year=2023,
+            file_size=1024,
+        )
+        db.add(doc)
+        db.commit()
+        _add_tax_entry(
+            db,
+            prop.id,
+            user.id,
+            2023,
+            document_id=doc.id,
+            rents_received=36_000,
+            mortgage_interest=19_000,
+            property_taxes=6_000,
+            depreciation=11_636.36,
+            total_expenses=39_000,
+            net_income=-3_000,
+            expense_breakdown={
+                "insurance": 1_200,
+                "repairs": 900,
+                "taxes": 6_000,
+                "mortgage_interest": 19_000,
+                "depreciation": 11_636.36,
+            },
+        )
+
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year=2023",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        lines = {row["key"]: row for row in data["lines"]}
+        assert lines["rents_received"]["filed"]["value"] == 36_000
+        assert lines["mortgage_interest"]["filed"]["value"] == 19_000
+        assert lines["taxes"]["filed"]["value"] == 6_000
+        assert lines["net_income"]["status"] in {"Match", "Delta"}
+        assert data["summary"]["filedSource"] == "Filed Schedule E 2023.pdf"
+        assert data["summary"]["linesFiled"] > 0
 
 class TestScheduleEInterestPriority:
     """Schedule E mortgage_interest should override statement-based estimates."""

@@ -1,8 +1,11 @@
 """Parse uploaded PDFs and Excel files to extract financial data."""
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _looks_spaceless(text: str) -> bool:
@@ -39,6 +42,44 @@ def markitdown_convert(filepath: str) -> str:
     """Convert a document to readable markdown with Microsoft MarkItDown."""
     from markitdown import MarkItDown
     return MarkItDown().convert(filepath).text_content or ""
+
+
+def _markitdown_text(filepath: str) -> str:
+    try:
+        return _strip_md_tables(markitdown_convert(filepath))
+    except Exception as exc:
+        logger.warning("MarkItDown conversion failed for %s: %s", filepath, exc)
+        return ""
+
+
+def _log_loan_document_extraction_gaps(category: str, raw_data: Dict[str, Any], text: str, filepath: str) -> None:
+    if category == "1098":
+        missing = [
+            label for key, label in (
+                ("mortgage_interest", "Box 1 interest"),
+                ("current_balance", "Box 2 balance"),
+                ("property_address", "property address"),
+            )
+            if raw_data.get(key) in (None, "")
+        ]
+    elif category == "mortgage_statement":
+        missing = [
+            label for key, label in (
+                ("current_balance", "current balance"),
+                ("property_address", "property address"),
+            )
+            if raw_data.get(key) in (None, "")
+        ]
+    else:
+        missing = []
+    if missing:
+        logger.warning(
+            "%s extraction missing %s from MarkItDown text for %s. Text preview: %s",
+            category,
+            ", ".join(missing),
+            filepath,
+            (text or "")[:2000],
+        )
 
 
 def _pdfplumber_text(filepath: str, x_tolerance: float = 3) -> str:
@@ -101,14 +142,13 @@ def extract_pdf_text(filepath: str) -> str:
     """
     candidates = []
 
-    try:
-        md_text = _strip_md_tables(markitdown_convert(filepath))
-    except Exception:
-        md_text = ""
+    md_text = _markitdown_text(filepath)
     if md_text and len(md_text.strip()) > 30:
         if not _looks_spaceless(md_text):
             return md_text      # Fast path: clean text from MarkItDown
         candidates.append(md_text)
+    else:
+        logger.warning("MarkItDown produced empty text for PDF upload %s; trying text/OCR fallbacks.", filepath)
 
     # pdfplumber fallback with two tolerances
     for xt in (3, 1):
@@ -128,6 +168,7 @@ def extract_pdf_text(filepath: str) -> str:
     ocr = _ocr_text(filepath)
     if ocr and len(ocr.strip()) > 30:
         return _clean_ocr_artifacts(ocr)
+    logger.warning("Document text extraction produced no readable text for %s", filepath)
     return '\n'.join(c for c in candidates if c) or ''
 
 
@@ -585,6 +626,7 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
     ])
     if v is not None:
         data['escrow_amount'] = v
+        data['escrow_included'] = True
 
     # Try to extract property tax separately from escrow breakdown
     v = _find_amount(text, [
@@ -595,6 +637,35 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
     ])
     if v is not None:
         data['property_tax_amount'] = v
+        data['monthly_property_tax_escrow'] = v
+
+    v = _find_amount(text, [
+        r'(?:homeowners?|hazard|property)\s+insurance\s*(?:escrow|premium|amount)?',
+        r'insurance\s+escrow',
+        r'insurance:',
+    ])
+    if v is not None:
+        data['monthly_insurance_escrow'] = v
+
+    v = _find_amount(text, [
+        r'(?:mortgage\s+insurance|pmi)\s*(?:escrow|premium|amount)?',
+        r'mortgage\s+insurance:',
+        r'pmi:',
+    ])
+    if v is not None:
+        data['monthly_mortgage_insurance'] = v
+
+    component_total = sum(float(data.get(key) or 0) for key in (
+        'monthly_property_tax_escrow',
+        'monthly_insurance_escrow',
+        'monthly_mortgage_insurance',
+    ))
+    if component_total > 0:
+        if not data.get('escrow_amount'):
+            data['escrow_amount'] = round(component_total, 2)
+        elif round(float(data.get('escrow_amount') or 0), 2) > round(component_total, 2):
+            data['monthly_other_escrow'] = round(float(data.get('escrow_amount') or 0) - component_total, 2)
+        data['escrow_included'] = True
 
     # "principal:" (colon) catches the bare "Principal: $531.46" payment-
     # breakdown label without matching "principal balance:" (no colon there).
@@ -1202,6 +1273,8 @@ def parse_1098(text: str) -> Dict[str, Any]:
             data['property_city'] = csz.group(1).strip().title()
             data['property_state'] = csz.group(2)
             data['property_zip'] = csz.group(3)
+    if not data.get('property_address'):
+        data.update(parse_property_address(text))
 
     # Borrower name(s) - capture lines after the wrapped label, before the street
     m = re.search(
@@ -1437,6 +1510,134 @@ def _parse_amount(s: str) -> Optional[float]:
         return None
 
 
+def _line_after_label_amount(text: str, label_pattern: str) -> Optional[float]:
+    m = re.search(label_pattern, text, re.IGNORECASE | re.MULTILINE)
+    if not m:
+        return None
+    rest = text[m.end(): m.end() + 160]
+    amount = re.search(r'\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)', rest)
+    if not amount:
+        return None
+    return _parse_amount(amount.group(1))
+
+
+def _extract_alta_settlement_calculations(text: str) -> Dict[str, Any]:
+    """Extract ALTA settlement totals and purchase-price candidates.
+
+    MarkItDown preserves these forms well enough to capture the final
+    balancing totals, while visual debit/credit columns can flatten. Keep
+    settlement math backend-owned and expose explicit setup-review candidates
+    instead of making the React form infer financial meaning.
+    """
+    data: Dict[str, Any] = {}
+    compact = re.sub(r'\s+', ' ', text)
+    lines = [line.strip() for line in text.splitlines()]
+
+    def numeric_line_values(start_index: int, stop_patterns: tuple[str, ...] = ()) -> list[float]:
+        values = []
+        for line in lines[start_index:]:
+            if any(re.search(pattern, line, re.IGNORECASE) for pattern in stop_patterns):
+                break
+            if re.fullmatch(r'\$?\s*[\d,]+(?:\.\d{1,2})?', line):
+                amount = _parse_amount(line)
+                if amount is not None:
+                    values.append(amount)
+        return values
+
+    if "Final Settlement Statement" in text and "Sale Price" in text and "Loan Amount" in text:
+        debit_index = next((index for index, line in enumerate(lines) if re.fullmatch(r'Debit', line, re.IGNORECASE)), -1)
+        if debit_index >= 0:
+            leading_amounts = numeric_line_values(debit_index + 1, (r'^Page\s+1\b', r'^Description$'))
+            if len(leading_amounts) >= 3:
+                data.setdefault("sale_price", leading_amounts[0])
+                data.setdefault("deposit", leading_amounts[1])
+                data.setdefault("loan_amount", leading_amounts[2])
+
+    due_match = re.search(
+        r'Subtotals\s+'
+        r'([\d,]+(?:\.\d{1,2})?)\s+'
+        r'([\d,]+(?:\.\d{1,2})?)\s+'
+        r'Due\s+To\s+Buyer\s+'
+        r'([\d,]+(?:\.\d{1,2})?)\s+'
+        r'([\d,]+(?:\.\d{1,2})?)\s+'
+        r'Totals\s+([\d,]+(?:\.\d{1,2})?)\s+'
+        r'([\d,]+(?:\.\d{1,2})?)\s+'
+        r'([\d,]+(?:\.\d{1,2})?)',
+        compact,
+        re.IGNORECASE,
+    )
+    if due_match:
+        debit_subtotal = _parse_amount(due_match.group(1))
+        credit_subtotal = _parse_amount(due_match.group(2))
+        due_to_buyer = _parse_amount(due_match.group(3))
+        debit_total = _parse_amount(due_match.group(6))
+        credit_total = _parse_amount(due_match.group(7))
+        data.update({
+            "settlement_debit_subtotal": debit_subtotal,
+            "settlement_credit_subtotal": credit_subtotal,
+            "settlement_due_to_buyer": due_to_buyer,
+            "settlement_debit_total": debit_total,
+            "settlement_credit_total": credit_total,
+            "settlement_total_amount": credit_total or debit_total or credit_subtotal,
+        })
+    elif "Subtotals" in text and "Due To Buyer" in text and "Totals" in text:
+        subtotal_index = next((index for index, line in enumerate(lines) if re.fullmatch(r'Subtotals', line, re.IGNORECASE)), -1)
+        if subtotal_index >= 0:
+            totals = numeric_line_values(subtotal_index + 1, (r'^Copyright', r'^Page\s+\d+\b'))
+            if len(totals) >= 3:
+                subtotal = totals[-5] if len(totals) >= 5 else totals[0]
+                due_to_buyer = totals[-4] if len(totals) >= 5 else totals[1]
+                settlement_total = totals[-1]
+                data.update({
+                    "settlement_debit_subtotal": subtotal,
+                    "settlement_credit_subtotal": subtotal,
+                    "settlement_due_to_buyer": due_to_buyer,
+                    "settlement_debit_total": settlement_total,
+                    "settlement_credit_total": settlement_total,
+                    "settlement_total_amount": settlement_total,
+                })
+
+    important_fields = [
+        ("sale_price", "Sale Price", r'\bSale\s+Price\b'),
+        ("deposit", "Deposit", r'\bDeposit\s*:'),
+        ("loan_amount", "Loan Amount", r'\bLoan\s+Amount\b'),
+        ("initial_deposit_retained_by_seller", "Initial Deposit retained by Seller", r'\bInitial\s+Deposit\s+retained\s+by\s+Seller\b'),
+        ("preferred_incentive", "Preferred Incentive", r'\bPreferred\s+Incentive\b'),
+        ("tax_report", "Tax Report", r'\bTax\s+Report\b'),
+        ("prepaid_interest", "Prepaid Interest", r'\bPrepaid\s+Interest\b'),
+        ("origination_fee", "Origination Fee", r'\bOrigination\s+Fee\b'),
+        ("processing_fee", "Processing Fee", r'\bProcessing\s+Fee\b'),
+        ("points", "Points", r'\b0\.25%\s+of\s+Loan\s+Amount\s+\(Points\)\b'),
+        ("appraisal_fee", "Appraisal Fee", r'\bAppraisal\s+Fee\b'),
+        ("aggregate_adjustment", "Aggregate Adjustment", r'\bAggregate\s+Adjustment\b'),
+        ("homeowners_insurance_impound", "Homeowner's Insurance Impound", r"\bHomeowner'?s\s+Insurance\s+\d+\s+mo"),
+        ("county_property_taxes_impound", "County Property Taxes Impound", r'\bCounty\s+Property\s+Taxes\s+\d+\s+mo'),
+        ("owners_title_insurance", "Owner's Title Insurance", r"\bOwner'?s\s+Title\s+Insurance\b"),
+        ("loan_policy", "Loan Policy", r'\bLoan\s+Policy\b'),
+        ("recording_services", "Recording Services", r'\bRecording\s+Services\b'),
+        ("escrow_fee", "Escrow Fee", r'\bEscrow\s+Fee\b'),
+        ("notary_signing_fee", "Notary / Signing Fee", r'\bNotary/Signing\s+Fee\b'),
+        ("special_messenger_service", "Special Messenger Service", r'\bSpecial\s+Messenger\s+Service\b'),
+        ("broker_rebate", "Broker Rebate / Buyer Credit", r'\bBroker\s+Rebate\b'),
+        ("county_transfer_tax", "County Documentary Transfer Tax", r'\bCounty\s+Documentary\s+Transfer\s+Tax\b'),
+        ("homeowners_insurance_premium", "Homeowner's Insurance Premium", r"\bHomeowner'?s\s+Insurance\s+Premium\b"),
+        ("natural_hazard_disclosure_fee", "Natural Hazard Disclosure Fee", r'\bFAN\s+HD\s+Lot\s+Report\s+Fee\b'),
+    ]
+    line_items = []
+    for key, label, pattern in important_fields:
+        if key in data:
+            line_items.append({"key": key, "label": label, "amount": data[key]})
+            continue
+        value = _line_after_label_amount(text, pattern)
+        if value is not None:
+            line_items.append({"key": key, "label": label, "amount": value})
+            data.setdefault(key, value)
+    if line_items:
+        data["settlement_line_items"] = line_items
+
+    return data
+
+
 def parse_closing_statement(text: str) -> Dict[str, Any]:
     """Extract fields from any closing / settlement document.
 
@@ -1546,17 +1747,30 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
     # ── Sale / Purchase price ─────────────────────────────────────────────────
     # CFPB: "Sale Price $655,000"   ALTA: "Sale Price of Property 675,200.00"
     m = re.search(
-        r'sale\s+price(?:\s+of\s+(?:property|any\s+personal\s+property))?\s+\$?\s*([\d,]+(?:\.\d{1,2})?)',
-        text, re.IGNORECASE
+        r'^\s*sale[^\S\n]+price(?:[^\n$]*?)?\$[^\d\n]*([\d,]+(?:\.\d{1,2})?)',
+        text, re.IGNORECASE | re.MULTILINE
     )
     if m:
         v = _parse_amount(m.group(1))
         if v:
             data['purchase_price'] = v
 
+    settlement_calculations = _extract_alta_settlement_calculations(text)
+    if settlement_calculations:
+        data.update({k: v for k, v in settlement_calculations.items() if v not in (None, "", [])})
+        if not data.get('purchase_price') and data.get('sale_price'):
+            data['purchase_price'] = data['sale_price']
+        if not data.get('original_amount') and data.get('loan_amount'):
+            data['original_amount'] = data['loan_amount']
+        if data.get('settlement_total_amount') and data.get('purchase_price'):
+            data['settlement_purchase_price_adjustment'] = round(
+                float(data['settlement_total_amount']) - float(data['purchase_price']),
+                2,
+            )
+
     # ── Loan amount ───────────────────────────────────────────────────────────
     # Inline (ALTA): "Loan Amount $468,750.00" on the same line
-    m = re.search(r'^loan\s+amount\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE | re.MULTILINE)
+    m = re.search(r'^\s*loan\s+amount\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE | re.MULTILINE)
     if m:
         v = _parse_amount(m.group(1))
         if v:
@@ -1603,6 +1817,32 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
         v = _parse_amount(m.group(1))
         if v:
             data['cash_to_close'] = v
+
+    # ── Borrower-paid closing costs ───────────────────────────────────────────
+    # CFPB forms often show "Borrower-Paid Closing Costs" or "Closing Costs
+    # Financed / Paid Before / Paid At Closing". Keep this distinct from Cash to
+    # Close, which includes credits, deposits, and adjustments.
+    for pat in [
+        r'borrower[\s-]*paid\s+closing\s+costs?[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+        r'total\s+closing\s+costs?[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+        r'closing\s+costs?[^\n$]{0,60}borrower[\s-]*paid[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+    ]:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            v = _parse_amount(m.group(1))
+            if v:
+                data['closing_costs'] = v
+                break
+
+    if data.get('settlement_total_amount') and data.get('purchase_price'):
+        derived_closing_costs = round(
+            float(data['settlement_total_amount']) - float(data['purchase_price']),
+            2,
+        )
+        if derived_closing_costs >= 0:
+            data['settlement_purchase_price_adjustment'] = derived_closing_costs
+            data['closing_costs'] = derived_closing_costs
+            data['closing_costs_source'] = 'settlement_total_minus_purchase_price'
 
     # ── Interest rate ─────────────────────────────────────────────────────────
     # CFPB inline: "Interest Rate 3.625%" on same line
@@ -1707,6 +1947,13 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
     m = re.search(r'estimated\s+escrow\s+\+\s*([\d,]+\.\d{2})', text, re.IGNORECASE)
     if m:
         data['escrow_monthly'] = _parse_amount(m.group(1))
+
+    # ── Estimated total monthly payment ───────────────────────────────────────
+    m = re.search(r'estimated\s+total\s+monthly\s+payment[^\n$]*\$?\s*([\d,]+\.\d{2})', text, re.IGNORECASE)
+    if m:
+        data['estimated_total_monthly_payment'] = _parse_amount(m.group(1))
+    elif data.get('monthly_payment') and data.get('escrow_monthly'):
+        data['estimated_total_monthly_payment'] = round(data['monthly_payment'] + data['escrow_monthly'], 2)
 
     # ── APR (informational) ───────────────────────────────────────────────────
     m = re.search(r'annual\s+percentage\s+rate\s*\(apr\)[^\n]*?([\d.]+)%', text, re.IGNORECASE)
@@ -1821,11 +2068,21 @@ def to_markdown(category: str, data: Dict[str, Any]) -> str:
         ])
         section(display, 'Purchase Financials', [
             ('purchase_price', 'Sale Price of Property'),
+            ('settlement_total_amount', 'Settlement Final Total'),
+            ('settlement_purchase_price_adjustment', 'Settlement Adjustment'),
             ('original_amount', 'Loan Amount'),
             ('down_payment', 'Down Payment'),
             ('deposit', 'Deposit (Earnest Money)'),
             ('seller_credit', 'Seller Credit'),
             ('cash_to_close', "Cash to Close"),
+        ])
+        section(display, 'Settlement Calculations', [
+            ('settlement_debit_subtotal', 'Buyer Debit Subtotal'),
+            ('settlement_credit_subtotal', 'Buyer Credit Subtotal'),
+            ('settlement_due_to_buyer', 'Due To Buyer'),
+            ('settlement_debit_total', 'Buyer Debit Total'),
+            ('settlement_credit_total', 'Buyer Credit Total'),
+            ('settlement_total_amount', 'Final Settlement Total'),
         ])
         section(display, 'Loan Terms', [
             ('interest_rate', 'Interest Rate'),
@@ -1900,11 +2157,14 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
 
     if ext == '.pdf':
         text = extract_pdf_text(filepath)
+        if not text or not text.strip():
+            raise ValueError("Document text extraction produced no readable text.")
         if category == 'auto':
             category = detect_category(text)
 
         if category == 'mortgage_statement':
             raw_data = parse_mortgage_statement(text)
+            _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
         elif category == 'tax_return':
             # Per-property Schedule E figures are returned in the properties
             # collection so the preview can show field-level mappings.
@@ -1934,6 +2194,7 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
             }
         elif category == '1098':
             raw_data = parse_1098(text)
+            _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
         elif category == '1099':
             raw_data = parse_1099(text)
         elif category == 'closing_statement':
@@ -1950,9 +2211,25 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
         if 'raw_text_preview' not in raw_data:
             raw_data['period_type'] = raw_data.get('period_type') or detect_period_type(raw_data)
     elif ext in ('.xlsx', '.xls'):
-        if category == 'auto':
-            category = 'other'
-        raw_data = extract_excel_data(filepath)
+        text = _markitdown_text(filepath)
+        if text and len(text.strip()) > 30:
+            detected = detect_category(text) if category == 'auto' else category
+            if detected == 'mortgage_statement':
+                category = detected
+                raw_data = parse_mortgage_statement(text)
+                _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
+            elif detected == '1098':
+                category = detected
+                raw_data = parse_1098(text)
+                _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
+            else:
+                category = 'other' if category == 'auto' else category
+                raw_data = extract_excel_data(filepath)
+        else:
+            logger.warning("MarkItDown produced empty text for spreadsheet upload %s", filepath)
+            if category == 'auto':
+                category = 'other'
+            raw_data = extract_excel_data(filepath)
     elif category == 'auto':
         category = 'other'
 

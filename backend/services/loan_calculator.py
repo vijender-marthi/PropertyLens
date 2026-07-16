@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
+from services.formatters import format_currency as _fmt_money, format_interest_rate
 
 
 def monthly_payment(principal: float, annual_rate: float, years: int) -> float:
@@ -145,12 +146,6 @@ def _parse_start_date(value: Optional[str]) -> date:
         except ValueError:
             continue
     return date.today().replace(day=1)
-
-
-def _fmt_money(value: float) -> str:
-    amount = round(float(value or 0))
-    sign = "-" if amount < 0 else ""
-    return f"{sign}${abs(amount):,}"
 
 
 def _fmt_payoff(months: int) -> str:

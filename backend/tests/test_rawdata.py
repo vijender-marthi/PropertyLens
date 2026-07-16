@@ -56,7 +56,7 @@ class TestRawDataStructure:
                           headers=auth_headers(user.email))
         assert resp.status_code == 200
         data = resp.json()
-        for key in ("tax_entries", "docs_1098", "docs_1098_detail",
+        for key in ("duplicate_validations", "tax_entries", "docs_1098", "docs_1098_detail",
                     "docs_balance", "stmt_annual", "tax_docs",
                     "lease_rent", "irs_annual_depreciation",
                     "snapshots", "loans"):
@@ -128,6 +128,13 @@ class TestRawDataTaxEntries:
         assert len(data["tax_entries"]) == 1
         assert data["tax_entries"][0]["tax_year"] == 2024
         assert data["tax_entries"][0]["rents_received"] == pytest.approx(34_100)
+        assert data["tax_entries"][0]["record_uuid"]
+        assert data["tax_entries"][0]["source_type"] == "Tax Return / Schedule E"
+        persisted_entries = db.query(models.TaxReturnEntry).filter_by(property_id=prop.id, tax_year=2024).all()
+        assert any(entry.record_uuid for entry in persisted_entries)
+        assert data["duplicate_validations"][0]["document_type"] == "Schedule E"
+        assert data["duplicate_validations"][0]["tax_year"] == 2024
+        assert data["duplicate_validations"][0]["count"] == 2
 
 
 class TestRawData1098:

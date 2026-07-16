@@ -6,6 +6,25 @@ Architecture rule: UI renders backend-provided values only; parsing, calculation
 
 ---
 
+## Mandatory Engineering Standards
+
+PropertyLens standards are version-controlled and mandatory for every developer, coding agent, and pull request.
+
+- [AGENTS.md](AGENTS.md)
+- [Architecture Constitution](docs/standards/ARCHITECTURE_CONSTITUTION.md)
+- [UI Design Standards](docs/standards/UI_DESIGN_STANDARDS.md)
+- [Domain Rules](docs/standards/DOMAIN_RULES.md)
+- [AI Coding Instructions](docs/standards/AI_CODING_INSTRUCTIONS.md)
+- [PR Checklist](docs/standards/PR_CHECKLIST.md)
+
+Pull requests violating these standards should not be merged. Run:
+
+```bash
+npm run standards:check
+```
+
+---
+
 ## Features
 
 - **Dashboard** — Portfolio-wide metrics: total value, equity, LTV, NOI, DSCR, weighted interest rate, cash flow

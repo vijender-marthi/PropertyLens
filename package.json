@@ -1,0 +1,8 @@
+{
+  "name": "propertylens",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "standards:check": "node scripts/standards_check.mjs"
+  }
+}

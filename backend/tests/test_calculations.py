@@ -7,9 +7,11 @@ namespace objects to drive the functions directly.
 import pytest
 from types import SimpleNamespace
 from routers.properties import (
-    build_summary_dto,
-    compute_property_metrics,
-    _principal_from_1098,
+ build_summary_dto,
+ compute_property_metrics,
+ _build_executive_dashboard,
+ _build_portfolio_report,
+ _principal_from_1098,
     _principal_from_1098_segments,
     _scheduled_principal_cumulative,
     _statement_end_month_for_year,
@@ -61,6 +63,30 @@ def _make_loan(**overrides):
     return SimpleNamespace(**defaults)
 
 
+def test_cash_flow_uses_pi_debt_service_and_operating_expense_escrow_items_once():
+    prop = _make_prop(
+        monthly_rent=3_200.0,
+        property_tax=6_120.0,
+        insurance=1_506.0,
+        loans=[
+            _make_loan(
+                monthly_payment=3_014.25,
+                escrow_amount=775.04,
+                principal_due=0.0,
+                interest_due=0.0,
+            )
+        ],
+    )
+
+    metrics = compute_property_metrics(prop)
+
+    expected_monthly_pi = 3_014.25 - 775.04
+    expected_operating_expenses = 6_120.0 + 1_506.0
+    assert metrics["annual_debt_service"] == pytest.approx(expected_monthly_pi * 12)
+    assert metrics["monthly_expenses"] * 12 == pytest.approx(expected_operating_expenses)
+    assert metrics["monthly_cash_flow"] == pytest.approx(3_200.0 - expected_monthly_pi - (expected_operating_expenses / 12))
+
+
 class TestComputePropertyMetrics:
 
     def test_effective_rent_uses_occupancy(self):
@@ -95,12 +121,12 @@ class TestComputePropertyMetrics:
         assert dto["metrics"]["monthlyCashFlow"]["display"] == "-$2,806"
         assert dto["metrics"]["annualCashFlow"]["display"] == "-$33,670"
         assert dto["metrics"]["noi"]["display"] == "$35,143"
-        assert dto["metrics"]["capRate"]["display"] == "5.0%"
+        assert dto["metrics"]["capRate"]["display"] == "5.02%"
         assert dto["metrics"]["dscr"]["display"] == "0.51"
         assert dto["metrics"]["capRate"]["tone"] == "positive"
         assert dto["metrics"]["dscr"]["tone"] == "positive"
         assert dto["metrics"]["capRate"]["formula"] == "NOI ÷ market value"
-        assert dto["metrics"]["capRate"]["computation"] == "$35,143 ÷ $700,000"
+        assert dto["metrics"]["capRate"]["computation"] == "$35,143 ÷ $700K"
         assert dto["metrics"]["capRate"]["result"] == "5.02%"
         assert dto["metrics"]["cashOnCashReturn"]["computation"] is None
         assert dto["metrics"]["cashOnCashReturn"]["result"] is None
@@ -111,6 +137,31 @@ class TestComputePropertyMetrics:
             assert metric.get("source") in {"CALCULATED", "DOCUMENT", "USER_INPUT", "ESTIMATED"}
         assert dto["signSanity"]["cap_rate_non_negative_when_noi_positive"] is True
         assert dto["signSanity"]["dscr_non_negative_when_noi_positive"] is True
+
+    def test_summary_dto_canonical_monthly_cash_flow_display(self):
+        prop = _make_prop(
+         monthly_rent=3_200.0,
+         market_value=700_000.0,
+         property_tax=4_020.0,
+         insurance=0.0,
+         down_payment=0.0,
+         closing_costs=0.0,
+        )
+        summary_metrics = {
+         "annual_debt_service": 32_475.0,
+         "monthly_cost_to_own": 3_041.25,
+         "cash_on_cash_return": None,
+         "total_return_ytd": 1_905.0,
+        }
+
+        dto = build_summary_dto(prop, summary_metrics)
+
+        assert dto["raw"]["annual_cash_flow"] == pytest.approx(1_905.0)
+        assert dto["raw"]["monthly_cash_flow"] == pytest.approx(158.75)
+        assert dto["metrics"]["monthlyCashFlow"]["value"] == pytest.approx(158.75)
+        assert dto["metrics"]["monthlyCashFlow"]["display"] == "$159"
+        assert dto["metrics"]["monthlyCashFlow"]["result"] == "$159/mo"
+        assert dto["metrics"]["annualCashFlow"]["display"] == "$1,905"
 
     def test_payoff_analysis_returns_single_consistent_result_object(self):
         analysis = payoff_analysis(
@@ -129,6 +180,100 @@ class TestComputePropertyMetrics:
             analysis["base_total_interest"] - analysis["total_interest"],
             abs=0.01,
         )
+
+
+class TestExecutiveDashboardAggregator:
+    def _model(self):
+        return {
+            "properties": [
+                {
+                    "id": 1,
+                    "name": "Syrah",
+                    "monthly_rent": 3_000.0,
+                    "effective_rent": 3_900.0,
+                    "monthly_cash_flow": -2_090.0,
+                    "monthly_mortgage": 2_700.0,
+                    "annual_noi": 24_000.0,
+                    "market_value": 700_000.0,
+                    "total_loan_balance": 440_446.0,
+                    "equity": 259_554.0,
+                },
+                {
+                    "id": 2,
+                    "name": "Electra",
+                    "monthly_rent": 0.0,
+                    "effective_rent": 0.0,
+                    "monthly_cash_flow": 100.0,
+                    "monthly_mortgage": 900.0,
+                    "annual_noi": 12_000.0,
+                    "market_value": 0.0,
+                    "total_loan_balance": 125_000.0,
+                    "equity": -125_000.0,
+                },
+            ],
+            "primary_properties": [{"id": 3, "name": "Primary"}],
+            "excluded_count": 1,
+            "total_market_value": 700_000.0,
+            "total_loan_balance": 565_446.0,
+            "total_equity": 134_554.0,
+            "total_monthly_rent": 3_900.0,
+            "total_monthly_cash_flow": -1_990.0,
+            "total_annual_noi": 36_000.0,
+            "annual_debt_service": 43_200.0,
+            "portfolio_dscr": 0.83,
+            "weighted_avg_rate": 6.75,
+            "primary_market_value": 800_000.0,
+            "primary_equity": 350_000.0,
+            "primary_loan_balance": 450_000.0,
+            "primary_monthly_cost": 3_100.0,
+            "total_appreciation_gain": 100_000.0,
+            "total_principal_paid": 25_000.0,
+        }
+
+    def test_scope_invalid_occupancy_and_action_priority(self):
+        dashboard = _build_executive_dashboard(self._model(), [], as_of_date="2026-07-10")
+
+        assert dashboard["scope"]["includedRentalProperties"] == 2
+        assert dashboard["scope"]["excludedProperties"] == 1
+        occupancy = dashboard["dataQuality"]["checks"][0]
+        assert occupancy["status"] == "data_issue"
+        assert occupancy["display"] == "Unavailable"
+        assert "incompatible periods" in occupancy["reason"]
+        critical_actions = dashboard["attention"]["groups"][0]["actions"]
+        assert critical_actions[0]["title"] == "Syrah is losing $2,090 per month"
+
+    def test_ltv_equity_and_precision_are_backend_owned(self):
+        dashboard = _build_executive_dashboard(self._model(), [], as_of_date="2026-07-10")
+        electra = next(row for row in dashboard["propertyHealth"] if row["property"] == "Electra")
+
+        assert electra["ltv"]["status"] == "data_issue"
+        assert electra["ltv"]["display"] == "Unavailable"
+        assert electra["equity"]["value"] == -125_000.0
+        assert electra["equity"]["display"] == "-$125,000"
+        assert dashboard["stories"][2]["metrics"][1]["display"] == "6.750%"
+
+    def test_portfolio_report_contract_is_backend_owned(self):
+        dashboard = _build_executive_dashboard(self._model(), [], as_of_date="2026-07-10")
+        report = _build_portfolio_report(self._model(), dashboard, [], owner_name="Vijay")
+
+        assert report["schemaVersion"] == "portfolio-report.v1"
+        assert report["cover"]["preparedFor"] == "Vijay"
+        assert report["executiveSummary"]["primaryMetric"]["key"] == "portfolioValue"
+        assert [section["title"] for section in report["stories"]] == [
+            "Cash Flow Story",
+            "Wealth Creation Story",
+            "Debt & Financing Story",
+            "Tax Benefits Story",
+        ]
+        assert report["appendix"]["tables"][0]["id"] == "property-performance"
+
+    def test_portfolio_report_preserves_backend_action_priority(self):
+        dashboard = _build_executive_dashboard(self._model(), [], as_of_date="2026-07-10")
+        report = _build_portfolio_report(self._model(), dashboard, [], owner_name="Vijay")
+
+        assert report["recommendedNextSteps"][0]["issue"] == dashboard["attention"]["groups"][0]["actions"][0]["title"]
+        assert report["recommendedNextSteps"][0]["financialImpact"] == dashboard["attention"]["groups"][0]["actions"][0]["financialImpact"]
+        assert report["risks"][0]["recommendation"]
 
     def test_primary_home_zero_rent(self):
         prop = _make_prop(monthly_rent=3_000.0, usage_type="Primary")

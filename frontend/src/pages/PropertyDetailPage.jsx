@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { propAPI, docAPI } from '../services/api'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -7,61 +7,291 @@ import {
 } from 'recharts'
 import {
 ChevronLeft, ChevronDown, ChevronRight, Pencil, Trash2, Plus, Upload,
-FileText, RefreshCw, Calculator, Building2, Home, X, Download, Info, CheckCircle2, AlertTriangle, PauseCircle, TrendingDown, Lock
+FileText, Building2, Home, X, Download, Info, CheckCircle2, AlertTriangle, PauseCircle, TrendingDown, Lock,
+LayoutDashboard, Landmark, KeyRound, ReceiptText, SlidersHorizontal, Files, HeartPulse, ListChecks, Table2, GitBranch
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { utils, writeFile } from 'xlsx'
 import DocumentUpload from '../components/DocumentUpload'
+import DataTable from '../components/DataTable'
 import LoanCard from '../components/LoanCard'
 import LoanModal from '../components/LoanModal'
 import AmortizationModal from '../components/AmortizationModal'
+import PageContainer from '../components/PageContainer'
+import MetricCard from '../components/metrics/MetricCard'
+import MetricKPI from '../components/metrics/MetricKPI'
+import { useAuth } from '../hooks/useAuth'
+import { propertyTabs } from '../config/propertyTabs'
+import { propertyIdentitySections } from '../config/propertyDetailsSchema'
+import { homeTypeLabel } from '../config/propertySetupPresentation'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
+import { formatChartCurrency, formatCurrency as fmt, formatInterestRate, formatMetricCurrency as fmtKMB, formatDate, formatMonthYear, formatNumber, formatPercent as fmtPct, formatYear, formatRatio, rawExportValue } from '../utils/formatters'
+import { chartColors, chartTypography } from '../utils/chartTokens'
 
-const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0)
-const fmtPct = (n) => `${(n || 0).toFixed(2)}%`
+const CURRENT_YEAR = new Date().getFullYear()
+const EXPENSE_FIELDS = [
+  { key: 'property_tax', label: 'Property tax / yr' },
+  { key: 'insurance', label: 'Insurance / yr' },
+  { key: 'hoa', label: 'HOA / yr' },
+  { key: 'repairs_maintenance', label: 'Repairs and maintenance / yr' },
+  { key: 'property_management', label: 'Property management / yr' },
+  { key: 'utilities', label: 'Utilities / yr' },
+  { key: 'vacancy_allowance', label: 'Vacancy allowance / yr' },
+  { key: 'capex_reserve', label: 'CapEx reserve / yr' },
+  { key: 'other', label: 'Other / yr' },
+]
+
 const metricToneClass = (metric) => metric?.tone === 'positive'
 ? 'text-green-600'
 : metric?.tone === 'negative'
 ? 'text-red-600'
 : 'text-gray-900 dark:text-white'
 const sourceToneClass = (source) => source === 'DOCUMENT'
-  ? 'text-green-700 dark:text-green-300'
-  : source === 'USER_INPUT'
-    ? 'text-amber-700 dark:text-amber-300'
-    : 'text-blue-700 dark:text-blue-300'
+? 'text-green-700 dark:text-green-300'
+: source === 'USER_INPUT'
+? 'text-amber-700 dark:text-amber-300'
+: 'text-blue-700 dark:text-blue-300'
+
+const PROPERTY_TAB_ICONS = {
+  LayoutDashboard,
+  Landmark,
+  KeyRound,
+  ReceiptText,
+  TrendingDown,
+  SlidersHorizontal,
+  Files,
+  HeartPulse,
+  ListChecks,
+  Table2,
+}
+
+function PropertyTabIcon({ name }) {
+  const Icon = PROPERTY_TAB_ICONS[name] || LayoutDashboard
+  return <Icon className="h-4 w-4" aria-hidden="true" />
+}
+
+const PROPERTY_TAB_METRICS = {
+  summary: [
+    { label: 'Market value', key: 'marketValue' },
+    { label: 'Equity', key: 'equity' },
+    { label: 'Monthly cash flow', key: 'monthlyCashFlow' },
+    { label: 'Cost to own', key: 'monthlyCostToOwn' },
+  ],
+  loans: [
+    { label: 'Total loan', key: 'loanTotalOriginal', subLabel: 'original borrowed' },
+    { label: 'Total balance', key: 'loanTotalBalance', subLabel: 'owed today' },
+    { label: 'Paid to date', key: 'loanPrincipalPaidToDate', subLabel: 'principal' },
+    { label: 'Interest to date', key: 'loanInterestToDate', subLabel: 'paid so far' },
+    { label: 'Interest', key: 'loanInterestRateSummary' },
+  ],
+  rental: [
+    { label: 'Monthly rent', key: 'rentPerMonth', hideForPrimary: true },
+    { label: 'NOI', key: 'noi', hideForPrimary: true },
+    { label: 'Cap rate', key: 'capRate', hideForPrimary: true },
+    { label: 'DSCR', key: 'dscr', hideForPrimary: true },
+  ],
+  taxes: [],
+  depreciation: [],
+}
+
+function metricDisplayText(metric, fallback = '—') {
+  return metric?.displayValue ?? metric?.display ?? metric?.fullDisplayValue ?? metric?.fullDisplay ?? fallback
+}
+
+function propertyIsPrimary(prop) {
+  const usage = String(prop?.usage_type || prop?.usage || '').toLowerCase()
+  return usage.includes('primary') && !prop?.has_rental_history && !prop?.currently_rental
+}
+
+function PropertyTabMetrics({ activeTab, metricVault, isPrimary }) {
+  const metrics = metricVault?.metrics || {}
+  const items = (PROPERTY_TAB_METRICS[activeTab] || [])
+    .filter((item) => !(isPrimary && item.hideForPrimary))
+
+  if (!items.length) return null
+
+  const gridClass = items.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
+
+  return (
+    <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${gridClass}`} aria-label={`${activeTab} metrics`}>
+      {items.map((item) => (
+        <MetricKPI
+          key={`${activeTab}-${item.label}`}
+          label={item.label}
+          metric={item.key ? metrics[item.key] : null}
+          fallbackValue="—"
+          subLabel={item.subLabel}
+          backendOwned
+        />
+      ))}
+    </div>
+  )
+}
+
+function inputNumber(value) {
+  if (value === '' || value == null) return 0
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function numberOrEmpty(value) {
+  return value === 0 || value ? String(value) : ''
+}
+
+function apiErrorMessage(err, fallback = 'Save failed') {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (detail?.message) return detail.message
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item?.msg || item?.message)
+      .filter(Boolean)
+      .join(' ') || fallback
+  }
+  return err?.message || fallback
+}
+
+function documentDisplayDate(value) {
+  if (!value) return 'now'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return String(value)
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function blankAnnualExpense(year = CURRENT_YEAR) {
+  return {
+    id: null,
+    year,
+    property_tax: '',
+    insurance: '',
+    hoa: '',
+    repairs_maintenance: '',
+    property_management: '',
+    utilities: '',
+    vacancy_allowance: '',
+    capex_reserve: '',
+    other: '',
+    property_tax_source: 'manual',
+    insurance_source: 'manual',
+    property_tax_source_label: 'Manual',
+    insurance_source_label: 'Manual',
+    source_status: 'manual',
+    notes: '',
+  }
+}
+
+function normalizeAnnualExpense(row, year = CURRENT_YEAR) {
+  return {
+    ...blankAnnualExpense(year),
+    ...row,
+    year: Number(row?.year || year),
+    property_tax: numberOrEmpty(row?.property_tax),
+    insurance: numberOrEmpty(row?.insurance),
+    hoa: numberOrEmpty(row?.hoa),
+    repairs_maintenance: numberOrEmpty(row?.repairs_maintenance),
+    property_management: numberOrEmpty(row?.property_management),
+    utilities: numberOrEmpty(row?.utilities),
+    vacancy_allowance: numberOrEmpty(row?.vacancy_allowance),
+    capex_reserve: numberOrEmpty(row?.capex_reserve),
+    other: numberOrEmpty(row?.other),
+    property_tax_source: row?.property_tax_source || 'manual',
+    insurance_source: row?.insurance_source || 'manual',
+    property_tax_source_label: row?.property_tax_source_label || '',
+    insurance_source_label: row?.insurance_source_label || '',
+  }
+}
+
+function annualExpensePayload(row, year = CURRENT_YEAR) {
+  return {
+    year: Number(row?.year || year),
+    property_tax: inputNumber(row?.property_tax),
+    insurance: inputNumber(row?.insurance),
+    hoa: inputNumber(row?.hoa),
+    repairs_maintenance: inputNumber(row?.repairs_maintenance),
+    property_management: inputNumber(row?.property_management),
+    utilities: inputNumber(row?.utilities),
+    vacancy_allowance: inputNumber(row?.vacancy_allowance),
+    capex_reserve: inputNumber(row?.capex_reserve),
+    other: inputNumber(row?.other),
+    property_tax_source: row?.property_tax_source || 'manual',
+    insurance_source: row?.insurance_source || 'manual',
+    source_status: row?.source_status || 'manual',
+    notes: row?.notes || '',
+  }
+}
+
+function annualExpenseSourceBadge(row, key) {
+  if (!['property_tax', 'insurance'].includes(key)) return null
+  const sourceKey = row?.[`${key}_source`] || ''
+  if (!sourceKey || !inputNumber(row?.[key])) return null
+  const label = row?.[`${key}_source_label`]
+    || (sourceKey === 'escrow-estimate' ? 'Estimated (escrow)' : sourceKey === 'reported' ? 'Reported' : 'Manual')
+  return {
+    label: sourceKey === 'escrow-estimate' ? 'Estimated (escrow)' : label,
+    tone: sourceKey === 'escrow-estimate' ? 'estimate' : sourceKey === 'reported' ? 'reported' : 'manual',
+    title: label,
+  }
+}
+
+function parseJsonNumberMap(value) {
+  try {
+    const raw = JSON.parse(value || '{}')
+    return Object.fromEntries(
+      Object.entries(raw)
+        .map(([year, amount]) => [String(year), inputNumber(amount)])
+        .filter(([year, amount]) => /^\d{4}$/.test(year) && amount > 0)
+    )
+  } catch {
+    return {}
+  }
+}
+
+function RealEstateStat({ label, value, note, muted = false }) {
+  return (
+    <div className={`rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60 ${muted ? 'opacity-70' : ''}`}>
+      <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-gray-900 dark:text-white">{value}</p>
+      {note ? <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{note}</p> : null}
+    </div>
+  )
+}
 
 export default function PropertyDetailPage() {
-  const { id } = useParams()
-  const navigate = useNavigate()
+const { id, tab: routeTab } = useParams()
+const navigate = useNavigate()
+const location = useLocation()
 const [prop, setProp] = useState(null)
-const [metrics, setMetrics] = useState(null)
-const [lifetimeSummary, setLifetimeSummary] = useState(null)
+  const [metrics, setMetrics] = useState(null)
+  const [metricVault, setMetricVault] = useState(null)
+  const [lifetimeSummary, setLifetimeSummary] = useState(null)
 const [summaryView, setSummaryView] = useState(null)
 const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
   const [showLoanModal, setShowLoanModal] = useState(false)
   const [editLoan, setEditLoan] = useState(null)
   const [showAmortization, setShowAmortization] = useState(null)
-  const [refreshingValue, setRefreshingValue] = useState(false)
   const [activeTab, setActiveTab] = useState('summary')
-  const [showAddress, setShowAddress] = useState(false)
+const [showAddress, setShowAddress] = useState(() => new URLSearchParams(location.search).get('showDetails') === 'true')
+const tabRefs = useRef({})
 
   const loadData = async () => {
     try {
-const [propRes, metricsRes, docsRes, lifetimeRes, summaryRes] = await Promise.all([
-propAPI.get(id),
-propAPI.metrics(id),
-docAPI.list(id),
-propAPI.lifetime(id).catch(() => null),
-propAPI.summary(id).catch(() => null),
-])
-setProp(propRes.data)
-setMetrics(metricsRes.data)
-setDocs(docsRes.data)
-setLifetimeSummary(lifetimeRes?.data || null)
-setSummaryView(summaryRes?.data || null)
+      const [propRes, metricsRes, docsRes, lifetimeRes, summaryRes, vaultRes] = await Promise.all([
+        propAPI.get(id),
+        propAPI.metrics(id),
+        docAPI.list(id).catch(() => ({ data: [] })),
+        propAPI.lifetime(id).catch(() => null),
+        propAPI.summary(id).catch(() => null),
+        propAPI.metricVault(id).catch(() => null),
+      ])
+      setProp(propRes.data)
+      setMetrics(metricsRes.data)
+setDocs(Array.isArray(docsRes.data) ? docsRes.data : [])
+      setLifetimeSummary(lifetimeRes?.data || null)
+      setSummaryView(summaryRes?.data || null)
+      setMetricVault(vaultRes?.data || null)
     } catch {
       toast.error('Failed to load property')
       navigate('/properties')
@@ -72,7 +302,30 @@ setSummaryView(summaryRes?.data || null)
 
   useEffect(() => { loadData() }, [id])
 
-  const exportPropertyXLS = () => {
+useEffect(() => {
+  const params = new URLSearchParams(location.search)
+  if (routeTab === 'details') {
+    params.set('showDetails', 'true')
+    navigate(`/properties/${id}/summary?${params.toString()}`, { replace: true })
+    setActiveTab('summary')
+    setShowAddress(true)
+    return
+  }
+  if (routeTab === 'usage') {
+    navigate(`/properties/${id}/rental${location.search || ''}`, { replace: true })
+    setActiveTab('rental')
+    return
+  }
+  if (params.get('showDetails') === 'true') setShowAddress(true)
+  const nextTab = propertyTabs.find((tab) => tab.path === routeTab || tab.id === routeTab)
+  setActiveTab(nextTab?.id || 'summary')
+}, [id, routeTab, location.search, navigate])
+
+useEffect(() => {
+  tabRefs.current[activeTab]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+}, [activeTab])
+
+const exportPropertyXLS = () => {
     const wb = utils.book_new()
 
     // Sheet 1: Summary — property details + current metrics
@@ -85,7 +338,7 @@ setSummaryView(summaryRes?.data || null)
       ['City',              prop.city],
       ['State',             prop.state],
       ['ZIP',               prop.zip_code],
-      ['Property Type',     prop.property_type],
+      ['Property Type',     homeTypeLabel(prop.property_type, prop.property_type_raw)],
       ['Usage',             prop.usage_type || 'Rental'],
       ['Purchase Date',     prop.purchase_date],
       ['Purchase Price',    prop.purchase_price],
@@ -153,18 +406,6 @@ setSummaryView(summaryRes?.data || null)
     navigate('/properties')
   }
 
-  const handleRefreshValue = async () => {
-    setRefreshingValue(true)
-    const { data } = await propAPI.refreshValue(id)
-    if (data.value) {
-      toast.success(`Market value updated: ${fmt(data.value)} (${data.source})`)
-      loadData()
-    } else {
-      toast(data.message || 'No value returned. Configure ZILLOW_API_KEY.', { icon: 'ℹ️' })
-    }
-    setRefreshingValue(false)
-  }
-
 if (loading) return (
 <div className="flex items-center justify-center h-64">
 <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
@@ -172,41 +413,97 @@ if (loading) return (
 )
 
 const topSummaryMetrics = summaryView?.metrics || {}
-const topAnnualCashFlow = topSummaryMetrics.annualCashFlow?.value || 0
+const topVaultMetrics = metricVault?.metrics || {}
 const topMonthlyCashFlow = topSummaryMetrics.monthlyCashFlow?.value || 0
-const topAnnualNoi = topSummaryMetrics.noi?.value || 0
-const topCapRate = topSummaryMetrics.capRate?.value || 0
-const topIsPrimary = (prop.usage_type || '').toLowerCase() === 'primary'
-const topMonthlyCostToOwn = topSummaryMetrics.monthlyCostToOwn?.value || 0
+const topIsPrimary = propertyIsPrimary(prop)
+const headerMarketValue = topVaultMetrics.marketValue || topSummaryMetrics.marketValue
+const headerEquity = topVaultMetrics.equity || topSummaryMetrics.equity
+const displayDetail = (value, formatter) => {
+  if (value === null || value === undefined || value === '') return 'Not provided'
+  if (formatter === 'currency') return fmtKMB(value)
+  if (formatter === 'date') return formatDate(value)
+  if (formatter === 'datetime') return formatDate(value, { includeTime: true })
+  if (formatter === 'percent') return fmtPct(value)
+  if (typeof formatter === 'function') return formatter(value, prop)
+  return String(value)
+}
+const shouldShowDetailField = (field) => {
+  const usage = String(prop.usage_type || '').toLowerCase()
+  if (field.appliesTo && !field.appliesTo.some((type) => usage.includes(type))) return false
+  if (field.showWhen && !field.showWhen(prop)) return false
+  const value = prop[field.id]
+  if (field.hideValues?.includes(value)) return false
+  if (value === null || value === undefined || value === '') return Boolean(field.required)
+  if (Number(value) === 0 && field.showZero !== true) return false
+  return true
+}
+const detailGroups = propertyIdentitySections
+  .map((section) => ({
+    ...section,
+    rows: section.fields.filter(shouldShowDetailField).map((field) => [field.label, prop[field.id], field.formatter]),
+  }))
+  .filter((section) => section.rows.length)
+const documentCount = docs.length
+const dataHealthStatus = prop.data_health || prop.dataHealth || metrics?.data_health || metrics?.dataHealth || metricVault?.dataHealth
+const dataHealthIssueCount = Number(prop.data_health_issue_count ?? prop.dataHealthIssueCount ?? metrics?.data_health_issue_count ?? metrics?.dataHealthIssueCount ?? metricVault?.dataHealthIssueCount ?? 0)
+const dataHealthHasIssues = dataHealthIssueCount > 0 || (dataHealthStatus && !['complete', 'healthy', 'ok', 'stable', '—'].includes(String(dataHealthStatus).toLowerCase()))
+const checklistMissingCount = Number(prop.checklist_missing_count ?? prop.checklistMissingCount ?? metrics?.checklist_missing_count ?? metrics?.checklistMissingCount ?? metricVault?.checklistMissingCount ?? 0)
+const tabBadgeFor = (tab) => {
+  if (tab.id === 'documents' && documentCount > 0) return { type: 'count', label: String(documentCount), ariaLabel: `${documentCount} document${documentCount === 1 ? '' : 's'}` }
+  if (tab.id === 'verify' && dataHealthHasIssues) return { type: 'dot', label: dataHealthIssueCount > 0 ? String(dataHealthIssueCount) : '', ariaLabel: dataHealthIssueCount > 0 ? `${dataHealthIssueCount} data health issue${dataHealthIssueCount === 1 ? '' : 's'}` : 'Data health issues' }
+  if (tab.id === 'checklist' && checklistMissingCount > 0) return { type: 'count', label: String(checklistMissingCount), ariaLabel: `${checklistMissingCount} missing checklist item${checklistMissingCount === 1 ? '' : 's'}` }
+  return null
+}
 
-const TABS = ['summary', 'details', 'usage', 'loans', 'rental', 'taxes', 'depreciation', 'documents', 'checklist', 'raw data', 'verify', 'scenarios']
+
 return (
-<div className="max-w-5xl mx-auto space-y-6">
+<PageContainer>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="min-w-0">
           <button onClick={() => navigate('/properties')} className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm mb-2">
             <ChevronLeft className="w-4 h-4" /> Properties
           </button>
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{propertyLabel(prop)}</h1>
-          <p className="text-gray-500 dark:text-gray-400 text-sm mt-0.5">
-            ID {shortPropertyUid(prop)} · {prop.city}, {prop.state} · {prop.property_type} ·{' '}
-            <span className={prop.usage_type === 'Primary' ? 'badge-yellow' : 'badge-green'}>
-              {prop.usage_type === 'Primary' ? 'Primary Home' : 'Rental'}
-            </span>
-          </p>
-          <div className="mt-2">
-            <button
-              type="button"
-              onClick={() => setShowAddress((v) => !v)}
-              className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-            >
-              {showAddress ? 'Hide address' : 'Show address'}
-            </button>
-            {showAddress ? (
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{prop.address}</p>
-            ) : null}
-          </div>
+<h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{propertyLabel(prop)}</h1>
+<p className="text-gray-500 dark:text-gray-400 text-sm mt-0.5">
+ID {shortPropertyUid(prop)} · {prop.state || '—'} · {homeTypeLabel(prop.property_type, prop.property_type_raw) || 'Property'} · Value {metricDisplayText(headerMarketValue)} · Equity {metricDisplayText(headerEquity)}
+</p>
+<div className="mt-2">
+<button
+type="button"
+onClick={() => setShowAddress((v) => !v)}
+aria-expanded={showAddress}
+aria-controls="property-header-details"
+className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+>
+{showAddress ? 'Hide Details' : 'Show Details'}
+</button>
+{showAddress ? (
+<section id="property-header-details" aria-labelledby="property-header-details-title" className="mt-3 max-w-6xl rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+<div className="mb-3 flex items-center justify-between gap-3">
+<h2 id="property-header-details-title" className="text-sm font-semibold text-gray-900 dark:text-white">Property Details</h2>
+<Link to={`/properties/${id}/edit`} className="btn-secondary flex items-center gap-1.5 text-xs">
+<Pencil className="h-3.5 w-3.5" /> Edit Details
+</Link>
+</div>
+<div className="space-y-4">
+{detailGroups.map((group) => (
+<section key={group.title} className="min-w-0 border-t border-gray-200 pt-3 dark:border-gray-700">
+<h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{group.title}</h3>
+<dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
+{group.rows.map(([label, value, formatter]) => (
+<div key={`${group.title}-${label}`} className="grid min-w-0 grid-cols-[minmax(8rem,0.55fr)_minmax(0,1fr)] gap-3">
+<dt className="text-sm text-gray-500 dark:text-gray-400">{label}</dt>
+<dd className="truncate text-sm font-medium text-gray-900 dark:text-white">{displayDetail(value, formatter)}</dd>
+</div>
+))}
+</dl>
+</section>
+))}
+</div>
+</section>
+) : null}
+</div>
         </div>
         <div className="flex gap-2 shrink-0 flex-wrap">
           <button onClick={exportPropertyXLS} className="btn-secondary flex items-center gap-1.5 text-sm">
@@ -221,62 +518,66 @@ return (
         </div>
       </div>
 
-      {/* KPIs */}
-<div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-{topIsPrimary ? (
-<>
-<KPI label="Monthly Cost to Own" value={topSummaryMetrics.monthlyCostToOwn?.display || fmt(topMonthlyCostToOwn)} color={metricToneClass(topSummaryMetrics.monthlyCostToOwn)} metric={topSummaryMetrics.monthlyCostToOwn} />
-<KPI label="Loan Balance" value={topSummaryMetrics.totalDebt?.display || fmt(metrics?.total_loan_balance)} metric={topSummaryMetrics.totalDebt} />
-</>
-) : (
-<>
-<KPI label="Monthly Cash Flow" value={topSummaryMetrics.monthlyCashFlow?.display || fmt(topMonthlyCashFlow)} color={metricToneClass(topSummaryMetrics.monthlyCashFlow)} metric={topSummaryMetrics.monthlyCashFlow} />
-<KPI label="Annual Cash Flow" value={topSummaryMetrics.annualCashFlow?.display || fmt(topAnnualCashFlow)} color={metricToneClass(topSummaryMetrics.annualCashFlow)} metric={topSummaryMetrics.annualCashFlow} />
-</>
-)}
-<KPI label="Market Value" value={topSummaryMetrics.marketValue?.display || fmt(prop.market_value)} metric={topSummaryMetrics.marketValue} action={
-          <button onClick={handleRefreshValue} disabled={refreshingValue} className="text-blue-500 hover:text-blue-700">
-            <RefreshCw className={`w-3 h-3 ${refreshingValue ? 'animate-spin' : ''}`} />
-          </button>
-        } />
-<KPI label="Equity" value={topSummaryMetrics.equity?.display || fmt(metrics?.equity)} color={metricToneClass(topSummaryMetrics.equity)} metric={topSummaryMetrics.equity} />
-      </div>
-
       {/* Tabs — scrollable on mobile */}
       <div className="border-b border-gray-200 dark:border-gray-700">
-        <nav className="flex gap-1 sm:gap-4 overflow-x-auto no-scrollbar -mb-px">
-          {TABS.map((t) => (
-            <button
-              key={t}
-              onClick={() => setActiveTab(t)}
-              className={`pb-3 px-1 sm:px-0 text-sm font-medium capitalize border-b-2 transition-colors whitespace-nowrap shrink-0 ${
-                activeTab === t
-                  ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
-                  : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </nav>
+<nav className="-mb-px flex gap-1 overflow-x-auto no-scrollbar sm:gap-2" role="tablist" aria-label="Property sections">
+{propertyTabs.map((tab, index) => {
+const previousGroup = propertyTabs[index - 1]?.group
+const showSeparator = index > 0 && previousGroup !== tab.group
+const isActive = activeTab === tab.id
+const isUtility = tab.group === 'utility'
+const badge = tabBadgeFor(tab)
+return (
+<Fragment key={tab.id}>
+{showSeparator ? <span aria-hidden="true" className="mx-2 mb-3 hidden w-px shrink-0 self-stretch bg-gray-200 dark:bg-gray-700 sm:inline-block" /> : null}
+<button
+type="button"
+role="tab"
+aria-selected={isActive}
+ref={(node) => { tabRefs.current[tab.id] = node }}
+onClick={() => navigate(`/properties/${id}/${tab.path}${location.search || ''}`)}
+className={`inline-flex shrink-0 items-center gap-1.5 border-b-2 px-2 pb-3 pt-1 text-sm font-medium whitespace-nowrap transition-colors ${
+isActive
+? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+: isUtility
+? 'border-transparent text-gray-400 hover:text-gray-900 dark:text-gray-500 dark:hover:text-white'
+: 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+}`}
+>
+<PropertyTabIcon name={tab.icon} />
+<span>{tab.label}</span>
+{badge?.type === 'count' ? (
+<span className="ml-0.5 rounded-full border border-gray-200 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-gray-500 dark:border-gray-700 dark:text-gray-300" aria-label={badge.ariaLabel}>
+{badge.label}
+</span>
+) : null}
+{badge?.type === 'dot' ? (
+<span className="ml-0.5 inline-flex h-2 w-2 rounded-full bg-red-500" role="img" aria-label={badge.ariaLabel} title={badge.ariaLabel} />
+) : null}
+</button>
+</Fragment>
+)})}
+</nav>
       </div>
 
+<PropertyTabMetrics activeTab={activeTab} metricVault={metricVault} isPrimary={topIsPrimary} />
 
-      {/* Details */}
-{activeTab === 'details' && (
-<CompactDetailsTab prop={prop} propId={id} onSaved={loadData} />
+
+{activeTab === 'rental' && (
+<UsageTimelineTab propId={id} prop={prop} onSaved={loadData} />
 )}
 
-      {activeTab === 'usage' && (
-        <UsageTimelineTab propId={id} onSaved={loadData} />
-      )}
+{activeTab === 'expenses' && (
+<ExpensesTab propId={id} />
+)}
 
       {/* Loans */}
       {activeTab === 'loans' && (
-        <LoansTab
-          propId={id}
-          prop={prop}
-          onAddLoan={() => { setEditLoan(null); setShowLoanModal(true) }}
+<LoansTab
+propId={id}
+prop={prop}
+metricVault={metricVault}
+onAddLoan={() => { setEditLoan(null); setShowLoanModal(true) }}
           onEditLoan={(loan) => { setEditLoan(loan); setShowLoanModal(true) }}
           onAmortize={(loan) => setShowAmortization(loan)}
           onDeleted={loadData}
@@ -284,18 +585,14 @@ return (
       )}
 
       {/* Rental */}
-      {activeTab === 'rental' && (
-        <RentalTab propId={id} />
-      )}
-
-      {/* Taxes */}
+{/* Taxes */}
 {activeTab === 'taxes' && (
 <UnifiedTaxPage propId={id} property={prop} />
 )}
 
-      {activeTab === 'depreciation' && (
-        <DepreciationTab propId={id} prop={prop} onRentalRequest={() => setActiveTab('rental')} />
-      )}
+{activeTab === 'depreciation' && (
+<DepreciationTabExact propId={id} onRentalRequest={() => setActiveTab('rental')} />
+)}
 
       {/* Documents */}
 {activeTab === 'documents' && (
@@ -316,11 +613,11 @@ return (
       )}
 
       {/* Summary */}
-      {activeTab === 'verify' && (
-        <MasterVerificationTab propId={id} prop={prop} metrics={metrics} docs={docs} onJump={setActiveTab} />
-      )}
+{activeTab === 'verify' && (
+<DataHealthTab propId={id} onJump={setActiveTab} />
+)}
       {activeTab === 'summary' && (
-        <PropertyStorySummary propId={id} prop={prop} metrics={metrics} />
+        <PropertyStorySummary propId={id} prop={prop} metrics={metrics} metricVault={metricVault} onJump={setActiveTab} />
       )}
 
       {/* Modals */}
@@ -333,57 +630,102 @@ return (
           onSaved={loadData}
         />
       )}
-      {showAmortization && (
-        <AmortizationModal
-          propId={id}
-          loan={showAmortization}
-          onClose={() => setShowAmortization(null)}
-        />
-      )}
-    </div>
+{showAmortization && (
+<AmortizationModal
+propId={id}
+loan={showAmortization}
+onClose={() => setShowAmortization(null)}
+/>
+)}
+</PageContainer>
+)
+}
+
+const GENERIC_METRIC_TEXT = [
+  'how it\'s calculated',
+  'provided by backend engine',
+  'value entered calculated by backend',
+  'calculated by backend',
+  'backend engine',
+]
+const GENERIC_METRIC_SOURCES = new Set(['CALCULATED', 'USER_INPUT', 'DOCUMENT', 'APPROX', 'PROJECTED'])
+
+function cleanMetricText(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const lower = text.toLowerCase()
+  if (GENERIC_METRIC_TEXT.some((phrase) => lower === phrase || lower.includes(phrase))) return ''
+  return text
+}
+
+function usefulMetricInput(item) {
+  if (!item || !cleanMetricText(item.label)) return null
+  const display = item.display ?? (item.value === null || item.value === undefined ? null : fmt(item.value))
+  if (!display) return null
+  return { label: item.label, display }
+}
+
+function usefulMetricSource(source) {
+  const text = cleanMetricText(source)
+  if (!text || GENERIC_METRIC_SOURCES.has(text.toUpperCase())) return ''
+  return text
+}
+
+function metricHasUsefulInfo({ formula, inputs, computation, result, missing, warning, hint, source }) {
+  return Boolean(
+    cleanMetricText(formula) ||
+    (inputs || []).some(usefulMetricInput) ||
+    cleanMetricText(computation) ||
+    cleanMetricText(result) ||
+    (missing || []).length ||
+    cleanMetricText(warning) ||
+    cleanMetricText(hint) ||
+    usefulMetricSource(source)
   )
 }
 
 function MetricInfo({ metric }) {
-if (!metric) return null
-const inputs = metric.inputs || []
-const missing = metric.missingInputs || []
-const warning = metric.warning || (metric.warnings || []).join(' ')
-return (
-<span className="group relative inline-flex">
-<button type="button" className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-600 dark:border-gray-600 dark:text-gray-400" aria-label={`${metric.label || 'Metric'} details`}>
-<Info className="h-3 w-3" />
-</button>
-<span className="pointer-events-none absolute left-0 top-5 z-30 hidden w-72 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs shadow-xl group-hover:block group-focus-within:block dark:border-gray-700 dark:bg-gray-900">
-<span className="block font-semibold text-gray-900 dark:text-white">How it's calculated</span>
-{metric.formula ? <span className="mt-1 block text-gray-600 dark:text-gray-300">{metric.formula}</span> : null}
-{inputs.length ? <span className="mt-2 block space-y-1">
-{inputs.map((item, index) => item.display ? <span key={`${item.label}-${index}`} className="flex justify-between gap-3"><span className="text-gray-500 dark:text-gray-400">{item.label}</span><span className="font-medium text-gray-900 dark:text-white">{item.display}</span></span> : null)}
-</span> : null}
-{metric.computation ? <span className="mt-2 block border-t border-gray-100 pt-2 text-gray-600 dark:border-gray-700 dark:text-gray-300">= {metric.computation}</span> : null}
-{metric.result ? <span className="mt-1 block font-semibold text-gray-900 dark:text-white">= {metric.result}</span> : null}
-{missing.length ? <span className="mt-2 block rounded-md bg-amber-50 p-2 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-Missing input: {missing.join(', ')}
-{metric.hint ? <span className="mt-1 block">{metric.hint}</span> : null}
-</span> : null}
-{warning ? <span className="mt-2 block rounded-md bg-amber-50 p-2 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">{warning}</span> : null}
-{metric.source ? <span className={`mt-2 block border-t border-gray-100 pt-2 font-medium dark:border-gray-700 ${sourceToneClass(metric.source)}`}>Source: {metric.source}</span> : null}
-</span>
-</span>
-)
+  if (!metric) return null
+  const inputs = (metric.inputs || []).map(usefulMetricInput).filter(Boolean)
+  const missing = metric.missingInputs || []
+  const warning = cleanMetricText(metric.warning || (metric.warnings || []).join(' '))
+  const hint = cleanMetricText(metric.hint)
+  const formula = cleanMetricText(metric.formula)
+  const computation = cleanMetricText(metric.computation)
+  const result = cleanMetricText(metric.result)
+  const source = usefulMetricSource(metric.source)
+  const updatedAt = cleanMetricText(metric.updatedAt || metric.updated_at || metric.lastUpdated || metric.last_updated)
+  const confidence = cleanMetricText(metric.confidenceLabel || metric.confidence_level || metric.confidence)
+  const sourceOnly = source && !formula && !inputs.length && !computation && !result && !missing.length && !warning && !hint
+  const isMarketValue = String(metric.label || '').toLowerCase() === 'market value'
+
+  if (!metricHasUsefulInfo({ formula, inputs, computation, result, missing, warning, hint, source }) || (isMarketValue && sourceOnly && !updatedAt && !confidence)) return null
+
+  return (
+    <span className="group relative inline-flex">
+      <button type="button" className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-600 dark:border-gray-600 dark:text-gray-400" aria-label={`${metric.label || 'Metric'} details`}>
+        <Info className="h-3 w-3" />
+      </button>
+      <span className="absolute left-0 top-5 z-30 hidden w-72 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs shadow-xl group-hover:block group-focus-within:block dark:border-gray-700 dark:bg-gray-900">
+        <span className="block font-semibold text-gray-900 dark:text-white">Metric details</span>
+        {formula ? <span className="mt-1 block text-gray-600 dark:text-gray-300">{formula}</span> : null}
+        {inputs.length ? <span className="mt-2 block space-y-1">
+          {inputs.map((item, index) => <span key={`${item.label}-${index}`} className="flex justify-between gap-3"><span className="text-gray-500 dark:text-gray-400">{item.label}</span><span className="font-medium text-gray-900 dark:text-white">{item.display}</span></span>)}
+        </span> : null}
+        {computation ? <span className="mt-2 block border-t border-gray-100 pt-2 text-gray-600 dark:border-gray-700 dark:text-gray-300">{computation}</span> : null}
+        {result ? <span className="mt-1 block font-semibold text-gray-900 dark:text-white">{result}</span> : null}
+        {missing.length ? <span className="mt-2 block rounded-md bg-amber-50 p-2 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">Missing input: {missing.join(', ')}{hint ? <span className="mt-1 block">{hint}</span> : null}</span> : null}
+        {warning ? <span className="mt-2 block rounded-md bg-amber-50 p-2 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">{warning}</span> : null}
+        {source ? <span className={`mt-2 block border-t border-gray-100 pt-2 font-medium dark:border-gray-700 ${sourceToneClass(source)}`}>{isMarketValue && source.toLowerCase().includes('manual') && updatedAt ? `Manual market value entered by user. Last updated: ${updatedAt}.` : `Source: ${source}`}</span> : null}
+        {updatedAt && !(isMarketValue && source.toLowerCase().includes('manual')) ? <span className="mt-1 block text-gray-500 dark:text-gray-400">Last updated: {updatedAt}</span> : null}
+        {confidence ? <span className="mt-1 block text-gray-500 dark:text-gray-400">Confidence: {confidence}</span> : null}
+      </span>
+    </span>
+  )
 }
 
 function MetricLabel({ label, metric, action }) {
-return <span className="flex items-center gap-1">{label}<MetricInfo metric={{ ...metric, label }} />{action}</span>
-}
-
-function KPI({ label, value, color, action, metric }) {
-return (
-<div className="stat-card">
-<p className="text-xs text-gray-500 dark:text-gray-400 mb-1"><MetricLabel label={label} metric={metric} action={action} /></p>
-<p className={`text-xl font-bold ${color || 'text-gray-900 dark:text-white'}`}>{value}</p>
-</div>
-  )
+  return <span className="flex items-center gap-1">{label}<MetricInfo metric={{ ...metric, label }} />{action}</span>
 }
 
 function PLRow({ label, value, neg, bold, color }) {
@@ -460,6 +802,21 @@ if (!checklist) return <div className="card py-10 text-center text-sm text-gray-
 
 const { required, missing, completion_pct: completionPct, groups } = checklist
 const annualPivot = pivotByLabelYear(groups.annual)
+const annualChecklistRows = annualPivot.labels.map((label) => ({ label }))
+const annualChecklistColumns = [
+{ id: 'document', header: 'Document', accessor: 'label', sortable: false, cellClassName: 'font-medium text-gray-900 dark:text-white' },
+...annualPivot.years.map((year) => ({
+id: `year-${year}`,
+header: String(year),
+sortable: false,
+align: 'center',
+render: (row) => {
+const item = annualPivot.cell(row.label, year)
+return item ? <ChecklistDotGroup item={item} /> : <span className="text-gray-300">—</span>
+},
+cellClassName: 'text-center',
+})),
+]
 const missingSorted = [...missing].sort((a, b) =>
 (a.year || 0) - (b.year || 0) || (a.month || 0) - (b.month || 0)
 )
@@ -481,7 +838,7 @@ return (
 <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{completionPct}%</span>
 </div>
 </div>
-</div>
+ </div>
 
 <div className="card">
 <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">One-Time</h4>
@@ -507,33 +864,11 @@ return (
 <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Annual</h4>
 <span className="text-xs text-gray-400">Tax returns are portfolio-wide (common); multi-loan rows show one dot per loan.</span>
 </div>
-<div className="overflow-x-auto">
-<table className="min-w-full text-sm">
-<thead>
-<tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-<th className="py-2 pr-3 font-medium">Document</th>
-{annualPivot.years.map((year) => (
-<th key={year} className="py-2 px-3 text-center font-medium">{year}</th>
-))}
-</tr>
-</thead>
-<tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-{annualPivot.labels.map((label) => (
-<tr key={label}>
-<td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">{label}</td>
-{annualPivot.years.map((year) => {
-const item = annualPivot.cell(label, year)
-return (
-<td key={year} className="py-2 px-3 text-center" title={item?.detail}>
-{item ? <ChecklistDotGroup item={item} /> : <span className="text-gray-300">—</span>}
-</td>
-)
-})}
-</tr>
-))}
-</tbody>
-</table>
-</div>
+<DataTable
+columns={annualChecklistColumns}
+rows={annualChecklistRows}
+getRowKey={(row) => row.label}
+/>
 </div>
 
 <div className="card">
@@ -656,958 +991,1141 @@ function rawDocumentType(category) {
   return DOCUMENT_TYPE_LABELS[category] || rawFieldLabel(category || 'document')
 }
 
-function UsageTimelineTab({ propId, onSaved }) {
-const [data, setData] = useState(null)
-const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({
-    usage_type: 'PRIMARY',
-    start_date: '',
-    end_date: '',
-    fmv_at_start: '',
-    monthly_rent: '',
-    vacancy_allowance: '',
-    property_management_fee: '',
-    notes: '',
-  })
+function businessRawRecordLabel(documentType, year, statementDate, fields = {}) {
+const type = String(documentType || 'Document')
+const month = fields.statement_month || fields.month || monthFromDate(statementDate)
+if (/mortgage statement/i.test(type) && month && year && year !== '—') return `${type} (${month} ${year})`
+if (/closing/i.test(type)) return 'Closing Disclosure'
+if (/loan/i.test(type) && !/1098/i.test(type)) return 'Loan Details'
+if (year && year !== '—') return `${type} (${year})`
+return type
+}
 
-  const load = () => {
-    setLoading(true)
-    propAPI.usagePeriods(propId)
-      .then((res) => setData(res.data))
-      .catch(() => toast.error('Failed to load usage timeline'))
-      .finally(() => setLoading(false))
+function monthFromDate(value) {
+if (!value) return ''
+const date = new Date(value)
+if (Number.isNaN(date.getTime())) return ''
+return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][date.getMonth()] || ''
+}
+
+function formatTimelineDate(value) {
+  if (!value) return 'current'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function normalizeTimelineError(error) {
+  const detail = error?.response?.data?.detail
+  if (!detail || typeof detail === 'string') return { message: detail || 'Failed to save rental timeline period', conflicts: [] }
+  return { message: detail.message || 'Failed to save rental timeline period', conflicts: detail.conflicts || [] }
+}
+
+function UsageTimelineTab({ propId, onSaved }) {
+  const emptyTimelineForm = { period_ref: null, status: 'occupied', start_date: '', end_date: '', monthly_rent: '', notes: '' }
+  const [timeline, setTimeline] = useState(null)
+  const [timelineLoading, setTimelineLoading] = useState(true)
+  const [timelineSaving, setTimelineSaving] = useState(false)
+  const [timelineForm, setTimelineForm] = useState(emptyTimelineForm)
+  const [timelineError, setTimelineError] = useState(null)
+  const [timelineFormOpen, setTimelineFormOpen] = useState(false)
+  const editingTimeline = Boolean(timelineForm.period_ref)
+
+  const loadRentalTimeline = () => {
+    setTimelineLoading(true)
+    propAPI.rentalTimeline(propId)
+      .then((res) => setTimeline(res.data))
+      .catch(() => toast.error('Failed to load rental performance'))
+      .finally(() => setTimelineLoading(false))
   }
 
   useEffect(() => {
-    load()
+    loadRentalTimeline()
   }, [propId])
 
-  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+  const setTimelineField = (key, value) => {
+    setTimelineError(null)
+    setTimelineForm((current) => ({ ...current, [key]: value }))
+  }
 
-  const addPeriod = async (event) => {
-    event.preventDefault()
-    setSaving(true)
+  const resetTimelineForm = () => {
+    setTimelineForm(emptyTimelineForm)
+    setTimelineError(null)
+    setTimelineFormOpen(false)
+  }
+
+  const startAddTimelinePeriod = (dates = {}) => {
+    setTimelineError(null)
+    setTimelineFormOpen(true)
+    setTimelineForm({
+      ...emptyTimelineForm,
+      start_date: dates.startDate || '',
+      end_date: dates.endDate || '',
+    })
+  }
+
+  const editTimelinePeriod = (period) => {
+    if (!period?.editable) return
+    setTimelineError(null)
+    setTimelineFormOpen(true)
+    setTimelineForm({
+      period_ref: period.periodRef,
+      status: 'occupied',
+      start_date: period.startDate || '',
+      end_date: period.endDate || '',
+      monthly_rent: period.monthlyRent || '',
+      notes: period.notes || '',
+    })
+  }
+
+  const deleteTimelinePeriod = async (period) => {
+    if (!period?.periodRef) return
     try {
-      await propAPI.addUsagePeriod(propId, {
-        usage_type: form.usage_type,
-        start_date: form.start_date,
-        end_date: form.end_date || null,
-        fmv_at_start: Number(String(form.fmv_at_start).replace(/[^0-9.]/g, '')) || 0,
-        monthly_rent: Number(String(form.monthly_rent).replace(/[^0-9.]/g, '')) || 0,
-        vacancy_allowance: Number(String(form.vacancy_allowance).replace(/[^0-9.]/g, '')) || 0,
-        property_management_fee: Number(String(form.property_management_fee).replace(/[^0-9.]/g, '')) || 0,
-        notes: form.notes || null,
-      })
-      toast.success('Usage period added')
-      setForm({ usage_type: 'PRIMARY', start_date: '', end_date: '', fmv_at_start: '', monthly_rent: '', vacancy_allowance: '', property_management_fee: '', notes: '' })
-      load()
+      const res = await propAPI.deleteRentalTimelinePeriod(propId, period.periodRef)
+      setTimeline(res.data)
+      if (timelineForm.period_ref === period.periodRef) resetTimelineForm()
+      toast.success('Rental period deleted')
       onSaved?.()
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to add usage period')
+      toast.error(normalizeTimelineError(err).message)
+    }
+  }
+
+  const submitTimelinePeriod = async (event) => {
+    event.preventDefault()
+    setTimelineError(null)
+    if (!timelineForm.start_date) {
+      setTimelineError({ message: 'Start date is required.', conflicts: [] })
+      return
+    }
+    const payload = {
+      period_ref: timelineForm.period_ref,
+      status: 'occupied',
+      start_date: timelineForm.start_date,
+      end_date: timelineForm.end_date || null,
+      monthly_rent: Number(String(timelineForm.monthly_rent).replace(/[^0-9.]/g, '')) || 0,
+      notes: timelineForm.notes || null,
+    }
+    setTimelineSaving(true)
+    try {
+      const res = editingTimeline
+        ? await propAPI.updateRentalTimelinePeriod(propId, payload)
+        : await propAPI.createRentalTimelinePeriod(propId, payload)
+      setTimeline(res.data)
+      resetTimelineForm()
+      toast.success(editingTimeline ? 'Rental period updated' : 'Rental period added')
+      onSaved?.()
+    } catch (err) {
+      const parsed = normalizeTimelineError(err)
+      setTimelineError(parsed)
+      toast.error(parsed.message)
+    } finally {
+      setTimelineSaving(false)
+    }
+  }
+
+  const statusLabel = (status) => {
+    if (status === 'occupied') return 'Occupied'
+    if (status === 'not_rental') return 'Not Rental'
+    if (status === 'vacant') return 'Vacant'
+    return status || '—'
+  }
+
+  const statusBadgeClass = (status) => {
+    const normalized = String(status || '').toLowerCase().replace(' ', '_')
+    if (normalized === 'occupied') return 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-200 dark:ring-emerald-900/60'
+    if (normalized === 'vacant') return 'bg-gray-100 text-gray-700 ring-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700'
+    if (normalized === 'not_rental') return 'bg-gray-50 text-gray-500 ring-gray-100 dark:bg-gray-900 dark:text-gray-400 dark:ring-gray-800'
+    return 'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/30 dark:text-blue-200 dark:ring-blue-900/60'
+  }
+
+  const monthClass = (status) => {
+    if (status === 'occupied') return 'border-emerald-500 bg-emerald-500 shadow-sm shadow-emerald-500/20'
+    if (status === 'vacant') return 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-600'
+    return 'border-gray-300 bg-transparent opacity-40 dark:border-gray-700'
+  }
+
+  const monthAriaLabel = (month) => {
+    const tooltip = month.tooltip || {}
+    return [
+      tooltip.month,
+      tooltip.status,
+      tooltip.monthlyRent && tooltip.monthlyRent !== '—' ? tooltip.monthlyRent : null,
+      tooltip.period,
+      tooltip.note,
+    ].filter(Boolean).join(' · ')
+  }
+
+  const monthTooltipText = (month, year) => {
+    const tooltip = month.tooltip || {}
+    const status = tooltip.status || statusLabel(month.status)
+    const rent = status === 'Occupied' ? (tooltip.monthlyRent || month.monthlyRentDisplay || '—') : '$0'
+    return `${month.label || 'Month'} ${year} — ${status} · ${rent}`
+  }
+
+  const renderTimelineForm = () => (
+    <form onSubmit={submitTimelinePeriod} className="rounded-md bg-gray-50 p-2.5 dark:bg-gray-900">
+      <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{editingTimeline ? 'Edit occupancy period' : '+ Add occupancy period'}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Record occupied periods only. Vacancy is derived from gaps.</p>
+        </div>
+        {editingTimeline ? <button type="button" className="btn-secondary text-xs" onClick={resetTimelineForm}>Cancel editing</button> : null}
+      </div>
+      <div className="grid gap-2.5 md:grid-cols-4">
+        <div>
+          <label className="label">From</label>
+          <input type="date" className="input" value={timelineForm.start_date} onChange={(event) => setTimelineField('start_date', event.target.value)} required />
+        </div>
+        <div>
+          <label className="label">To</label>
+          <input type="date" className="input" value={timelineForm.end_date} onChange={(event) => setTimelineField('end_date', event.target.value)} />
+        </div>
+        <div>
+          <label className="label">Rent</label>
+          <input className="input" inputMode="decimal" value={timelineForm.monthly_rent} onChange={(event) => setTimelineField('monthly_rent', event.target.value)} />
+        </div>
+        <div>
+          <label className="label">Notes</label>
+          <input className="input" value={timelineForm.notes} onChange={(event) => setTimelineField('notes', event.target.value)} />
+        </div>
+      </div>
+      {timelineError ? (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">
+          <p className="font-semibold">Date conflict</p>
+          <p className="mt-1">{timelineError.message}</p>
+          {timelineError.conflicts?.length ? (
+            <div className="mt-2 space-y-2">
+              {timelineError.conflicts.map((conflict) => (
+                <div key={conflict.periodRef || conflict.periodId} className="rounded-md bg-white/70 p-2 dark:bg-gray-900/50">
+                  <p className="font-medium capitalize">{String(conflict.status || '').replace('_', ' ')}</p>
+                  <p>{conflict.display}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="mt-2.5 flex justify-end gap-2">
+        <button type="button" className="btn-secondary text-sm" onClick={resetTimelineForm}>Cancel</button>
+        <button type="submit" className="btn-primary text-sm" disabled={timelineSaving}>{timelineSaving ? 'Saving...' : editingTimeline ? 'Save changes' : 'Add occupancy period'}</button>
+      </div>
+    </form>
+  )
+
+  const historyRows = [
+    ...(timeline?.periods || []),
+    ...(timelineFormOpen ? [{ kind: 'form', periodRef: editingTimeline ? '__edit_form__' : '__add_form__' }] : []),
+  ]
+
+  const historyColumns = [
+    { id: 'from', header: 'From', render: (period) => formatTimelineDate(period.startDate) },
+    { id: 'to', header: 'To', render: (period) => formatTimelineDate(period.endDate) },
+    {
+      id: 'status',
+      header: 'Status',
+      render: (period) => (
+        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${statusBadgeClass(period.status)}`}>
+          {period.derived ? `${period.statusDisplay || statusLabel(period.status)} · derived` : period.statusDisplay || statusLabel(period.status)}
+        </span>
+      ),
+    },
+    { id: 'rent', header: 'Rent', align: 'right', render: (period) => period.status === 'occupied' ? period.monthlyRentDisplay || '—' : '—' },
+    {
+      id: 'actions',
+      header: 'Actions',
+      align: 'right',
+      sortable: false,
+      render: (period) => period.editable ? (
+        <div className="inline-flex gap-2">
+          <button type="button" className="text-blue-600 hover:underline" onClick={() => editTimelinePeriod(period)}>Edit</button>
+          <button type="button" className="text-red-600 hover:underline" onClick={() => deleteTimelinePeriod(period)}>Delete</button>
+        </div>
+      ) : <span className="text-xs text-gray-400">Read-only</span>,
+    },
+  ]
+
+  if (timelineLoading) {
+    return <div className="card py-10 text-center text-sm text-gray-400">Loading rental performance...</div>
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="card p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{timeline?.title || 'Rental Performance'}</h3>
+            <p className="mt-2 text-xl font-semibold leading-snug text-gray-950 dark:text-white">{timeline?.storyLead || timeline?.subtitle || 'How consistently this property has generated rental income.'}</p>
+          </div>
+          <span className="w-fit rounded-full border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 dark:border-gray-700 dark:text-gray-300">As of {timeline?.asOfDate || '—'}</span>
+        </div>
+        <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          {(timeline?.heroKpis || []).map((item) => (
+            <div key={item.label} className="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{item.label}</p>
+              {item.label === 'Status' ? (
+                <span className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-sm font-semibold ring-1 ${statusBadgeClass(item.value)}`}>{item.display || '—'}</span>
+              ) : (
+                <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{item.display || '—'}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="card space-y-3 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-base font-semibold text-gray-900 dark:text-white">Occupancy Timeline</h4>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Vacancy is backend-derived from gaps between occupied periods inside rental-available months.</p>
+          </div>
+          <button type="button" className="btn-primary text-sm" onClick={() => startAddTimelinePeriod()}>+ Add period</button>
+        </div>
+        {(timeline?.timeline || []).length ? (
+          <div className="overflow-hidden rounded-lg border border-gray-100 dark:border-gray-700">
+            <div className="grid min-h-9 grid-cols-[minmax(360px,0.48fr)_minmax(0,0.52fr)] items-center bg-gray-50 text-xs font-medium text-gray-500 dark:bg-gray-700/80 dark:text-gray-400">
+              <div className="grid grid-cols-[0.7fr_0.9fr_0.8fr_1.2fr_1.2fr] items-center gap-3 px-3 py-2">
+                <span>Year</span>
+                <span className="text-right">Occupied</span>
+                <span className="text-right">Vacant</span>
+                <span className="text-right">Received</span>
+                <span className="text-right">Expected</span>
+              </div>
+              <div className="grid grid-cols-12 items-center px-3 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500" aria-hidden="true">
+                {['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'].map((label, index) => (
+                  <span key={`${label}-${index}`}>{label}</span>
+                ))}
+              </div>
+            </div>
+            <div className="divide-y divide-gray-50 dark:divide-gray-700/60">
+              {timeline.timeline.map((year) => (
+                <div key={year.year} className="grid min-h-9 grid-cols-[minmax(360px,0.48fr)_minmax(0,0.52fr)] items-center">
+                  <div className="grid grid-cols-[0.7fr_0.9fr_0.8fr_1.2fr_1.2fr] items-center gap-3 px-3 py-2 text-sm">
+                    <span className="font-medium text-gray-900 dark:text-white">{year.year}</span>
+                    <span className="text-right font-semibold text-emerald-600 dark:text-emerald-300">{year.occupiedMonths}</span>
+                    <span className="text-right text-gray-500 dark:text-gray-400">{year.vacantMonths}</span>
+                    <span className="text-right font-semibold text-emerald-600 dark:text-emerald-300">{year.rentReceivedDisplay || year.rentCollectedDisplay || '—'}</span>
+                    <span className="text-right font-semibold text-gray-900 dark:text-white">{year.expectedRentDisplay || '—'}</span>
+                  </div>
+                  <div className="grid w-full grid-cols-12 overflow-hidden px-3" aria-label={`${year.year} rental occupancy timeline`}>
+                    {year.months.map((month) => {
+                      const tooltip = monthTooltipText(month, year.year)
+                      const ariaLabel = monthAriaLabel(month)
+                      const clickable = Boolean(month.canAddPeriod)
+                      return (
+                        <button
+                          key={`${year.year}-${month.month}`}
+                          type="button"
+                          title={tooltip}
+                          aria-label={ariaLabel || tooltip}
+                          onClick={() => clickable && startAddTimelinePeriod({ startDate: month.startDate, endDate: month.endDate })}
+                          className={`group flex min-w-0 items-center justify-center rounded-md py-2 outline-none transition-transform duration-150 hover:scale-110 focus-visible:ring-2 focus-visible:ring-blue-500 ${clickable ? 'cursor-pointer' : 'cursor-default'}`}
+                        >
+                          <span className={`h-2.5 w-2.5 rounded-full border transition-all duration-150 group-hover:ring-4 group-hover:ring-blue-500/15 group-focus-visible:ring-4 group-focus-visible:ring-blue-500/20 ${monthClass(month.status)}`} />
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+              {timeline?.timelineTotals ? (
+                <div className="grid min-h-9 grid-cols-[minmax(360px,0.48fr)_minmax(0,0.52fr)] items-center bg-gray-50 font-semibold dark:bg-gray-800/60">
+                  <div className="grid grid-cols-[0.7fr_0.9fr_0.8fr_1.2fr_1.2fr] items-center gap-3 px-3 py-2 text-sm">
+                    <span className="text-gray-900 dark:text-white">{timeline.timelineTotals.label || 'Total'}</span>
+                    <span className="text-right text-emerald-600 dark:text-emerald-300">{timeline.timelineTotals.occupiedMonths}</span>
+                    <span className="text-right text-gray-600 dark:text-gray-300">{timeline.timelineTotals.vacantMonths}</span>
+                    <span className="text-right text-emerald-600 dark:text-emerald-300">{timeline.timelineTotals.rentReceivedDisplay || '—'}</span>
+                    <span className="text-right text-gray-900 dark:text-white">{timeline.timelineTotals.expectedRentDisplay || '—'}</span>
+                  </div>
+                  <div className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">
+                    Vacancy loss {timeline.timelineTotals.vacancyLossDisplay || '—'}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-400 dark:border-gray-700">No rental timeline recorded.</div>
+        )}
+        <div className="flex flex-wrap gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Occupied</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600" /> Vacant</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full border border-gray-300 opacity-40 dark:border-gray-700" /> Not Rental</span>
+        </div>
+      </section>
+
+      <section className="card space-y-3 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-base font-semibold text-gray-900 dark:text-white">Occupancy History</h4>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Entered occupied periods plus backend-derived vacancy gaps.</p>
+          </div>
+          {editingTimeline ? <button type="button" className="btn-secondary text-sm" onClick={resetTimelineForm}>Cancel editing</button> : null}
+        </div>
+        <DataTable
+          columns={historyColumns}
+          rows={historyRows}
+          getRowKey={(row) => row.periodRef}
+          renderFullWidthRow={(row) => row.kind === 'form' ? renderTimelineForm() : null}
+          emptyMessage="No occupancy history recorded."
+        />
+      </section>
+
+      <section className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-4 text-sm font-medium text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/10 dark:text-emerald-100">
+        {timeline?.insightLine || 'Rental performance insight unavailable.'}
+      </section>
+    </div>
+  )
+}
+
+function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize, onDeleted }) {
+  const [debt, setDebt] = useState(null)
+  const [uploadingLoanId, setUploadingLoanId] = useState(null)
+  const [highlightedLoanYears, setHighlightedLoanYears] = useState({})
+  const debtRefreshVersion = useRef(0)
+
+  const refreshDebt = async () => {
+    const version = debtRefreshVersion.current + 1
+    debtRefreshVersion.current = version
+    const res = await propAPI.debt(propId)
+    if (debtRefreshVersion.current === version) setDebt(res.data)
+    return res.data
+  }
+
+  const highlightAffectedYears = (loanId, years = []) => {
+    const cleanYears = years.filter((year) => year !== null && year !== undefined)
+    if (!loanId || !cleanYears.length) return
+    setHighlightedLoanYears((current) => ({ ...current, [loanId]: cleanYears }))
+    window.setTimeout(() => {
+      setHighlightedLoanYears((current) => {
+        const next = { ...current }
+        delete next[loanId]
+        return next
+      })
+    }, 2500)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    const version = debtRefreshVersion.current + 1
+    debtRefreshVersion.current = version
+    propAPI.debt(propId).then((res) => {
+      if (!cancelled && debtRefreshVersion.current === version) setDebt(res.data)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [propId])
+
+  const previewLoanDocumentUpload = async (loan, file) => {
+    if (!file || !loan) return null
+    const fd = new FormData()
+    fd.append('property_id', propId)
+    fd.append('category', 'auto')
+    fd.append('file', file)
+    try {
+      const preview = await docAPI.previewUpload(fd)
+      return preview.data
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Loan document preview failed'))
+      return null
+    }
+  }
+
+  const checkForServicingTransfer = async (loanId) => {
+    if (!loanId) return
+    try {
+      const res = await propAPI.loanTransferSuggestions(propId)
+      const suggestions = res.data?.suggestions || []
+      const match = suggestions.find(
+        (suggestion) => suggestion.previousLoanId === loanId || suggestion.currentLoanId === loanId
+      )
+      if (!match) return
+      const confirmed = window.confirm(
+        `${match.message || 'This looks like a servicer transfer.'}\n\nMerge "${match.previousLoanLabel}" and "${match.currentLoanLabel}" into one loan?`
+      )
+      if (!confirmed) return
+      await propAPI.groupServicingTransfer(propId, {
+        previous_loan_id: match.previousLoanId,
+        current_loan_id: match.currentLoanId,
+        closed_date: match.proposedClosedDate,
+      })
+      await Promise.all([
+        Promise.resolve(onDeleted?.()),
+        refreshDebt().catch(() => {}),
+      ])
+      toast.success('Servicer transfer merged into one loan.')
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not merge servicer transfer'))
+    }
+  }
+
+  const applyLoanDocumentUpload = async (loan, preview, options = {}) => {
+    if (!loan || !preview?.pending_upload_id) return false
+    setUploadingLoanId(loan.id)
+    try {
+      const accepted = await docAPI.acceptUpload({
+        pending_upload_id: preview.pending_upload_id,
+        original_filename: preview.original_filename,
+        property_id: propId,
+        loan_id: loan.id,
+        category: preview.category || 'mortgage_statement',
+        apply_extracted: false,
+        field_overrides: options.fieldOverrides || {},
+        force: options.duplicateAction === 'keep',
+        replace_document_id: options.duplicateAction === 'replace' ? preview.duplicate_of?.id : undefined,
+      })
+      const documentCategory = accepted.data?.doc_category || accepted.data?.category || preview.category
+      let processingResult = accepted.data || {}
+      let successMessage = 'Loan document uploaded.'
+      if (documentCategory === 'mortgage_statement') {
+        const review = await docAPI.loanStatementReview(accepted.data.id)
+        const selectedFields = (review.data?.loanFields || []).map((field) => field.targetKey)
+        const applied = await docAPI.applyLoanStatement(accepted.data.id, {
+          property_id: propId,
+          loan_id: loan.id,
+          selected_loan_fields: selectedFields,
+          address_override: Boolean(options.addressOverride),
+          field_overrides: options.fieldOverrides || {},
+        })
+        processingResult = applied.data || processingResult
+        const estimates = applied.data?.expenseEstimates || {}
+        const estimatedParts = [
+          estimates.propertyTax?.applied ? `property tax ${estimates.propertyTax.display}` : null,
+          estimates.insurance?.applied ? `insurance ${estimates.insurance.display}` : null,
+        ].filter(Boolean)
+        successMessage = estimatedParts.length
+          ? `Statement applied. Estimated ${estimates.year} ${estimatedParts.join(' and ')} from escrow.`
+          : 'Mortgage statement applied.'
+      } else if (documentCategory === '1098') {
+        successMessage = '1098 imported. Loan history updated.'
+      }
+      if (processingResult.processingStatus && processingResult.processingStatus !== 'COMPLETED') {
+        throw new Error('Loan document processing did not complete.')
+      }
+      await Promise.all([
+        Promise.resolve(onDeleted?.()),
+        refreshDebt().catch(() => {}),
+      ])
+      highlightAffectedYears(processingResult.loanId || loan.id, processingResult.affectedYears || [])
+      toast.success(successMessage)
+      await checkForServicingTransfer(processingResult.loanId || loan.id)
+      return true
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Loan document upload failed'))
+      return false
+    } finally {
+      setUploadingLoanId(null)
+    }
+  }
+
+  const logicalLoans = debt?.loans || []
+  const portfolio = debt?.portfolio || {}
+  const loanMetricRows = metricVault?.loanMetrics || {}
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <LoanPortfolioMetric label="Total balance" value={portfolio.totalBalanceDisplay || '—'} />
+        <LoanPortfolioMetric label="Paid to date" value={portfolio.paidToDateDisplay || '—'} />
+        <LoanPortfolioMetric label="Interest to date" value={portfolio.interestToDateDisplay || '—'} />
+        <LoanPortfolioMetric label="Loan count" value={portfolio.loanCountDisplay || String(logicalLoans.length)} />
+      </div>
+
+      <div className="grid gap-4">
+        {logicalLoans.map((loan) => (
+          <LoanCard
+            key={loan.logicalLoanId || loan.id}
+            loan={loan}
+            debt={loan}
+            metrics={loanMetricRows[String(loan.id)]}
+            onEdit={() => onEditLoan(loan)}
+            onAmortize={() => onAmortize(loan)}
+            onPreviewStatement={(file) => previewLoanDocumentUpload(loan, file)}
+            onAcceptStatement={(preview, options) => applyLoanDocumentUpload(loan, preview, options)}
+            onDeleted={async () => {
+              await Promise.resolve(onDeleted?.())
+              await refreshDebt().catch(() => {})
+            }}
+            propId={propId}
+            uploadingStatement={uploadingLoanId === loan.id}
+            highlightedYears={highlightedLoanYears[loan.id] || []}
+            closed={loan.status === 'CLOSED'}
+          />
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={onAddLoan}
+        className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 px-4 py-5 text-sm font-medium text-gray-500 hover:border-blue-300 hover:text-blue-600 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:text-blue-300"
+      >
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        Add loan
+      </button>
+    </div>
+  )
+}
+
+function LoanPortfolioMetric({ label, value }) {
+  return (
+    <div className="rounded-lg border border-gray-100 bg-white p-3 dark:border-gray-800 dark:bg-gray-950/30">
+      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
+      <p className="mt-1 truncate text-2xl font-medium text-gray-900 dark:text-white">{value}</p>
+    </div>
+  )
+}
+
+function ExpenseSourceBadge({ source }) {
+  const tier = source?.tier || 'MANUAL'
+  const label = source?.label || 'Manual'
+  const className = tier === 'REPORTED'
+    ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300'
+    : tier === 'ESTIMATE'
+      ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300'
+      : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'
+  return (
+    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}>
+      {label}
+    </span>
+  )
+}
+
+function ExpenseFieldSourceBadge({ source }) {
+  if (!source?.label) return null
+  const className = source.tone === 'reported'
+    ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300'
+    : source.tone === 'estimate'
+      ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300'
+      : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'
+  return (
+    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${className}`} title={source.title}>
+      {source.label}
+    </span>
+  )
+}
+
+function ExpensesTab({ propId }) {
+  const [data, setData] = useState(null)
+  const [annualRows, setAnnualRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [expandedYear, setExpandedYear] = useState(null)
+  const [editingYear, setEditingYear] = useState(null)
+  const [editorRow, setEditorRow] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [uploadTarget, setUploadTarget] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [addressReview, setAddressReview] = useState(null)
+  const fileInputRef = useRef(null)
+
+  const loadExpenses = () => {
+    let active = true
+    setLoading(true)
+    setError('')
+    Promise.all([
+      propAPI.expensesView(propId),
+      propAPI.annualExpenses(propId).catch(() => ({ data: [] })),
+    ])
+      .then(([viewResponse, annualResponse]) => {
+        if (!active) return
+        setData(viewResponse.data)
+        setAnnualRows((annualResponse.data || []).map((row) => normalizeAnnualExpense(row)))
+        setExpandedYear(null)
+      })
+      .catch((err) => {
+        if (!active) return
+        setError(err.response?.data?.detail?.message || err.response?.data?.detail || err.message || 'Expenses are unavailable.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => { active = false }
+  }
+
+  useEffect(() => {
+    return loadExpenses()
+  }, [propId])
+
+  const availableYears = data?.rows?.map((row) => row.year) || [CURRENT_YEAR]
+  const selectedEditorRow = editorRow || blankAnnualExpense(editingYear || data?.currentYear || CURRENT_YEAR)
+  const refreshAfterMutation = async () => {
+    const [viewResponse, annualResponse] = await Promise.all([
+      propAPI.expensesView(propId),
+      propAPI.annualExpenses(propId).catch(() => ({ data: [] })),
+    ])
+    setData(viewResponse.data)
+    setAnnualRows((annualResponse.data || []).map((row) => normalizeAnnualExpense(row)))
+    return { view: viewResponse.data, annualRows: annualResponse.data || [] }
+  }
+
+  const rowForYear = (year) => annualRows.find((row) => Number(row.year) === Number(year)) || blankAnnualExpense(year)
+  const toggleExpandedYear = (year) => {
+    const nextYear = Number(year)
+    const isClosing = Number(expandedYear) === nextYear
+    if (editingYear) closeEditor(false)
+    setExpandedYear(isClosing ? null : nextYear)
+  }
+  const openEditor = (year = data?.currentYear || CURRENT_YEAR) => {
+    const nextYear = Number(year)
+    setEditingYear(nextYear)
+    setExpandedYear(nextYear)
+    setEditorRow(rowForYear(nextYear))
+    setAddressReview(null)
+  }
+  const closeEditor = (collapse = true) => {
+    const yearToCollapse = editingYear
+    setEditingYear(null)
+    setEditorRow(null)
+    setAddressReview(null)
+    setUploadTarget(null)
+    if (collapse && yearToCollapse) setExpandedYear(null)
+  }
+  const updateEditorField = (key, value) => {
+    setEditorRow((current) => {
+      const base = current || blankAnnualExpense(editingYear || CURRENT_YEAR)
+      const sourcePatch = key === 'property_tax'
+        ? { property_tax_source: 'manual', property_tax_source_label: 'Manual' }
+        : key === 'insurance'
+          ? { insurance_source: 'manual', insurance_source_label: 'Manual' }
+          : {}
+      return { ...base, [key]: value, ...sourcePatch, source_status: base.source_status || 'manual' }
+    })
+  }
+  const changeEditorYear = (year) => openEditor(Number(year))
+  const copyPriorYear = () => {
+    const previousYear = Number(editingYear) - 1
+    const previous = annualRows.find((row) => Number(row.year) === previousYear)
+    const hasValues = previous && EXPENSE_FIELDS.some((field) => inputNumber(previous[field.key]) > 0)
+    if (!hasValues) {
+      toast.error(`No ${previousYear} expenses to copy.`)
+      return
+    }
+    setEditorRow({
+      ...blankAnnualExpense(editingYear),
+      ...EXPENSE_FIELDS.reduce((values, field) => ({ ...values, [field.key]: previous[field.key] || '' }), {}),
+      year: Number(editingYear),
+      source_status: 'manual',
+    })
+    toast.success(`Copied ${previousYear} expenses.`)
+  }
+  const saveExpense = async () => {
+    if (!editingYear) return
+    setSaving(true)
+    try {
+      await propAPI.upsertAnnualExpense(propId, editingYear, annualExpensePayload(selectedEditorRow, editingYear))
+      await refreshAfterMutation()
+      toast.success(`${editingYear} expenses saved.`)
+      closeEditor()
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not save expenses'))
     } finally {
       setSaving(false)
     }
   }
-
-  const deletePeriod = async (period) => {
-    if (!period.id) return toast.error('Legacy fallback period cannot be deleted')
-    if (!confirm('Delete this usage period?')) return
-    await propAPI.deleteUsagePeriod(propId, period.id)
-    toast.success('Usage period deleted')
-    load()
-    onSaved?.()
+  const openDocumentUpload = (field) => {
+    setUploadTarget(field)
+    fileInputRef.current?.click()
   }
-
-  if (loading) return <div className="card py-10 text-center text-sm text-gray-400">Loading usage timeline...</div>
-
-  const periods = data?.periods || []
-  const summary = data?.summary || {}
-  const label = (value) => String(value || '').toUpperCase() === 'PRIMARY' ? 'Primary' : 'Rental'
-
-  return (
-    <div className="space-y-4">
-      <div className="card">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Property Usage Timeline</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Current type: {label(summary.current_type)}. Rental periods drive P&L and depreciation; primary periods do not depreciate.</p>
-          </div>
-          <span className="rounded-full border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 dark:border-gray-700 dark:text-gray-300">
-            Nonqualified use {fmtPct((summary.nonqualified_use_ratio || 0) * 100)}
-          </span>
-        </div>
-        {(summary.banners || []).length ? (
-          <div className="mt-4 space-y-2">
-            {summary.banners.map((banner, index) => (
-              <div key={index} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">{banner}</div>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="card">
-        <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Periods</h4>
-        <div className="divide-y divide-gray-100 dark:divide-gray-700">
-          {periods.map((period, index) => (
-            <div key={period.id || `${period.start_date}-${index}`} className="flex flex-col gap-2 py-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <div className="font-medium text-gray-900 dark:text-white">{label(period.usage_type)}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">{period.start_date} to {period.end_date || 'current'}</div>
-                {period.fmv_at_start ? <div className="text-xs text-blue-600 dark:text-blue-300">FMV at rental conversion {fmt(period.fmv_at_start)}</div> : null}
-              </div>
-              <button type="button" className="btn-secondary text-sm" onClick={() => deletePeriod(period)}>Delete</button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <form onSubmit={addPeriod} className="card space-y-4">
-        <h4 className="text-sm font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Add Usage Period</h4>
-        <div className="grid gap-4 md:grid-cols-3">
-          <div>
-            <label className="label">Usage</label>
-            <select className="input" value={form.usage_type} onChange={(e) => set('usage_type', e.target.value)}>
-              <option value="PRIMARY">Primary</option>
-              <option value="RENTAL">Rental</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Start date</label>
-            <input type="date" className="input" value={form.start_date} onChange={(e) => set('start_date', e.target.value)} required />
-          </div>
-          <div>
-            <label className="label">End date</label>
-            <input type="date" className="input" value={form.end_date} onChange={(e) => set('end_date', e.target.value)} />
-          </div>
-          {form.usage_type === 'RENTAL' ? (
-            <>
-              <div>
-                <label className="label">FMV at conversion</label>
-                <input className="input" inputMode="decimal" value={form.fmv_at_start} onChange={(e) => set('fmv_at_start', e.target.value.replace(/[^0-9.]/g, ''))} placeholder="Required if converting from primary" />
-              </div>
-              <div>
-                <label className="label">Monthly rent</label>
-                <input className="input" inputMode="decimal" value={form.monthly_rent} onChange={(e) => set('monthly_rent', e.target.value.replace(/[^0-9.]/g, ''))} />
-              </div>
-              <div>
-                <label className="label">Property management / mo</label>
-                <input className="input" inputMode="decimal" value={form.property_management_fee} onChange={(e) => set('property_management_fee', e.target.value.replace(/[^0-9.]/g, ''))} />
-              </div>
-            </>
-          ) : null}
-        </div>
-        <div>
-          <label className="label">Notes</label>
-          <input className="input" value={form.notes} onChange={(e) => set('notes', e.target.value)} />
-        </div>
-        <div className="flex justify-end">
-          <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Adding...' : 'Add period'}</button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-function MasterVerificationTab({ propId, prop, metrics, docs = [], onJump }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    setLoading(true)
-    propAPI.lifetime(propId)
-      .then((res) => setData(res.data))
-      .catch(() => toast.error('Failed to load verification suite'))
-      .finally(() => setLoading(false))
-  }, [propId])
-
-  if (loading) return <div className="card py-10 text-center text-sm text-gray-400">Running verification checks...</div>
-  if (!data) return null
-
-  const tolerance = 1
-const lifetime = data.lifetime || {}
-const yearly = data.yearly || []
-const summaryMetrics = data.summary_metrics || {}
-const summarySanity = summaryMetrics.sign_sanity || {}
-const usage = data.usage || {}
-  const usagePeriods = data.usage_periods || []
-  const engineChecks = data.engineChecks || []
-  const latest = yearly[yearly.length - 1] || {}
-  const currentType = String(usage.current_type || prop.usage_type || '').toUpperCase() === 'PRIMARY' ? 'PRIMARY' : 'RENTAL'
-  const loans = prop.loans || []
-  const hasDoc = (category) => docs.some((doc) => String(doc.doc_category || '').toLowerCase().includes(category))
-  const sumLoan = (row, key) => (row.loans || []).reduce((sum, loan) => sum + Number(loan[key] || 0), 0)
-  const passDelta = (left, right, tol = tolerance) => Math.abs(Number(left || 0) - Number(right || 0)) <= tol
-  const check = (section, id, label, pass, left = null, right = null, jump = null, detail = '') => ({
-    section, id, label, pass, left, right,
-    delta: left == null || right == null ? null : Math.abs(Number(left || 0) - Number(right || 0)),
-    jump, detail,
-  })
-
-const annualDebtService = summaryMetrics.annual_debt_service || 0
-const noi = summaryMetrics.noi || 0
-const stabilizedAnnualCashFlow = summaryMetrics.annual_cash_flow || 0
-const headerAnnualCashFlow = currentType === 'RENTAL' ? stabilizedAnnualCashFlow : null
-const trendCashFlow = currentType === 'RENTAL' ? stabilizedAnnualCashFlow : null
-const dscr = summaryMetrics.dscr ?? null
-const monthlyCashFlow = summaryMetrics.monthly_cash_flow || 0
-  const taxDocs = docs.filter((doc) => ['tax_return', 'property_tax', '1098', 'mortgage_statement'].includes(String(doc.doc_category || '').toLowerCase()))
-
-  const checks = [
-    check('A. Single Source', 'A1', 'Tabs use backend lifetime/engine output for balances, interest, principal, and yearly rows', Boolean(data.engineChecks), 'engine', 'tabs', 'summary'),
-    check('A. Single Source', 'A2', 'Single as-of balance: lifetime current balance equals metrics total debt', passDelta(lifetime.current_loan_balance, metrics?.total_loan_balance), lifetime.current_loan_balance, metrics?.total_loan_balance, 'loans'),
-    check('A. Single Source', 'A3', 'Rounding policy: verification tolerates display rounding only', true, '$1 tolerance', '$1 tolerance', null),
-    ...engineChecks.map((item, index) => check('A. Single Source', `A4.${index + 1}`, `${item.name || 'Loan'} invariant: ${item.rule}`, item.status === 'pass', item.delta || 0, 0, 'loans')),
-    check('A. Single Source', 'A5.balance', 'Loans balance today ties to latest tax row balance', passDelta(lifetime.current_loan_balance, latest.loan_balance), lifetime.current_loan_balance, latest.loan_balance, 'taxes'),
-    ...yearly.map((row) => check('A. Single Source', `A5.interest.${row.year}`, `${row.year} loan interest ties to taxes`, passDelta(sumLoan(row, 'interest_paid'), row.interest_paid), sumLoan(row, 'interest_paid'), row.interest_paid, 'taxes')),
-    ...yearly.map((row) => check('A. Single Source', `A5.principal.${row.year}`, `${row.year} loan principal ties to taxes`, passDelta(sumLoan(row, 'principal_paid'), row.principal_paid), sumLoan(row, 'principal_paid'), row.principal_paid, 'taxes')),
-
-check('B. Cash Flow', 'B1', 'Summary reads backend summary_metrics selector', Boolean(data.summary_metrics), 'backend_engine', 'summary', 'summary'),
-check('B. Cash Flow', 'B1.noiFormula', 'Backend NOI equals income minus operating expenses', currentType !== 'RENTAL' || summarySanity.noi_formula !== false, summaryMetrics.noi, (summaryMetrics.effective_gross_income || 0) - (summaryMetrics.operating_expenses || 0), 'summary'),
-check('B. Cash Flow', 'B1.cashFlowFormula', 'Backend cash flow equals NOI minus debt service', currentType !== 'RENTAL' || summarySanity.cash_flow_formula !== false, summaryMetrics.annual_cash_flow, (summaryMetrics.noi || 0) - (summaryMetrics.annual_debt_service || 0), 'summary'),
-check('B. Cash Flow', 'B1.capRateFormula', 'Backend cap rate derives from same NOI', currentType !== 'RENTAL' || summarySanity.cap_rate_formula !== false, summaryMetrics.cap_rate, summaryMetrics.noi, 'summary'),
-check('B. Cash Flow', 'B1.pnlNoi', 'Annual P&L NOI uses backend NOI selector', currentType !== 'RENTAL' || summarySanity.noi_formula !== false, summaryMetrics.noi, summaryMetrics.effective_gross_income, 'summary'),
-check('B. Cash Flow', 'B1.pnlCashFlow', 'Annual P&L net cash flow uses backend cash-flow selector', currentType !== 'RENTAL' || summarySanity.cash_flow_formula !== false, summaryMetrics.annual_cash_flow, summaryMetrics.noi, 'summary'),
-check('B. Cash Flow', 'B2', 'Monthly cash flow equals annual cash flow / 12', currentType !== 'RENTAL' || passDelta(monthlyCashFlow, stabilizedAnnualCashFlow / 12), monthlyCashFlow, stabilizedAnnualCashFlow / 12, 'summary'),
-check('B. Cash Flow', 'B3', 'DSCR sanity: DSCR < 1 agrees with negative cash flow', currentType !== 'RENTAL' || dscr == null || ((dscr < 1) === (stabilizedAnnualCashFlow < 0)), dscr, stabilizedAnnualCashFlow, 'summary'),
-check('B. Cash Flow', 'B3.sign.capRate', 'Cap rate is non-negative whenever NOI is positive', currentType !== 'RENTAL' || noi <= 0 || (summaryMetrics.cap_rate || 0) >= 0, summaryMetrics.cap_rate, noi, 'summary'),
-check('B. Cash Flow', 'B3.sign.dscr', 'DSCR is non-negative whenever NOI is positive', currentType !== 'RENTAL' || noi <= 0 || (summaryMetrics.dscr || 0) >= 0, summaryMetrics.dscr, noi, 'summary'),
-check('B. Cash Flow', 'B3.formula.dscr', 'DSCR equals NOI / annual debt service', currentType !== 'RENTAL' || annualDebtService <= 0 || Math.abs((summaryMetrics.dscr || 0) - (noi / annualDebtService)) <= 0.01, summaryMetrics.dscr, annualDebtService > 0 ? noi / annualDebtService : null, 'summary'),
-    check('B. Cash Flow', 'B4', 'Depreciation excluded from cash flow and principal excluded from NOI/P&L expense', true, 'non-cash', 'excluded', 'summary'),
-    check('B. Cash Flow', 'B5', 'Escrow and property tax/insurance are not double-counted in monthly outflow', true, 'single model', 'single model', 'summary'),
-    check('B. Cash Flow', 'B6', 'Partial years are badged and not mixed as full-income/partial-debt in headline', yearly.every((row) => !row.is_partial || row.months_elapsed), yearly.filter((row) => row.is_partial).length, yearly.filter((row) => row.is_partial && row.months_elapsed).length, 'summary'),
-    check('B. Cash Flow', 'B7', 'Property tax is annual input divided by 12 in monthly math', true, prop.property_tax || 0, (prop.property_tax || 0) / 12, 'details'),
-
-    check('C. Usage', 'C1', 'usagePeriods timeline drives current type', usagePeriods.length > 0, usagePeriods.length, 1, 'usage'),
-    check('C. Usage', 'C2', 'Primary summary hides cash flow/cap rate/DSCR', currentType !== 'PRIMARY' || true, currentType, 'PRIMARY config', 'summary'),
-    check('C. Usage', 'C3', 'Rental summary shows cash flow/cap rate/DSCR', currentType !== 'RENTAL' || dscr != null, currentType, dscr, 'summary'),
-    check('C. Usage', 'C4', 'Primary edit form hides rental-only fields', currentType !== 'PRIMARY' || true, currentType, 'hidden in form', 'details'),
-    check('C. Usage', 'C5', 'Primary years have depreciation N/A/zero, not rental depreciation', yearly.every((row) => row.usage_status !== 'Primary' || Number(row.depreciation || 0) === 0), 0, yearly.filter((row) => row.usage_status === 'Primary').reduce((sum, row) => sum + Number(row.depreciation || 0), 0), 'depreciation'),
-    check('C. Usage', 'C6', 'Rental conversions with prior primary usage require FMV basis', usagePeriods.every((period, index) => String(period.usage_type).toUpperCase() !== 'RENTAL' || index === 0 || String(usagePeriods[index - 1]?.usage_type).toUpperCase() !== 'PRIMARY' || Number(period.fmv_at_start || 0) > 0), 'FMV required', 'validated', 'usage'),
-    check('C. Usage', 'C7', 'Mid-year conversion years are split by days', yearly.every((row) => row.usage_status !== 'Mixed' || ((row.usage_days?.PRIMARY || 0) > 0 && (row.usage_days?.RENTAL || 0) > 0)), 'usage days', 'split', 'usage'),
-
-    check('D. Loans', 'D1', 'Property supports multiple loans and totals all loans', loans.length >= 0, loans.length, loans.length, 'loans'),
-    check('D. Loans', 'D2', 'Down payment is property-level, not per-loan', loans.every((loan) => loan.down_payment == null), 'property.down_payment', prop.down_payment || 0, 'details'),
-    check('D. Loans', 'D3', 'Amortization starts at loan start date and populates active years', loans.every((loan) => !loan.origination_date || yearly.some((row) => Number(row.interest_paid || 0) > 0 || Number(row.principal_paid || 0) > 0)), loans.length, yearly.length, 'loans'),
-    check('D. Loans', 'D4', 'HELOC debt excludes unused credit', loans.filter((loan) => String(loan.loan_type).toUpperCase() === 'HELOC').every((loan) => Number(loan.current_balance || 0) <= Number(loan.original_amount || loan.current_balance || 0)), 'drawn balance', 'debt', 'loans'),
-    check('D. Loans', 'D5', 'ARM loans are tagged for rate reset review', true, loans.filter((loan) => String(loan.loan_type).toUpperCase() === 'ARM').length, 'review', 'loans'),
-    check('D. Loans', 'D6', 'Sum loan balances equals header total debt', passDelta(loans.reduce((sum, loan) => sum + Number(loan.current_balance || 0), 0), lifetime.current_loan_balance), loans.reduce((sum, loan) => sum + Number(loan.current_balance || 0), 0), lifetime.current_loan_balance, 'loans'),
-
-    check('E. Documents', 'E1', 'Duplicate detection uses content hash', docs.every((doc) => doc.content_hash || true), docs.length, 'content hash', 'documents'),
-    check('E. Documents', 'E2', 'Tax docs and property docs are classified', docs.every((doc) => doc.doc_category), docs.length, docs.filter((doc) => doc.doc_category).length, 'documents'),
-    check('E. Documents', 'E3', 'Common tax docs are stored once and visible to properties', true, taxDocs.length, 'common docs', 'documents'),
-    check('E. Documents', 'E4', 'Extraction maps only to existing properties; unmatched goes review', true, 'existing property', 'needs review', 'documents'),
-    check('E. Documents', 'E5', 'Document upload triggers reload/rebuild path', true, 'onUploaded', 'lifetime reload', 'documents'),
-    check('E. Documents', 'E6', 'Reported values override calculated/projected values', yearly.some((row) => String(row.source || '').includes('1098') || String(row.interest_source || '').includes('reported')) || docs.length === 0, 'reported precedence', docs.length, 'documents'),
-
-    check('F. Taxes', 'F1', 'Depreciation ties to Schedule E line 18 when present', true, 'line 18', 'model', 'depreciation'),
-    check('F. Taxes', 'F2', 'Capital improvements use separate asset rows', true, 'asset schedule', 'depreciation', 'depreciation'),
-    check('F. Taxes', 'F3', 'Land excluded from depreciable basis', Number(prop.land_value || 0) >= 0, prop.land_value || 0, 'excluded', 'depreciation'),
-    check('F. Taxes', 'F4', 'Suspended loss rule uses MAGI threshold when tax docs present', true, 'MAGI rule', 'passive loss', 'taxes'),
-    check('F. Taxes', 'F5', 'Carryforward ledger separates suspended from deducted losses', true, '8582 ledger', 'taxes', 'taxes'),
-    check('F. Taxes', 'F6', 'Depreciation only in rental usage years', yearly.every((row) => row.usage_status !== 'Primary' || Number(row.depreciation || 0) === 0), 0, yearly.filter((row) => row.usage_status === 'Primary').reduce((sum, row) => sum + Number(row.depreciation || 0), 0), 'depreciation'),
-
-    check('G. Confidence', 'G1', 'Every yearly figure has source tags', yearly.every((row) => row.source && row.interest_source && row.principal_source && row.property_tax_source), yearly.length, yearly.filter((row) => row.source).length, 'taxes'),
-    check('G. Confidence', 'G2', 'Property confidence can identify all-projected properties', true, docs.length, docs.length ? 'documented' : '100% projected', 'documents'),
-    check('G. Confidence', 'G3', 'Reported values keep source document provenance', docs.length === 0 || docs.every((doc) => doc.id && doc.original_filename), docs.length, docs.filter((doc) => doc.id).length, 'documents'),
-    check('G. Confidence', 'G4', 'Upload recommendations available from missing source classes', true, hasDoc('1098') ? '1098 present' : 'upload 1098', hasDoc('property_tax') ? 'tax bill present' : 'upload tax bill', 'documents'),
-
-    check('H. UI', 'H1', 'Checklist groups documents by cadence', true, 'one-time/annual/monthly', 'checklist', 'checklist'),
-    check('H. UI', 'H2', 'Monthly mortgage statement is one current-year slot', true, 'current-year statement', 'checklist', 'checklist'),
-    check('H. UI', 'H3', 'Multi-loan document status can show one status per loan', true, loans.length, 'loan dots', 'checklist'),
-    check('H. UI', 'H4', 'Valuation method badge supported by market value source', Boolean(prop.market_value_source), prop.market_value_source, 'badge', 'details'),
-    check('H. UI', 'H5', 'Numeric inputs store raw values and format on blur', true, 'raw number', 'blur format', 'details'),
-    check('H. UI', 'H6', 'Primary/rental grouping driven by usage type', Boolean(prop.usage_type), prop.usage_type, 'portfolio', null),
-    check('H. UI', 'H7', 'Market value/equity are shown once in summary config', true, 'single cards', 'summary', 'summary'),
-    check('H. UI', 'H8', 'Money fields carry period labels and annual/cumulative labels', true, '/mo /yr', 'labeled', 'details'),
-  ]
-
-  const grouped = checks.reduce((acc, item) => {
-    acc[item.section] = acc[item.section] || []
-    acc[item.section].push(item)
-    return acc
-  }, {})
-  const passCount = checks.filter((item) => item.pass).length
-  const score = checks.length ? Math.round((passCount / checks.length) * 100) : 0
-  const confidence = yearly.reduce((acc, row) => {
-    ;[row.source, row.interest_source, row.principal_source, row.property_tax_source].forEach((source) => {
-      const key = String(source || 'projected').toUpperCase().includes('REPORTED') || String(source || '').toUpperCase().includes('1098') ? 'REPORTED'
-        : String(source || '').toUpperCase().includes('APPROX') ? 'APPROX'
-          : String(source || '').toUpperCase().includes('PROJECT') ? 'PROJECTED'
-            : 'CALCULATED'
-      acc[key] = (acc[key] || 0) + 1
-    })
-    return acc
-  }, { REPORTED: 0, CALCULATED: 0, APPROX: 0, PROJECTED: 0 })
-  const uploadList = [
-    !hasDoc('1098') ? 'Upload 1098 to confirm annual mortgage interest.' : null,
-    !hasDoc('property_tax') ? 'Upload property tax bill to replace approximate taxes.' : null,
-    !hasDoc('mortgage_statement') ? 'Upload recent mortgage statement to shrink projected balance gap.' : null,
-  ].filter(Boolean)
-
-  return (
-    <div className="space-y-5">
-      <div className="card">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Master Verification Suite</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Runs cross-tab checks from backend engine, lifetime rows, documents, and current property data.</p>
-          </div>
-          <div className={score >= 95 ? 'text-3xl font-bold text-green-600' : score >= 80 ? 'text-3xl font-bold text-amber-600' : 'text-3xl font-bold text-red-600'}>
-            {score}%
-          </div>
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          {Object.entries(confidence).map(([key, value]) => (
-            <div key={key} className="rounded-lg bg-gray-50 p-3 dark:bg-gray-700/50">
-              <div className="text-xs text-gray-500 dark:text-gray-400">{key}</div>
-              <div className="text-lg font-bold text-gray-900 dark:text-white">{value}</div>
-            </div>
-          ))}
-        </div>
-        {uploadList.length ? (
-          <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
-            <div className="font-semibold">What to upload to improve accuracy</div>
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              {uploadList.map((item) => <li key={item}>{item}</li>)}
-            </ul>
-          </div>
-        ) : null}
-      </div>
-
-      {Object.entries(grouped).map(([section, items]) => (
-        <div key={section} className="card">
-          <div className="mb-3 flex items-center justify-between">
-            <h4 className="font-semibold text-gray-900 dark:text-white">{section}</h4>
-            <span className="text-xs text-gray-500 dark:text-gray-400">{items.filter((item) => item.pass).length}/{items.length} pass</span>
-          </div>
-          <div className="divide-y divide-gray-100 dark:divide-gray-700">
-            {items.map((item) => (
-              <div key={item.id} className="flex flex-col gap-2 py-3 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    {item.pass ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <AlertTriangle className="h-4 w-4 text-red-600" />}
-                    <span className="font-medium text-gray-900 dark:text-white">{item.id}</span>
-                    <span className="text-sm text-gray-700 dark:text-gray-300">{item.label}</span>
-                  </div>
-                  {item.detail ? <p className="ml-6 mt-1 text-xs text-gray-500 dark:text-gray-400">{item.detail}</p> : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-3 text-sm">
-                  {item.left != null || item.right != null ? (
-                    <span className="text-gray-500 dark:text-gray-400">
-                      {typeof item.left === 'number' ? fmt(item.left) : String(item.left ?? '—')} vs {typeof item.right === 'number' ? fmt(item.right) : String(item.right ?? '—')}
-                      {item.delta != null ? ` · delta ${fmt(item.delta)}` : ''}
-                    </span>
-                  ) : null}
-                  {item.jump ? (
-                    <button type="button" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400" onClick={() => onJump?.(item.jump)}>
-                      Jump
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function rawYear(doc, data = {}) {
-  const value = doc.statement_year || data.statement_year || data.tax_year
-  if (value) return String(value)
-  const dateValue = data.statement_date || data.period_end || doc.period_end || doc.period_start
-  const match = String(dateValue || '').match(/\b(19|20)\d{2}\b/)
-  return match ? match[0] : '—'
-}
-
-function rawValue(value, field) {
-  if (value == null || value === '') return '—'
-  if (typeof value === 'number') {
-    const plainNumberFields = new Set([
-      'statement_year', 'tax_year', 'year', 'days_rented', 'personal_use_days',
-      'loan_term_years', 'months',
-    ])
-    const percentFields = new Set(['interest_rate', 'original_ltv', 'occupancy_rate'])
-    if (plainNumberFields.has(field)) return String(value)
-    if (percentFields.has(field)) return `${value}%`
-    return Math.abs(value) >= 1000 ? fmt(value) : String(value)
-  }
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
-}
-
-function rawComparable(value, field) {
-  if (value == null || value === '') return ''
-  if (typeof value === 'boolean') return value ? 1 : 0
-  if (typeof value === 'number') return value
-  const text = String(value).trim()
-  if (['statement_year', 'tax_year', 'year'].includes(field)) {
-    const year = Number(text)
-    return Number.isNaN(year) ? text : year
-  }
-  const numeric = text.replace(/[$,%]/g, '')
-  if (numeric !== '' && !Number.isNaN(Number(numeric))) return Number(numeric)
-  return text.toLowerCase()
-}
-
-function flattenExtractedData(data) {
-    return Object.entries(data || {})
-        .filter(([key]) => !['raw_text_preview', 'parse_error'].includes(key))
-        .map(([field, value]) => ({ field, value }))
-}
-
-function rawRowDedupeKey(row) {
-if (row.key) return row.key
-const fields = Object.entries(row.fields || {})
-.filter(([, value]) => value !== null && value !== undefined && value !== '')
-.sort(([a], [b]) => a.localeCompare(b))
-    return JSON.stringify({
-        documentType: row.documentType,
-        year: row.year,
-        source: row.source,
-        fields,
-    })
-}
-
-function rawSourceTier(value) {
-const tier = String(value || '').toUpperCase()
-if (tier === 'REPORTED' || tier === 'DOCUMENT') return 'REPORTED'
-if (tier === 'CALCULATED') return 'CALCULATED'
-if (tier === 'MANUAL' || tier === 'USER_INPUT') return 'MANUAL'
-if (tier === 'PROJECTED') return 'PROJECTED'
-return tier || 'APPROX'
-}
-
-function dedupeRawRows(rawRows) {
-    const seen = new Set()
-    return rawRows.filter((row) => {
-        const key = rawRowDedupeKey(row)
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-    })
-}
-
-function ExtractedRawDataTab({ propId, prop, docs }) {
-const [taxEntries, setTaxEntries] = useState([])
-const [lifetimeData, setLifetimeData] = useState(null)
-const [loading, setLoading] = useState(true)
-const [sortConfig, setSortConfig] = useState({ key: 'year', direction: 'desc', type: 'base' })
-const [sourceFilter, setSourceFilter] = useState('All')
-const [categoryFilter, setCategoryFilter] = useState('All')
-const [expandedRows, setExpandedRows] = useState({})
-const [collapsedGroups, setCollapsedGroups] = useState({})
-const [selectedFields, setSelectedFields] = useState([])
-
-useEffect(() => {
-setLoading(true)
-Promise.all([
-propAPI.rawdata(propId).catch(() => ({ data: { tax_entries: [] } })),
-propAPI.lifetime(propId).catch(() => ({ data: null })),
-])
-.then(([raw, lifetime]) => {
-setTaxEntries(raw.data?.tax_entries || [])
-setLifetimeData(lifetime.data || null)
-})
-.catch(() => {
-setTaxEntries([])
-setLifetimeData(null)
-})
-.finally(() => setLoading(false))
-}, [propId])
-
-  // Raw JSON-blob fields — not readable in a spreadsheet-style table, so
-  // they're excluded from every row rather than shown as stringified JSON.
-  const JSON_BLOB_FIELDS = ['expense_breakdown', 'depreciation_detail', 'source_refs', 'unresolved_fields', 'properties']
-
-const row = (key, sourceType, category, documentType, year, source, fields) => ({ key, id: key, sourceType: rawSourceTier(sourceType), category, documentType, year: year || '—', source, fields })
-
-const manualRows = [
-row('manual-property', 'Manual', 'Property', 'Property', '—', 'Property form', {
-name: prop?.name, address: prop?.address, city: prop?.city, state: prop?.state, zip_code: prop?.zip_code,
-property_type: prop?.property_type, usage_type: prop?.usage_type, purchase_date: prop?.purchase_date,
-purchase_price: prop?.purchase_price, down_payment: prop?.down_payment, market_value: prop?.market_value,
-monthly_rent: prop?.monthly_rent, property_tax: prop?.property_tax, insurance: prop?.insurance,
-hoa_fee: prop?.hoa_fee, maintenance: prop?.maintenance, property_management_fee: prop?.property_management_fee,
-utilities: prop?.utilities, vacancy_allowance: prop?.vacancy_allowance, capex_reserve: prop?.capex_reserve,
-other_expenses: prop?.other_expenses, land_value: prop?.land_value, depreciation_years: prop?.depreciation_years,
-}),
-...(prop?.loans || []).map((loan) => row(`manual-loan-${loan.id}`, 'Manual', 'Loans', 'Loan', '—', loan.lender_name || `Loan ${loan.id}`, {
-loan_id: loan.id, lender_name: loan.lender_name, loan_type: loan.loan_type, original_amount: loan.original_amount,
-current_balance: loan.current_balance, interest_rate: loan.interest_rate, monthly_payment: loan.monthly_payment,
-escrow_amount: loan.escrow_amount, origination_date: loan.origination_date, maturity_date: loan.maturity_date,
-loan_term_years: loan.loan_term_years,
-})),
-...(lifetimeData?.usage_periods || []).map((period, index) => row(`manual-usage-${period.id || index}`, 'Manual', 'Property', 'Usage Period', rawYear({ period_start: period.start_date }, period), 'Usage timeline', period)),
-]
-
-const calculatedRows = [
-...(lifetimeData?.yearly || []).map((item) => row(`calc-year-${item.year}`, 'Calculated', 'Taxes', 'Engine Year', String(item.year), 'Shared engine', {
-rental_income: item.rental_income, operating_expenses: item.operating_expenses, mortgage_interest: item.interest_paid,
-principal_paid: item.principal_paid, loan_balance: item.loan_balance, property_tax: item.taxes_paid,
-depreciation: item.depreciation, cash_flow: item.cash_flow, taxable_income: item.taxable_income,
-usage_status: item.usage_status, source: item.source, interest_source: item.interest_source,
-principal_source: item.principal_source, property_tax_source: item.property_tax_source,
-})),
-lifetimeData?.lifetime ? row('calc-lifetime', 'Calculated', 'Property', 'Lifetime Summary', '—', 'Shared engine', lifetimeData.lifetime) : null,
-lifetimeData?.tax_summary ? row('calc-tax-summary', 'Calculated', 'Taxes', 'Tax Summary', lifetimeData.tax_summary.current_year, 'Shared engine', {
-current_year: lifetimeData.tax_summary.current_year,
-current_net_schedule_e: lifetimeData.tax_summary.current?.net_schedule_e,
-current_depreciation: lifetimeData.tax_summary.current?.depreciation,
-lifetime_net_schedule_e: lifetimeData.tax_summary.lifetime?.net_schedule_e,
-accumulated_depreciation: lifetimeData.tax_summary.lifetime?.accumulated_depreciation,
-suspended_loss: lifetimeData.tax_summary.lifetime?.suspended_loss,
-}) : null,
-...(lifetimeData?.engineChecks || []).map((check, index) => row(`calc-check-${index}`, 'Calculated', 'Property', 'Engine Check', '—', 'Shared engine', check)),
-].filter(Boolean)
-
-const documentRows = (docs || []).map((doc) => {
-const data = doc.extracted_data || {}
-return row(`doc-${doc.id}`, 'Reported', 'Documents', rawDocumentType(doc.doc_category), rawYear(doc, data), doc.original_filename || `Document ${doc.id}`, Object.fromEntries(
-Object.entries(data).filter(([key, value]) => !['raw_text_preview', 'parse_error'].includes(key) && !JSON_BLOB_FIELDS.includes(key) && typeof value !== 'object')
-))
-})
-
-const taxRows = taxEntries.map((entry) => row(`tax:${entry.property_kind || 'rental'}:${entry.tax_year}`, 'Reported', 'Taxes', 'Tax Return Schedule E', String(entry.tax_year), entry.property_kind === 'primary' ? 'Schedule A / Primary' : 'Schedule E', {
-rents_received: entry.rents_received, mortgage_interest: entry.mortgage_interest, property_taxes: entry.property_taxes,
-depreciation: entry.depreciation, total_expenses: entry.total_expenses, net_income: entry.net_income,
-days_rented: entry.days_rented, personal_use_days: entry.personal_use_days, confidence: entry.confidence,
-schedule1_line5_total: entry.schedule1_line5_total, schedule1_line5_delta: entry.schedule1_line5_delta,
-cash_noi: entry.cash_noi, tax_pl: entry.tax_pl, depreciable_basis: entry.depreciable_basis,
-accumulated_depreciation: entry.accumulated_depreciation, remaining_depreciable_basis: entry.remaining_depreciable_basis,
-years_remaining: entry.years_remaining, annual_straight_line_depreciation: entry.annual_straight_line_depreciation,
-}))
-
-const allRows = dedupeRawRows([...manualRows, ...calculatedRows, ...documentRows, ...taxRows])
-const rows = [...allRows].sort((a, b) => {
-const byYear = String(b.year).localeCompare(String(a.year))
-if (byYear) return byYear
-return a.documentType.localeCompare(b.documentType) || a.source.localeCompare(b.source)
-})
-
-const preferredFields = [
-    'statement_year',
-    'tax_year',
-    'statement_date',
-    'period_start',
-    'period_end',
-    'account_number',
-    'lender_name',
-    'property_address',
-    'property_city',
-    'property_state',
-    'property_zip',
-    'original_amount',
-    'current_balance',
-    'year_end_outstanding_balance',
-    'interest_rate',
-    'monthly_payment',
-    'escrow_amount',
-    'mortgage_interest',
-    'property_tax_amount',
-    'rents_received',
-    'property_taxes',
-    'depreciation',
-    'total_expenses',
-    'net_income',
-'days_rented',
-'personal_use_days',
-'confidence',
-'schedule1_line5_total',
-'schedule1_line5_delta',
-'cash_noi',
-'tax_pl',
-'depreciable_basis',
-'accumulated_depreciation',
-'remaining_depreciable_basis',
-'years_remaining',
-'annual_straight_line_depreciation',
-]
-
-const fieldColumns = Array.from(new Set(rows.flatMap((row) => Object.keys(row.fields || {}))))
-.sort((a, b) => {
-const ai = preferredFields.indexOf(a)
-const bi = preferredFields.indexOf(b)
-if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
-return rawFieldLabel(a).localeCompare(rawFieldLabel(b))
-})
-
-const requestSort = (key, type = 'field') => {
-setSortConfig((current) => ({
-key,
-type,
-direction: current.key === key && current.type === type && current.direction === 'asc' ? 'desc' : 'asc',
-}))
-}
-
-const sortedRows = [...rows].sort((a, b) => {
-const type = sortConfig.type || 'base'
-const key = sortConfig.key || 'year'
-const av = type === 'base' ? a[key] : a.fields?.[key]
-const bv = type === 'base' ? b[key] : b.fields?.[key]
-const left = rawComparable(av, key)
-const right = rawComparable(bv, key)
-let result = 0
-if (typeof left === 'number' && typeof right === 'number') {
-result = left - right
-} else {
-result = String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' })
-}
-if (result === 0) {
-result = String(b.year).localeCompare(String(a.year), undefined, { numeric: true }) ||
-a.documentType.localeCompare(b.documentType) ||
-a.source.localeCompare(b.source)
-}
-return sortConfig.direction === 'desc' ? -result : result
-})
-
-const SortHeader = ({ sortKey, type = 'field', children, sticky = false }) => {
-const active = sortConfig.key === sortKey && sortConfig.type === type
-return (
-<button
-type="button"
-onClick={() => requestSort(sortKey, type)}
-className={`inline-flex items-center gap-1 whitespace-nowrap font-medium hover:text-gray-900 dark:hover:text-white ${active ? 'text-gray-900 dark:text-white' : ''}`}
->
-<span>{children}</span>
-<ChevronDown className={`h-3 w-3 transition-transform ${active && sortConfig.direction === 'asc' ? 'rotate-180' : ''} ${active ? 'opacity-100' : 'opacity-35'}`} />
-</button>
-)
-}
-
-const exportXLSX = () => {
-const exportRows = sortedRows.map((row) => {
-      const out = {
-        'Property ID': prop?.property_uid || propId,
-        'Property Name': propertyLabel(prop),
-        'Document Type': row.documentType,
-        Year: row.year,
-        Source: row.source,
+  const handleDocumentUpload = async (file) => {
+    if (!file || !uploadTarget || !editingYear) return
+    const formData = new FormData()
+    formData.append('property_id', propId)
+    formData.append('year', String(editingYear))
+    formData.append('field', uploadTarget)
+    formData.append('file', file)
+    setUploading(true)
+    try {
+      const response = await docAPI.uploadExpenseField(formData)
+      if (response.data?.status === 'address_review_required') {
+        setAddressReview({ ...response.data, field: uploadTarget, year: editingYear })
+        toast.error(response.data?.message || 'Address confirmation required')
+        return
       }
-      fieldColumns.forEach((field) => {
-      out[rawFieldLabel(field)] = rawValue(row.fields[field], field)
+      const refreshed = await refreshAfterMutation()
+      const saved = (refreshed.annualRows || []).find((row) => Number(row.year) === Number(editingYear))
+      if (saved) setEditorRow(normalizeAnnualExpense(saved))
+      toast.success(`Reported ${uploadTarget === 'property_tax' ? 'property tax' : 'insurance'} imported from document.`)
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Expense document upload failed'))
+    } finally {
+      setUploading(false)
+      setUploadTarget(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+  const acceptAddressReview = async () => {
+    if (!addressReview?.document?.id) return
+    try {
+      const response = await docAPI.applyExpenseFieldDocument(addressReview.document.id, {
+        property_id: propId,
+        year: addressReview.year || editingYear,
+        field: addressReview.field,
+        address_override: true,
       })
-      return out
-    })
-    const ws = utils.json_to_sheet(exportRows)
-    ws['!cols'] = Object.keys(exportRows[0] || { 'Document Type': '', Year: '', Source: '' }).map((key) => ({
-      wch: Math.min(Math.max(String(key).length + 4, 14), 28),
-    }))
-const wb = utils.book_new()
-utils.book_append_sheet(wb, ws, 'Raw Data')
-writeFile(wb, `propertylens_raw_data_${propId}.xlsx`)
-}
-
-const sourceTier = (row) => {
-const tier = String(row.sourceType || '').toUpperCase()
-return tier === 'REPORTED' ? 'REPORTED' : tier === 'CALCULATED' ? 'CALCULATED' : tier === 'MANUAL' ? 'MANUAL' : tier || 'APPROX'
-}
-
-const viewCategory = (row) => {
-if (row.category === 'Documents') return 'Documents'
-if (row.category === 'Loans') return 'Loans'
-if (row.documentType === 'Usage Period') return 'Usage'
-if (row.documentType === 'Property') return 'Usage'
-if (String(row.documentType || '').toLowerCase().includes('depreciation')) return 'Depreciation'
-if (row.sourceType === 'Calculated') return 'Engine/Calculated'
-if (row.category === 'Taxes') return 'Taxes'
-return row.category || 'Engine/Calculated'
-}
-
-const sourceChipClass = (tier) => ({
-REPORTED: 'border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-800 dark:bg-purple-900/20 dark:text-purple-300',
-CALCULATED: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300',
-MANUAL: 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300',
-APPROX: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300',
-PROJECTED: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300',
-}[tier] || 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300')
-
-const dateValue = (row) => row.fields?.statement_date || row.fields?.period_start || row.fields?.origination_date || row.fields?.purchase_date || row.fields?.placed_in_service_date || '—'
-const populatedFields = (row) => Object.entries(row.fields || {}).filter(([key, value]) => value !== undefined && value !== null && value !== '' && !JSON_BLOB_FIELDS.includes(key))
-const detailLabel = (row) => {
-if (row.documentType === 'Property') return 'Property details'
-if (row.documentType === 'Loan') return row.fields?.lender_name || row.source || 'Loan'
-if (row.documentType === 'Tax Return Schedule E') return row.fields?.mortgage_interest ? 'Schedule E reported' : 'Tax return'
-if (row.documentType === 'Engine Year') return 'Annual engine row'
-if (row.documentType === 'Tax Summary') return 'Schedule E summary'
-return row.documentType || row.source || 'Record'
-}
-const defaultKeyFields = (row) => {
-const category = viewCategory(row)
-const fields = {
-Documents: ['mortgage_interest', 'property_tax_amount', 'rents_received'],
-Loans: ['current_balance', 'monthly_payment', 'interest_rate'],
-Taxes: ['rents_received', 'mortgage_interest', 'depreciation', 'net_income'],
-Depreciation: ['depreciation', 'depreciable_basis', 'accumulated_depreciation'],
-'Engine/Calculated': ['cash_flow', 'taxable_income', 'loan_balance', 'depreciation'],
-Usage: ['usage_type', 'monthly_rent', 'purchase_date', 'start_date'],
-}[category] || []
-return [...fields, ...selectedFields].filter((field, index, arr) => arr.indexOf(field) === index && row.fields?.[field] !== undefined).slice(0, selectedFields.length ? 5 : 2)
-}
-const categoryOptions = ['All', 'Documents', 'Loans', 'Taxes', 'Depreciation', 'Engine/Calculated', 'Usage']
-const sourceOptions = ['All', 'REPORTED', 'CALCULATED', 'MANUAL', 'APPROX', 'PROJECTED']
-const compactRows = sortedRows
-.map((row) => ({ ...row, viewCategory: viewCategory(row), tier: sourceTier(row) }))
-.filter((row) => sourceFilter === 'All' || row.tier === sourceFilter)
-.filter((row) => categoryFilter === 'All' || row.viewCategory === categoryFilter)
-const groupedRows = categoryOptions
-.filter((category) => category !== 'All')
-.map((category) => ({
-category,
-rows: compactRows.filter((row) => row.viewCategory === category).sort((a, b) => String(b.year).localeCompare(String(a.year), undefined, { numeric: true }) || detailLabel(a).localeCompare(detailLabel(b))),
-}))
-.filter((group) => group.rows.length > 0)
-const activeFilterCount = (sourceFilter !== 'All' ? 1 : 0) + (categoryFilter !== 'All' ? 1 : 0)
-const visibleFieldOptions = fieldColumns.filter((field) => !['address', 'property_address', 'property_city', 'property_state', 'property_zip'].includes(field)).slice(0, 28)
-const toggleField = (field) => setSelectedFields((current) => current.includes(field) ? current.filter((item) => item !== field) : [...current, field])
-const toggleRow = (key) => setExpandedRows((current) => ({ ...current, [key]: !current[key] }))
-const toggleGroup = (category) => setCollapsedGroups((current) => ({ ...current, [category]: !current[category] }))
-
-return (
-<div className="card">
-<div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-<div>
-<h3 className="font-semibold text-gray-900 dark:text-white">Raw Data</h3>
-<p className="text-xs text-gray-400 dark:text-gray-500">Grouped audit view. Expand any row to see every populated field; export keeps the full wide table.</p>
-</div>
-<div className="flex items-center gap-3">
-<div className="text-xs text-gray-400 dark:text-gray-500">{compactRows.length} rows · {fieldColumns.length} fields{activeFilterCount ? ` · ${activeFilterCount} filters` : ''}</div>
-<button type="button" className="btn-secondary flex items-center gap-1.5 text-xs" onClick={exportXLSX} disabled={rows.length === 0}>
-<Download className="h-3.5 w-3.5" /> Export XLSX
-</button>
-</div>
-</div>
-
-<div className="mb-3 flex flex-wrap gap-2">
-{sourceOptions.map((source) => (
-<button key={source} type="button" onClick={() => setSourceFilter(source)} className={sourceFilter === source ? 'rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-white' : 'rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700/40'}>{source}</button>
-))}
-{categoryOptions.map((category) => (
-<button key={category} type="button" onClick={() => setCategoryFilter(category)} className={categoryFilter === category ? 'rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900' : 'rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700/40'}>{category}</button>
-))}
-</div>
-
-<details className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/50">
-<summary className="cursor-pointer text-xs font-medium text-gray-600 dark:text-gray-300">Columns {selectedFields.length ? `(${selectedFields.length} extra)` : ''}</summary>
-<div className="mt-3 flex flex-wrap gap-2">
-{visibleFieldOptions.map((field) => (
-<label key={field} className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">
-<input type="checkbox" checked={selectedFields.includes(field)} onChange={() => toggleField(field)} />
-{rawFieldLabel(field)}
-</label>
-))}
-</div>
-</details>
-
-{loading ? (
-<div className="py-10 text-center text-sm text-gray-400">Loading raw data...</div>
-) : compactRows.length === 0 ? (
-<div className="py-10 text-center text-sm text-gray-400">{rows.length === 0 ? 'No raw data yet.' : 'No rows match the active filters.'}</div>
-) : (
-<div className="space-y-3">
-{groupedRows.map((group) => {
-const collapsed = collapsedGroups[group.category]
-return (
-<div key={group.category} className="rounded-lg border border-gray-200 dark:border-gray-700">
-<button type="button" onClick={() => toggleGroup(group.category)} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
-<span className="font-medium text-gray-900 dark:text-white">{group.category}</span>
-<span className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">{group.rows.length} records <ChevronDown className={`h-4 w-4 transition-transform ${collapsed ? '-rotate-90' : ''}`} /></span>
-</button>
-{!collapsed && (
-<div className="divide-y divide-gray-100 dark:divide-gray-700">
-{group.rows.map((rawRow) => {
-const open = expandedRows[rawRow.key]
-const keyFields = defaultKeyFields(rawRow)
-return (
-<div key={rawRow.key} className="px-4 py-3">
-<div className="grid gap-3 text-sm md:grid-cols-[minmax(0,1.6fr)_90px_120px_120px_minmax(0,1.4fr)] md:items-center">
-<button type="button" onClick={() => toggleRow(rawRow.key)} className="flex min-w-0 items-center gap-2 text-left font-medium text-gray-900 dark:text-white">
-<ChevronRight className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
-<span className="truncate">{detailLabel(rawRow)}</span>
-</button>
-<div className="text-gray-600 dark:text-gray-300">{rawRow.year}</div>
-<div><span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${sourceChipClass(rawRow.tier)}`}>{rawRow.tier}</span></div>
-<div className="text-gray-500 dark:text-gray-400">{dateValue(rawRow)}</div>
-<div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
-{keyFields.map((field) => <span key={field} className="truncate"><span className="text-gray-400 dark:text-gray-500">{rawFieldLabel(field)}:</span> {rawValue(rawRow.fields[field], field)}</span>)}
-</div>
-</div>
-{open && (
-<div className="mt-3 grid gap-x-6 gap-y-2 rounded-lg bg-gray-50 p-3 text-xs dark:bg-gray-800/60 sm:grid-cols-2 lg:grid-cols-3">
-{populatedFields(rawRow).map(([field, value]) => (
-<div key={field} className="flex min-w-0 justify-between gap-3">
-<span className="truncate text-gray-500 dark:text-gray-400">{rawFieldLabel(field)}</span>
-<span className="min-w-0 truncate text-right font-medium text-gray-900 dark:text-white">{rawValue(value, field)}</span>
-</div>
-))}
-</div>
-)}
-</div>
-)
-})}
-</div>
-)}
-</div>
-)
-})}
-</div>
-)}
-</div>
-)
-
-return (
-    <div className="card">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h3 className="font-semibold text-gray-900 dark:text-white">Raw Data</h3>
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            Spreadsheet view: one row per document or tax year, with each extracted field as a column.
-          </p>
+      await refreshAfterMutation()
+      setEditorRow(normalizeAnnualExpense(response.data.annualExpense))
+      setAddressReview(null)
+      toast.success('Address confirmed and document applied.')
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not apply document'))
+    }
+  }
+  const removeAddressReview = async () => {
+    if (!addressReview?.document?.id) {
+      setAddressReview(null)
+      return
+    }
+    try {
+      await docAPI.delete(addressReview.document.id)
+      setAddressReview(null)
+      toast.success('Document removed.')
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not remove document'))
+    }
+  }
+  const removeExpenseDocument = async (field) => {
+    if (!editingYear) return
+    try {
+      const response = await docAPI.removeExpenseFieldDocument({
+        property_id: propId,
+        year: editingYear,
+        field,
+      })
+      await refreshAfterMutation()
+      setEditorRow(normalizeAnnualExpense(response.data.annualExpense))
+      toast.success('Document link removed.')
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not remove document link'))
+    }
+  }
+  const renderExpenseValue = (component) => (
+    component?.value == null
+      ? <span className="text-gray-400 dark:text-gray-500">—</span>
+      : component.display
+  )
+  const renderDocumentControl = (field) => {
+    if (!['property_tax', 'insurance'].includes(field.key)) return null
+    const sourceDocument = selectedEditorRow[`${field.key}_document`]
+    const uploadingThisField = uploading && uploadTarget === field.key
+    const pendingReview = addressReview?.field === field.key ? addressReview : null
+    if (pendingReview) {
+      const validation = pendingReview.addressValidation || {}
+      const missingAddress = validation.status === 'document_address_missing'
+      return (
+        <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">{missingAddress ? "Couldn't read an address" : 'Address mismatch'}</p>
+              <p className="mt-0.5 text-red-700 dark:text-red-200">
+                {missingAddress ? "Confirm this is the right document before it drives expenses." : 'This document is blocked until the address is confirmed.'}
+              </p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div>
+                  <p className="font-medium text-red-700 dark:text-red-200">Property address</p>
+                  <p className="mt-0.5 break-words text-red-950 dark:text-red-50">{validation.normalizedPropertyAddress || 'No property address'}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-red-700 dark:text-red-200">On-document address</p>
+                  <p className="mt-0.5 break-words text-red-950 dark:text-red-50">{validation.normalizedDocumentAddress || 'No address found'}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-red-700 dark:text-red-200">Match confidence: {validation.matchScoreDisplay || '0%'}</p>
+              <div className="mt-2 flex flex-wrap gap-3 font-medium">
+                <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptAddressReview}>
+                  Same address — accept
+                </button>
+                <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeAddressReview}>
+                  Wrong document — remove
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-xs text-gray-400 dark:text-gray-500">{rows.length} rows · {fieldColumns.length} fields</div>
-          <button type="button" className="btn-secondary flex items-center gap-1.5 text-xs" onClick={exportXLSX} disabled={rows.length === 0}>
-            <Download className="h-3.5 w-3.5" /> Export XLSX
+      )
+    }
+    if (sourceDocument) {
+      return (
+        <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs dark:border-gray-800 dark:bg-gray-900">
+          <div className="flex items-start gap-2">
+            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-gray-700 dark:text-gray-200" title={sourceDocument.name}>{sourceDocument.name}</p>
+              <p className="mt-0.5 truncate text-gray-500 dark:text-gray-400">
+                {sourceDocument.docType || 'document'} · {sourceDocument.amountDisplay || '—'} · parsed {documentDisplayDate(sourceDocument.parsedAt)}
+              </p>
+              {sourceDocument.addressConfirmed ? (
+                <p className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">Address confirmed</p>
+              ) : null}
+              <div className="mt-1.5 flex flex-wrap gap-3 font-medium">
+                <Link to={`/properties/${propId}/documents`} className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300">
+                  <FileText className="h-3.5 w-3.5" aria-hidden="true" /> Preview
+                </Link>
+                <button type="button" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300" onClick={() => openDocumentUpload(field.key)} disabled={uploading}>
+                  <Upload className="h-3.5 w-3.5" aria-hidden="true" /> Replace
+                </button>
+                <button type="button" className="inline-flex items-center gap-1 text-gray-600 hover:underline dark:text-gray-300" onClick={() => removeExpenseDocument(field.key)}>
+                  <X className="h-3.5 w-3.5" aria-hidden="true" /> Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <button
+        type="button"
+        className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs font-medium text-gray-500 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:text-blue-300"
+        onClick={() => openDocumentUpload(field.key)}
+        disabled={uploading}
+      >
+        <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+        {uploadingThisField ? 'Uploading...' : `Upload ${field.key === 'property_tax' ? 'tax bill' : 'insurance'} doc — PDF, xls`}
+      </button>
+    )
+  }
+  const renderExpenseEditor = (row) => {
+    if (Number(editingYear) !== Number(row.year)) return null
+    return (
+      <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-4 dark:border-blue-900/50 dark:bg-blue-950/10">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="font-semibold text-gray-900 dark:text-white">Edit {editingYear} expenses</h4>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Save updates this year and refreshes the expense engine.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="detail-expense-year" className="text-xs font-medium text-gray-500 dark:text-gray-400">Year</label>
+            <select id="detail-expense-year" className="input h-9 max-w-32 text-sm" value={editingYear} onChange={(event) => changeEditorYear(event.target.value)}>
+              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+            <button type="button" className="btn-secondary text-sm" onClick={copyPriorYear}>Copy prior year</button>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          {EXPENSE_FIELDS.map((field) => {
+            const source = annualExpenseSourceBadge(selectedEditorRow, field.key)
+            return (
+              <div key={field.key}>
+                <label className="label" htmlFor={`expense-${field.key}`}>{field.label}</label>
+                <div className="relative">
+                  <input
+                    id={`expense-${field.key}`}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={selectedEditorRow[field.key] || ''}
+                    onChange={(event) => updateEditorField(field.key, event.target.value)}
+                    className="input pr-3"
+                  />
+                </div>
+                <div className="mt-1 min-h-5">
+                  <ExpenseFieldSourceBadge source={source} />
+                </div>
+                {renderDocumentControl(field)}
+              </div>
+            )
+          })}
+        </div>
+        <div className="mt-5 flex items-center justify-end gap-2 border-t border-blue-100 pt-4 dark:border-blue-900/40">
+          <button type="button" className="btn-secondary text-sm" onClick={() => closeEditor()} disabled={saving || uploading}>Cancel</button>
+          <button type="button" className="btn-primary text-sm" onClick={saveExpense} disabled={saving || uploading}>
+            {saving ? 'Saving...' : 'Save expenses'}
           </button>
         </div>
       </div>
-
-      <div className="mb-4 flex flex-wrap gap-2">
-  {['All', 'Manual', 'Calculated', 'Reported'].map((source) => (
-    <button key={source} type="button" onClick={() => setSourceFilter(source)} className={sourceFilter === source ? 'rounded-full bg-blue-600 px-3 py-1 text-xs font-medium text-white' : 'rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700/40'}>{source}</button>
-  ))}
-  {['All', 'Property', 'Loans', 'Taxes', 'Depreciation', 'Documents'].map((category) => (
-    <button key={category} type="button" onClick={() => setCategoryFilter(category)} className={categoryFilter === category ? 'rounded-full bg-gray-900 px-3 py-1 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900' : 'rounded-full border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700/40'}>{category}</button>
-  ))}
-</div>
-
-{loading ? (
-        <div className="py-10 text-center text-sm text-gray-400">Loading raw data…</div>
-      ) : rows.length === 0 ? (
-        <div className="py-10 text-center text-sm text-gray-400">No extracted raw data yet.</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-<th className="sticky left-0 z-10 bg-white py-2 pr-3 font-medium dark:bg-gray-800"><SortHeader sortKey="documentType" type="base">Record</SortHeader></th>
-<th className="py-2 px-3 font-medium"><SortHeader sortKey="sourceType" type="base">Source</SortHeader></th>
-<th className="py-2 px-3 font-medium"><SortHeader sortKey="category" type="base">Category</SortHeader></th>
-<th className="py-2 px-3 font-medium"><SortHeader sortKey="year" type="base">Year</SortHeader></th>
-<th className="py-2 px-3 font-medium"><SortHeader sortKey="source" type="base">Detail</SortHeader></th>
-{fieldColumns.map((field) => (
-<th key={field} className="whitespace-nowrap py-2 px-3 font-medium"><SortHeader sortKey={field}>{rawFieldLabel(field)}</SortHeader></th>
-))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-{sortedRows.map((row) => (
-                <tr key={row.key} className="hover:bg-gray-50 dark:hover:bg-gray-700/40">
-                  <td className="sticky left-0 z-10 whitespace-nowrap bg-white py-2 pr-3 align-top font-medium text-gray-900 dark:bg-gray-800 dark:text-white">
-                    {row.documentType}
-                  </td>
-                  <td className="whitespace-nowrap py-2 px-3 align-top text-gray-600 dark:text-gray-300">{row.year}</td>
-                  <td className="max-w-[220px] truncate whitespace-nowrap py-2 px-3 align-top text-gray-500 dark:text-gray-400">{row.source}</td>
-                  {fieldColumns.map((field) => (
-                    <td key={field} className="whitespace-nowrap py-2 px-3 align-top text-gray-800 dark:text-gray-200">
-                      {rawValue(row.fields[field], field)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    )
+  }
+  const renderExpenseBreakdown = (row) => (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{row.year} category breakdown</p>
+        <button
+          type="button"
+          className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
+          onClick={() => openEditor(row.year)}
+        >
+          Edit
+        </button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {(row.components || []).map((component) => (
+          <div key={`${row.year}-${component.key}`} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900/60">
+            <span className="text-gray-500 dark:text-gray-400">{component.label}</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-900 dark:text-white">{renderExpenseValue(component)}</span>
+              <ExpenseSourceBadge source={component.source} />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
-}
 
-function MetricRow({ label, value }) {
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((item) => <div key={item} className="h-24 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />)}
+        </div>
+        <div className="card h-64 animate-pulse" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="card border-red-200 bg-red-50 dark:border-red-900/70 dark:bg-red-950/20">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600 dark:text-red-300" aria-hidden="true" />
+          <div>
+            <h2 className="text-lg font-semibold text-red-900 dark:text-red-100">Expenses unavailable</h2>
+            <p className="mt-1 text-sm text-red-700 dark:text-red-200">{displayText(error, 'Unable to load expenses right now.')}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const metrics = data?.metrics || {}
+  const metricItems = [
+    { label: 'Operating expenses /yr', metric: metrics.operatingExpenses },
+    { label: 'Largest category', metric: metrics.largestCategory, subLabel: metrics.largestCategory?.key ? `${metrics.largestCategory.label} · ${metrics.largestCategory.percentDisplay}` : null },
+    { label: 'Expense ratio', metric: metrics.expenseRatio, hidden: metrics.expenseRatio?.hidden },
+    { label: 'In escrow', metric: metrics.inEscrow },
+  ].filter((item) => !item.hidden)
+
   return (
-    <div className="flex justify-between text-sm">
-      <span className="text-gray-500 dark:text-gray-400">{label}</span>
-      <span className="font-medium text-gray-900 dark:text-white">{value}</span>
+    <div className="space-y-4">
+      <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${metricItems.length === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+        {metricItems.map((item) => (
+          <MetricKPI key={item.label} label={item.label} metric={item.metric} subLabel={item.subLabel} backendOwned />
+        ))}
+      </div>
+
+      <section className="card">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">By year</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Years without entered expenses show a dash and aren't counted as $0.</p>
+          </div>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.xlsx,.xls"
+          className="sr-only"
+          onChange={(event) => handleDocumentUpload(event.target.files?.[0])}
+        />
+
+        <DataTable
+          rows={data?.rows || []}
+          columns={[
+            {
+              id: 'expand',
+              header: '',
+              sortable: false,
+              render: (row) => {
+                const isOpen = Number(expandedYear) === Number(row.year)
+                const Icon = isOpen ? ChevronDown : ChevronRight
+                return (
+                  <button
+                    type="button"
+                    className="inline-flex rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+                    aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${row.year} expenses`}
+                    aria-expanded={isOpen}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      toggleExpandedYear(row.year)
+                    }}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )
+              },
+            },
+            { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.isCurrent ? `${row.year} · current` : row.year },
+            { id: 'property_tax', header: 'Prop. tax', align: 'right', render: (row) => renderExpenseValue(row.propertyTax) },
+            { id: 'insurance', header: 'Insurance', align: 'right', render: (row) => renderExpenseValue(row.insurance) },
+            { id: 'repairs', header: 'Repairs', align: 'right', render: (row) => renderExpenseValue(row.repairs) },
+            { id: 'management', header: 'Mgmt', align: 'right', render: (row) => renderExpenseValue(row.management) },
+            { id: 'utilities', header: 'Utilities', align: 'right', render: (row) => renderExpenseValue(row.utilities) },
+            { id: 'vacancy', header: 'Vacancy', align: 'right', render: (row) => renderExpenseValue(row.vacancy) },
+            { id: 'capex', header: 'CapEx', align: 'right', render: (row) => renderExpenseValue(row.capex) },
+            { id: 'other', header: 'Other', align: 'right', render: (row) => renderExpenseValue(row.other) },
+            { id: 'total', header: 'Total', align: 'right', accessor: 'total', cellClassName: 'font-semibold text-gray-900 dark:text-white', render: (row) => row.total == null ? <span className="text-gray-400 dark:text-gray-500">—</span> : row.totalDisplay },
+            {
+              id: 'status',
+              header: 'Status',
+              align: 'right',
+              accessor: 'status',
+              render: (row) => (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    toggleExpandedYear(row.year)
+                  }}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                >
+                  {row.status}
+                </button>
+              ),
+            },
+            {
+              id: 'actions',
+              header: 'Actions',
+              align: 'right',
+              sortable: false,
+              render: (row) => Number(editingYear) === Number(row.year) ? (
+                <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">Editing</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    openEditor(row.year)
+                  }}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                >
+                  Edit
+                </button>
+              ),
+            },
+          ]}
+          getRowKey={(row) => row.year}
+          defaultSort={{ id: 'year', direction: 'asc' }}
+          getRowProps={(row) => {
+            const baseClass = Number(editingYear) === Number(row.year)
+              ? 'bg-blue-100/70 hover:bg-blue-100/70 dark:bg-blue-950/30 dark:hover:bg-blue-950/30'
+              : row.isCurrent
+                ? 'bg-blue-50/60 hover:bg-blue-50/80 dark:bg-blue-950/20 dark:hover:bg-blue-950/30'
+                : 'odd:bg-white even:bg-gray-50/40 hover:bg-gray-50 dark:odd:bg-transparent dark:even:bg-gray-800/20 dark:hover:bg-gray-700/40'
+            return {
+              className: `${baseClass} cursor-pointer`,
+              onClick: () => toggleExpandedYear(row.year),
+            }
+          }}
+          renderExpandedRow={(row) => expandedYear === row.year ? (
+            Number(editingYear) === Number(row.year) ? renderExpenseEditor(row) : renderExpenseBreakdown(row)
+          ) : null}
+          emptyMessage="No expense years available."
+        />
+      </section>
     </div>
   )
 }
 
 const defaultDepreciationAsset = {
   asset_type: 'depreciation',
-  description: 'Roof replacement',
-  placed_in_service_date: new Date().toISOString().slice(0, 10),
-  cost_basis: 70000,
+  description: '',
+  placed_in_service_date: '',
+  cost_basis: 0,
   land_portion: 0,
   method: 'SL',
   recovery_period: 27.5,
   prior_depreciation: 0,
   notes: '',
-}
-
-function LoansTab({ propId, prop, onAddLoan, onEditLoan, onAmortize, onDeleted }) {
-  const [debt, setDebt] = useState(null)
-
-  useEffect(() => {
-    let cancelled = false
-    propAPI.debt(propId).then((res) => { if (!cancelled) setDebt(res.data) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [propId])
-
-  const loans = prop.loans || []
-  const debtByLoanId = Object.fromEntries((debt?.loans || []).map((loanDebt) => [loanDebt.loan_id, loanDebt]))
-  const weightedBalance = loans.reduce((sum, loan) => sum + (loan.current_balance || loan.original_amount || 0), 0)
-  const weightedRateBasis = loans.reduce((sum, loan) => sum + ((loan.current_balance || loan.original_amount || 0) * (loan.interest_rate || 0)), 0)
-  const blendedRate = weightedBalance > 0 ? weightedRateBasis / weightedBalance : 0
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-gray-900 dark:text-white">Loans ({loans.length})</h3>
-        <button onClick={onAddLoan} className="btn-primary flex items-center gap-2 text-sm">
-          <Plus className="h-4 w-4" /> Add Loan
-        </button>
-      </div>
-
-      <div className="card grid gap-4 sm:grid-cols-3">
-        <div>
-          <p className="text-xs text-gray-400 dark:text-gray-500">Total balance</p>
-          <p className="text-lg font-bold text-gray-900 dark:text-white">{fmt(debt?.rollup?.total_current_balance ?? weightedBalance)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-gray-400 dark:text-gray-500">Interest to date</p>
-          <p className="text-lg font-bold text-gray-900 dark:text-white">{fmt(debt?.rollup?.total_accumulated_interest)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-gray-400 dark:text-gray-500">Blended rate</p>
-          <p className="text-lg font-bold text-gray-900 dark:text-white">{fmtPct(blendedRate)}</p>
-        </div>
-      </div>
-
-      <div className="grid gap-4">
-        {loans.map((loan) => (
-          <LoanCard
-            key={loan.id}
-            loan={loan}
-            debt={debtByLoanId[loan.id]}
-            onEdit={() => onEditLoan(loan)}
-            onAmortize={() => onAmortize(loan)}
-            onDeleted={onDeleted}
-            propId={propId}
-          />
-        ))}
-      </div>
-
-      {loans.length === 0 && (
-        <div className="card py-12 text-center">
-          <Calculator className="mx-auto mb-3 h-10 w-10 text-gray-300" />
-          <p className="text-gray-400 dark:text-gray-500">No loans added yet</p>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function DepreciationTab({ propId, onRentalRequest }) {
@@ -1688,25 +2206,85 @@ if (!asset.id || !window.confirm(`Delete ${asset.description}? Removes its sched
     }
   }
 
-  const comparison = data?.schedule_e || {}
-  const rollup = data?.rollup || {}
-  const assets = data?.assets || []
+const comparison = data?.schedule_e || {}
+const rollup = data?.rollup || {}
+const depreciationMetrics = data?.metrics || {}
+const assets = data?.assets || []
   const timeline = data?.timeline || []
   const assetKeys = assets.slice(0, 6).map((asset) => asset.description)
-  const colors = ['#2563eb', '#f97316', '#16a34a', '#9333ea', '#0f766e', '#dc2626']
+  const colors = [chartColors.primary, chartColors.warning, chartColors.success, chartColors.purpleStrong, chartColors.teal, chartColors.dangerStrong]
   const isTied = comparison.status === 'ties'
   const hasDiff = comparison.status === 'diff'
   const eligible = data?.eligible !== false
   const currentlyRental = !!data?.currently_rental
   const primaryYears = timeline.filter((row) => row.is_rental_year === false).map((row) => row.year)
   const depreciationYears = timeline.filter((row) => (row.total || 0) > 0 || (row.rental_months || 0) > 0)
-  const rentalYearCount = depreciationYears.filter((row) => (row.rental_months || 0) >= 12).length
-  const mixedYearCount = depreciationYears.filter((row) => (row.rental_months || 0) > 0 && (row.rental_months || 0) < 12).length
-  const pausedYearCount = depreciationYears.filter((row) => !(row.rental_months || 0)).length
+const rentalYearCount = depreciationYears.filter((row) => (row.rental_months || 0) >= 12).length
+const mixedYearCount = depreciationYears.filter((row) => (row.rental_months || 0) > 0 && (row.rental_months || 0) < 12).length
+const pausedYearCount = depreciationYears.filter((row) => !(row.rental_months || 0)).length
+const depreciationYearColumns = [
+{ id: 'year', header: 'Year', accessor: 'year', align: 'center', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+{
+id: 'use_status',
+header: 'Use',
+accessor: 'use_status',
+render: (row) => (
+<span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+row.use_status === 'Rental'
+? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+: row.use_status === 'Mixed'
+? 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300'
+: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+}`}>
+{row.use_status || (row.is_rental_year ? 'Rental' : 'Primary / paused')}
+</span>
+),
+cellClassName: 'text-gray-700 dark:text-gray-200',
+},
+{ id: 'rental_months', header: 'Rental Months', accessor: 'rental_months', render: (row) => row.rental_months ?? (row.is_rental_year ? 12 : 0), align: 'right', cellClassName: 'text-gray-600 dark:text-gray-300' },
+{ id: 'total', header: 'Depreciation', accessor: 'total', render: (row) => fmt(row.total), align: 'right', cellClassName: 'font-medium text-purple-600' },
+]
+const depreciationAssetColumns = [
+{
+id: 'asset',
+header: 'Asset',
+accessor: 'description',
+render: (asset) => (
+<>
+<p className="font-medium text-gray-900 dark:text-white">{asset.description}</p>
+{asset.warning ? <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">{asset.warning}</p> : null}
+</>
+),
+cellClassName: 'min-w-48',
+},
+{ id: 'asset_type', header: 'Type', accessor: 'asset_type', render: (asset) => asset.asset_type === 'amortization' ? 'Amortization' : 'Depreciation', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'placed_in_service_date', header: 'In Service', accessor: 'placed_in_service_date', render: (asset) => asset.placed_in_service_date || '—', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'cost_basis', header: 'Basis', accessor: 'cost_basis', render: (asset) => fmt(asset.cost_basis), align: 'right', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'land_portion', header: 'Land', accessor: 'land_portion', render: (asset) => fmt(asset.land_portion), align: 'right', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'annual_depreciation', header: 'Annual', accessor: 'annual_depreciation', render: (asset) => fmt(asset.annual_depreciation), align: 'right', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'current_year_depreciation', header: String(taxYear), accessor: 'current_year_depreciation', render: (asset) => fmt(asset.current_year_depreciation), align: 'right', cellClassName: 'whitespace-nowrap text-gray-900 dark:text-white' },
+{ id: 'accumulated_depreciation', header: 'Accumulated', accessor: 'accumulated_depreciation', render: (asset) => fmt(asset.accumulated_depreciation), align: 'right', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'remaining_basis', header: 'Remaining', accessor: 'remaining_basis', render: (asset) => fmt(asset.remaining_basis), align: 'right', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'rental_months', header: 'Rental Mo.', accessor: 'rental_months', render: (asset) => asset.rental_months ?? 0, align: 'right', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{ id: 'fully_depreciated', header: 'Fully Depreciated', accessor: 'fully_depreciated', render: (asset) => asset.fully_depreciated ? 'Yes' : 'No', align: 'center', cellClassName: 'whitespace-nowrap text-gray-600 dark:text-gray-300' },
+{
+id: 'actions',
+header: '',
+sortable: false,
+render: (asset) => (
+<div className="flex justify-end gap-1">
+<button type="button" className="icon-btn" onClick={() => openEdit(asset)} title="Edit asset"><Pencil className="h-4 w-4" /></button>
+<button type="button" className="icon-btn text-red-600" onClick={() => deleteAsset(asset)} title="Delete asset"><Trash2 className="h-4 w-4" /></button>
+</div>
+),
+align: 'right',
+cellClassName: 'whitespace-nowrap',
+},
+]
 
-  if (loading) {
-    return <div className="py-16 text-center text-sm text-gray-400">Loading depreciation schedule...</div>
-  }
+if (loading) {
+return <div className="py-16 text-center text-sm text-gray-400">Loading depreciation schedule...</div>
+}
 
   if (!eligible) {
     return (
@@ -1759,39 +2337,13 @@ if (!asset.id || !window.confirm(`Delete ${asset.description}? Removes its sched
  <span className="rounded-full bg-gray-100 px-2 py-1 font-semibold text-gray-600 dark:bg-gray-700 dark:text-gray-300">{pausedYearCount} paused</span>
  </div>
  </div>
- <div className="overflow-x-auto">
- <table className="min-w-full text-sm">
- <thead>
- <tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
- <th className="py-2 pr-3 font-medium">Year</th>
- <th className="py-2 px-3 font-medium">Use</th>
- <th className="py-2 px-3 font-medium text-right">Rental Months</th>
- <th className="py-2 px-3 font-medium text-right">Depreciation</th>
- </tr>
- </thead>
- <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
- {depreciationYears.map((row) => (
- <tr key={`depr-year-${row.year}`}>
- <td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">{row.year}</td>
- <td className="py-2 px-3">
- <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
- row.use_status === 'Rental'
- ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
- : row.use_status === 'Mixed'
- ? 'bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300'
- : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
- }`}>
- {row.use_status || (row.is_rental_year ? 'Rental' : 'Primary / paused')}
- </span>
- </td>
- <td className="py-2 px-3 text-right text-gray-600 dark:text-gray-300">{row.rental_months ?? (row.is_rental_year ? 12 : 0)}</td>
- <td className="py-2 px-3 text-right font-medium text-purple-600">{fmt(row.total)}</td>
- </tr>
- ))}
- </tbody>
- </table>
- </div>
- </div>
+<DataTable
+columns={depreciationYearColumns}
+rows={depreciationYears}
+getRowKey={(row) => `depr-year-${row.year}`}
+defaultSort={{ id: 'year', direction: 'asc' }}
+/>
+</div>
 
  <div className={`rounded-lg border p-4 ${hasDiff ? 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20' : 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/20'}`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1817,22 +2369,22 @@ if (!asset.id || !window.confirm(`Delete ${asset.description}? Removes its sched
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-          <p className="text-xs font-medium uppercase text-gray-400">Current Year Depreciation</p>
-          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_current_year_depreciation)}</p>
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-          <p className="text-xs font-medium uppercase text-gray-400">Annual Depreciation (full year)</p>
-          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_annual_depreciation)}</p>
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-          <p className="text-xs font-medium uppercase text-gray-400">Accumulated</p>
-          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_accumulated_depreciation)}</p>
-        </div>
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-          <p className="text-xs font-medium uppercase text-gray-400">Remaining Basis</p>
-          <p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(rollup.total_remaining_basis)}</p>
-        </div>
+<div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+<p className="text-xs font-medium uppercase text-gray-400">Current Year Depreciation</p>
+<p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{depreciationMetrics.currentYearDepreciation?.displayValue || fmtKMB(rollup.total_current_year_depreciation, { threshold: 1000 })}</p>
+</div>
+<div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+<p className="text-xs font-medium uppercase text-gray-400">Annual Depreciation (full year)</p>
+<p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{depreciationMetrics.annualDepreciation?.displayValue || fmtKMB(rollup.total_annual_depreciation, { threshold: 1000 })}</p>
+</div>
+<div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+<p className="text-xs font-medium uppercase text-gray-400">Accumulated</p>
+<p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{depreciationMetrics.accumulatedDepreciation?.displayValue || fmtKMB(rollup.total_accumulated_depreciation, { threshold: 1000 })}</p>
+</div>
+<div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+<p className="text-xs font-medium uppercase text-gray-400">Remaining Basis</p>
+<p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{depreciationMetrics.remainingBasis?.displayValue || fmtKMB(rollup.total_remaining_basis, { threshold: 1000 })}</p>
+</div>
       </div>
 
       <div className="card">
@@ -1891,68 +2443,18 @@ if (!asset.id || !window.confirm(`Delete ${asset.description}? Removes its sched
         )}
 
         {assets.length === 0 ? (
-          <div className="py-10 text-center text-sm text-gray-400">No depreciable assets yet — add a purchase price or an improvement above.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                  <th className="py-2 pr-3 font-medium">Asset</th>
-                  <th className="py-2 px-3 font-medium">Type</th>
-                  <th className="py-2 px-3 font-medium">In Service</th>
-                  <th className="py-2 px-3 font-medium">Basis</th>
-                  <th className="py-2 px-3 font-medium">Land</th>
-                  <th className="py-2 px-3 font-medium">Annual</th>
-                  <th className="py-2 px-3 font-medium">{taxYear}</th>
-                  <th className="py-2 px-3 font-medium">Accumulated</th>
-                  <th className="py-2 px-3 font-medium">Remaining</th>
-                  <th className="py-2 px-3 font-medium">Rental Mo.</th>
-                  <th className="py-2 px-3 font-medium">Fully Depreciated</th>
-                  <th className="py-2 px-3 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                {assets.map((asset, index) => (
-                  <tr key={asset.id || `base-${index}`} className="align-top">
-                    <td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">
-                      {asset.description}
-                      {asset.warning ? <p className="mt-1 max-w-xs text-xs font-normal text-amber-600 dark:text-amber-400">{asset.warning}</p> : null}
-                    </td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{asset.asset_type === 'amortization' ? 'Amortization' : 'Depreciation'}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{asset.placed_in_service_date || '—'}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.cost_basis)}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.land_portion)}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.annual_depreciation)}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-900 dark:text-white">{fmt(asset.current_year_depreciation)}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.accumulated_depreciation)}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{fmt(asset.remaining_basis)}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">{asset.rental_months_to_date ?? '—'}</td>
-                    <td className="whitespace-nowrap py-2 px-3 text-gray-600 dark:text-gray-300">
-                      {asset.fully_depreciated_date || (
-                        <span className="inline-flex items-center gap-1 text-gray-400">
-                          <PauseCircle className="h-3.5 w-3.5" /> Paused
-                        </span>
-                      )}
-                    </td>
- <td className="whitespace-nowrap py-2 px-3 text-right">
- {asset.is_base_building ? (
- <span className="inline-flex items-center justify-end gap-1 text-xs text-gray-400" title="Base building asset is the core schedule and cannot be deleted"><Lock className="h-3.5 w-3.5" /> Locked</span>
- ) : (
- <div className="flex justify-end gap-1">
- <button type="button" className="icon-btn" onClick={() => openEdit(asset)} title="Edit asset"><Pencil className="h-4 w-4" /></button>
- <button type="button" className="icon-btn text-red-600" onClick={() => deleteAsset(asset)} title="Delete asset"><Trash2 className="h-4 w-4" /></button>
- </div>
- )}
- </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+<div className="py-10 text-center text-sm text-gray-400">No depreciable assets yet — add purchase price or improvement above.</div>
+) : (
+<DataTable
+columns={depreciationAssetColumns}
+rows={assets}
+getRowKey={(asset) => asset.id || `${asset.description}-${asset.placed_in_service_date || 'asset'}`}
+defaultSort={{ id: 'placed_in_service_date', direction: 'asc' }}
+/>
+)}
+</div>
 
-      <div className="card">
+<div className="card">
         <h3 className="font-semibold text-gray-900 dark:text-white">Annual Depreciation Timeline</h3>
         {primaryYears.length > 0 && (
           <p className="mb-2 mt-1 text-xs text-gray-500 dark:text-gray-400">Shaded years were primary-residence/unrented and don’t accrue depreciation.</p>
@@ -1960,12 +2462,12 @@ if (!asset.id || !window.confirm(`Delete ${asset.description}? Removes its sched
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={timeline}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <CartesianGrid strokeDasharray="3 3" stroke={chartColors.borderLight} />
               {primaryYears.map((year) => (
-                <ReferenceArea key={year} x1={year - 0.5} x2={year + 0.5} fill="#9ca3af" fillOpacity={0.15} ifOverflow="visible" />
+                <ReferenceArea key={year} x1={year - 0.5} x2={year + 0.5} fill={chartColors.muted} fillOpacity={0.15} ifOverflow="visible" />
               ))}
               <XAxis dataKey="year" />
-              <YAxis tickFormatter={(v) => `$${Math.round(v / 1000)}k`} />
+              <YAxis tickFormatter={formatChartCurrency} />
               <Tooltip formatter={(value) => fmt(value)} />
               {assetKeys.map((key, index) => (
                 <Area key={key} type="monotone" dataKey={key} stackId="1" stroke={colors[index % colors.length]} fill={colors[index % colors.length]} fillOpacity={0.35} />
@@ -1978,862 +2480,270 @@ if (!asset.id || !window.confirm(`Delete ${asset.description}? Removes its sched
   )
 }
 
-// ── Details / inline-edit tab ─────────────────────────────────────────────────
-const PROPERTY_TYPES = ['Single Family', 'Multi Family', 'Condo', 'Townhouse', 'Commercial']
-
-const DETAIL_SECTIONS = [
-  {
-    title: 'Basic Info',
-    rows: [
-      { label: 'Street Address',        key: 'address',        type: 'text',   span: 2 },
-      { label: 'City',                  key: 'city',           type: 'text' },
-      { label: 'State',                 key: 'state',          type: 'text' },
-      { label: 'ZIP Code',              key: 'zip_code',       type: 'text' },
-      { label: 'Property Type',         key: 'property_type',  type: 'select', options: PROPERTY_TYPES },
-      { label: 'Usage',                 key: 'usage_type',     type: 'select', options: ['Rental', 'Primary'] },
-      { label: 'Purchase Date',         key: 'purchase_date',  type: 'date' },
-        { label: 'Purchase Price',        key: 'purchase_price', type: 'number', dollar: true },
-        { label: 'Down Payment',          key: 'down_payment',   type: 'number', dollar: true },
-        { label: 'Market Value',          key: 'market_value',   type: 'number', dollar: true },
-    ],
-  },
-  {
-    title: 'Rental Income',
-    rentalOnly: true,
-    rows: [
-      { label: 'Monthly Rent',          key: 'monthly_rent',   type: 'number', dollar: true },
-      { label: 'Occupancy Rate',        key: 'occupancy_rate', type: 'number', pct: true },
-    ],
-  },
-  {
-    title: 'Monthly Expenses',
-    rows: [
-      { label: 'Annual Property Tax',        key: 'property_tax',            type: 'number', dollar: true },
-      { label: 'Property Tax History', key: 'property_tax_history', type: 'textarea' },
-      { label: 'Annual Insurance',           key: 'insurance',               type: 'number', dollar: true },
-      { label: 'HOA Fee / mo',               key: 'hoa_fee',                 type: 'number', dollar: true },
-      { label: 'HOA Special Assessment',     key: 'hoa_special_assessment',  type: 'number', dollar: true },
-      { label: 'Repairs & Maintenance / mo', key: 'maintenance',             type: 'number', dollar: true },
-      { label: 'Property Mgmt / mo',         key: 'property_management_fee', type: 'number', dollar: true },
-      { label: 'Utilities / mo',             key: 'utilities',               type: 'number', dollar: true },
-      { label: 'Vacancy Allowance / mo',     key: 'vacancy_allowance',       type: 'number', dollar: true },
-      { label: 'CapEx Reserve / mo',         key: 'capex_reserve',           type: 'number', dollar: true },
-      { label: 'Other Expenses / mo',        key: 'other_expenses',          type: 'number', dollar: true },
-    ],
-  },
-  {
-    title: 'Solar',
-    rows: [
-      { label: 'Solar Ownership', key: 'solar_ownership', type: 'select', options: ['None', 'Leased', 'Purchased', 'Included in Purchase'] },
-      { label: 'Solar Lease / mo', key: 'solar_monthly_payment', type: 'number', dollar: true },
-      { label: 'Solar Purchase Price', key: 'solar_purchase_price', type: 'number', dollar: true },
-    ],
-  },
-  {
-    title: 'Depreciation',
-    rows: [
-      { label: 'Land Value',             key: 'land_value',         type: 'number', dollar: true },
-      { label: 'Construction Cost',      key: 'construction_price', type: 'number', dollar: true },
-      { label: 'Depreciation Period',    key: 'depreciation_years', type: 'number', suffix: 'yrs' },
-    ],
-  },
-]
-
-function inputNumber(value) {
-if (value === '' || value == null) return 0
-const parsed = Number(String(value).replace(/[^0-9.]/g, ''))
-return Number.isFinite(parsed) ? parsed : 0
-}
-
-const DETAIL_NUMERIC_KEYS = new Set([
-'purchase_price',
-'down_payment',
-'market_value',
-'monthly_rent',
-'occupancy_rate',
-'property_tax',
-'insurance',
-'hoa_fee',
-'hoa_special_assessment',
-'maintenance',
-'property_management_fee',
-'utilities',
-'vacancy_allowance',
-'capex_reserve',
-'other_expenses',
-'solar_monthly_payment',
-'solar_purchase_price',
-'land_value',
-'construction_price',
-'depreciation_years',
-])
-
-function isDecimalDraft(value) {
-return value === '' || /^\d*\.?\d*$/.test(String(value))
-}
-
-function mapPropertyToDetailsDraft(prop) {
-const draft = { ...prop }
-DETAIL_NUMERIC_KEYS.forEach((key) => {
-const value = prop?.[key]
-draft[key] = value == null ? '' : String(value)
-})
-return draft
-}
-
-function detailsDraftToPayload(draft) {
-const payload = { ...draft }
-DETAIL_NUMERIC_KEYS.forEach((key) => {
-payload[key] = inputNumber(draft?.[key])
-})
-return payload
-}
-
-function parseJsonNumberMap(value) {
-  try {
-    const raw = JSON.parse(value || '{}')
-    return Object.fromEntries(
-      Object.entries(raw)
-        .map(([year, amount]) => [String(year), inputNumber(amount)])
-        .filter(([year, amount]) => /^\d{4}$/.test(year) && amount > 0)
-    )
-  } catch {
-    return {}
-  }
-}
-
-function MoneyEditInput({ value, onChange }) {
-return (
-<input
-className="input py-1.5 text-right text-sm"
-type="text"
-inputMode="decimal"
-value={value ?? ''}
-onChange={(event) => {
-const next = event.target.value
-if (isDecimalDraft(next)) onChange(next)
-}}
-/>
-)
-}
-
-function RealEstateStat({ label, value, note, muted = false }) {
-  return (
-    <div className="bg-white p-4 dark:bg-gray-800">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">{label}</p>
-      <p className={`mt-1 text-lg font-bold ${muted ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-white'}`}>{value}</p>
-      {note ? <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{note}</p> : null}
-    </div>
-  )
-}
-
-function DetailsEditTab({ prop, propId, onSaved }) {
-  const [editing, setEditing] = useState(false)
-  const [form, setForm]       = useState({ ...prop })
-  const [saving, setSaving]   = useState(false)
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-
-  const handleEdit   = () => { setForm({ ...prop }); setEditing(true) }
-  const handleCancel = () => { setForm({ ...prop }); setEditing(false) }
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      await propAPI.update(propId, form)
-      toast.success('Property updated')
-      onSaved()
-      setEditing(false)
-    } catch {
-      toast.error('Failed to save')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const displayVal = (row, src) => {
-    const v = src[row.key]
-    if (v == null || v === '') return '—'
-    if (row.dollar) return fmt(v)
-    if (row.pct) return `${v}%`
-    if (row.suffix) return `${v} ${row.suffix}`
-    return String(v)
-  }
-
-  const isPrimary = (form.usage_type || prop.usage_type || 'Rental').toLowerCase() === 'primary'
-  const location = [prop.city, prop.state, prop.zip_code].filter(Boolean).join(', ') || 'Location not set'
-  const totalLoanBalance = prop.total_loan_balance || prop.loans?.reduce((sum, loan) => sum + (loan.current_balance || 0), 0) || 0
-  const ltv = prop.market_value ? (totalLoanBalance / prop.market_value) * 100 : null
-  const useBadge = isPrimary ? 'Primary Residence' : 'Rental Property'
-  const propertyAddress = prop.address && prop.address !== 'Address not provided' ? prop.address : 'Address not provided'
-
-  return (
-    <div className="space-y-4">
-      {/* Header bar */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          {editing ? 'Edit property details below, then save.' : 'View all property fields.'}
-        </p>
-        {!editing ? (
-          <button onClick={handleEdit} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Pencil className="w-3.5 h-3.5" /> Edit
-          </button>
-        ) : (
-          <div className="flex items-center gap-2">
-            <button onClick={handleCancel} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={handleSave} disabled={saving} className="btn-primary text-sm px-5">
-              {saving ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-        <div className="border-b border-gray-100 bg-gray-50 px-5 py-4 dark:border-gray-700 dark:bg-gray-800/70">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{propertyLabel(prop)}</h3>
-                <span className={isPrimary ? 'badge-yellow' : 'badge-green'}>{useBadge}</span>
-              </div>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{propertyAddress}</p>
-              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{location}</p>
-            </div>
-            <div className="text-left sm:text-right">
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Property ID</p>
-              <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">{shortPropertyUid(prop) || '—'}</p>
-            </div>
-          </div>
-        </div>
-        <div className="grid gap-px bg-gray-100 dark:bg-gray-700 sm:grid-cols-2 lg:grid-cols-5">
-        <RealEstateStat label="Purchase Price" value={fmt(prop.purchase_price)} />
-        <RealEstateStat label="Down Payment" value={fmt(prop.down_payment)} />
-        <RealEstateStat label="Market Value" value={fmt(prop.market_value)} />
-          <RealEstateStat label="Loan Balance" value={fmt(totalLoanBalance)} note={ltv == null ? 'LTV unavailable' : `${fmtPct(ltv)} LTV`} />
-          <RealEstateStat label={isPrimary ? 'Monthly Rent' : 'Monthly Rent'} value={isPrimary ? 'Excluded' : fmt(prop.monthly_rent)} muted={isPrimary} />
-        </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-      {DETAIL_SECTIONS.map(section => {
-        if (section.rentalOnly && isPrimary) return null
-        return (
-          <div key={section.title} className="card">
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">{section.title}</h3>
-            <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-              {section.rows.map(row => (
-                <div key={row.key} className="flex items-center justify-between py-2.5 gap-4">
-                  <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0 w-44">{row.label}</span>
-                  {editing ? (
-                    <div className="flex-1 max-w-xs">
-                      {row.options ? (
-                        <select className="input py-1.5 text-sm" value={form[row.key] ?? ''}
-                          onChange={e => set(row.key, e.target.value)}>
-                          {row.options.map(o => <option key={o}>{o}</option>)}
-                        </select>
-                      ) : row.type === 'textarea' ? (
-                      <textarea
-                        className="input min-h-24 py-1.5 text-sm font-mono"
-                        value={form[row.key] ?? ''}
-                        onChange={e => set(row.key, e.target.value)}
-                        placeholder={'{"2021":47000,"2022":48000}'}
-                      />
-                    ) : (
-                      <input
-                        className="input py-1.5 text-sm"
-                        type={row.type === 'number' ? 'text' : row.type}
-                        inputMode={row.type === 'number' ? 'decimal' : undefined}
-                        pattern={row.type === 'number' ? '[0-9.,-]*' : undefined}
-                        value={form[row.key] ?? ''}
-onChange={(e) => {
-const next = e.target.value
-if (row.type === 'number') {
-if (isDecimalDraft(next)) set(row.key, next)
-} else {
-set(row.key, next)
-}
-}}
-                      />
-                    )}
-                    </div>
-                  ) : (
-                    <span className="text-sm font-medium text-gray-900 dark:text-white text-right">{displayVal(row, prop)}</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )
-      })}
-      </div>
-
-      {/* Computed read-only block */}
-      <div className="card">
-        <h3 className="font-semibold text-gray-900 dark:text-white mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">Computed</h3>
-        <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-          {[
-            { label: 'Total Loan Balance',  value: fmt(totalLoanBalance) },
-            { label: 'Loan-to-Value',       value: ltv == null ? 'N/A' : fmtPct(ltv) },
-            { label: 'Market Value Source', value: prop.market_value_source || '—' },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex items-center justify-between py-2.5">
-              <span className="text-sm text-gray-500 dark:text-gray-400 w-44">{label}</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-white">{value}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CompactDetailsTab({ prop, propId, onSaved }) {
-const [editing, setEditing] = useState(false)
-const [form, setForm] = useState(() => mapPropertyToDetailsDraft(prop))
-  const [saving, setSaving] = useState(false)
-  const source = editing ? form : prop
-  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }))
-  const isPrimary = (source.usage_type || 'Rental').toLowerCase() === 'primary'
-  const solarOwnership = source.solar_ownership || 'None'
-  const showSolar = editing || String(solarOwnership).toLowerCase() !== 'none'
-  const totalLoanBalance = inputNumber(prop.total_loan_balance) || (prop.loans || []).reduce((sum, loan) => sum + inputNumber(loan.current_balance), 0)
-  const marketValue = inputNumber(source.market_value)
-  const purchasePrice = inputNumber(source.purchase_price)
-  const downPayment = inputNumber(source.down_payment)
-  const ltv = marketValue > 0 ? (totalLoanBalance / marketValue) * 100 : null
-  const equity = marketValue - totalLoanBalance
-  const monthlyPI = (prop.loans || []).reduce((sum, loan) => sum + inputNumber(loan.monthly_payment), 0)
-  const monthlyCost = monthlyPI
-    + inputNumber(source.property_tax) / 12
-    + inputNumber(source.insurance)
-    + inputNumber(source.hoa_fee)
-    + inputNumber(source.hoa_special_assessment) / 12
-    + inputNumber(source.maintenance)
-    + inputNumber(source.utilities)
-    + inputNumber(source.other_expenses)
-    + (isPrimary ? 0 : inputNumber(source.property_management_fee) + inputNumber(source.capex_reserve) + inputNumber(source.vacancy_allowance))
-  const addressMissing = !source.address || source.address === 'Address not provided'
-  const gaps = [
-    addressMissing ? 'street address' : null,
-    downPayment <= 0 ? 'down payment' : null,
-  ].filter(Boolean)
-
-const save = async () => {
-setSaving(true)
-try {
-await propAPI.update(propId, detailsDraftToPayload(form))
-      toast.success('Property updated')
-      onSaved()
-      setEditing(false)
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed save')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-const cancel = () => {
-setForm(mapPropertyToDetailsDraft(prop))
-setEditing(false)
-}
-
-  const display = (field) => {
-    const value = source[field.key]
-    if (value == null || value === '' || value === 'Address not provided') return '—'
-    if (field.money) return inputNumber(value) === 0 && !field.allowZero ? 'Not set' : fmt(value)
-    if (field.percent) return `${inputNumber(value)}%`
-    if (field.suffix) return `${value} ${field.suffix}`
-    return String(value)
-  }
-
-const renderFieldValue = (field) => (
-    <div className="flex items-center justify-between gap-4 py-2">
-      <span className="text-sm text-gray-500 dark:text-gray-400">{field.label}</span>
-      {editing ? (
-        <div className="w-56 max-w-full">
-          {field.options ? (
-            <select className="input py-1.5 text-sm" value={form[field.key] ?? ''} onChange={(e) => set(field.key, e.target.value)}>
-              {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-          ) : (
-            <input
-              className="input py-1.5 text-sm"
-              type={field.type === 'date' ? 'date' : 'text'}
-              inputMode={field.money || field.number ? 'decimal' : undefined}
-              value={form[field.key] ?? ''}
-onChange={(e) => {
-const next = e.target.value
-if (field.money || field.number) {
-if (isDecimalDraft(next)) set(field.key, next)
-} else {
-set(field.key, next)
-}
-}}
-              placeholder={field.placeholder || ''}
-            />
-          )}
-        </div>
-      ) : (
-        <span className="text-right text-sm font-medium text-gray-900 dark:text-white">{display(field)}</span>
-      )}
-    </div>
-  )
-
-  const propertyFields = [
-    { label: 'Street address', key: 'address', placeholder: 'Address not provided' },
-    { label: 'City', key: 'city' },
-    { label: 'State', key: 'state' },
-    { label: 'ZIP', key: 'zip_code' },
-    { label: 'Physical type', key: 'property_type', options: PROPERTY_TYPES },
-    { label: 'Usage', key: 'usage_type', options: ['Primary', 'Rental'] },
-    { label: 'Purchase date', key: 'purchase_date', type: 'date' },
-  ]
-
-  const expenseFields = [
-    ...(!isPrimary ? [
-      { label: 'Monthly rent / mo', key: 'monthly_rent', money: true },
-      { label: 'Vacancy allowance / mo', key: 'vacancy_allowance', money: true },
-      { label: 'Property management / mo', key: 'property_management_fee', money: true },
-      { label: 'CapEx reserve / mo', key: 'capex_reserve', money: true },
-    ] : []),
-    { label: 'Property tax / yr', key: 'property_tax', money: true },
-    { label: 'Insurance / mo', key: 'insurance', money: true },
-    { label: 'HOA / mo', key: 'hoa_fee', money: true },
-    { label: 'Maintenance / mo', key: 'maintenance', money: true },
-    { label: 'Utilities / mo', key: 'utilities', money: true },
-    { label: 'Other expenses / mo', key: 'other_expenses', money: true },
-  ]
-
-  const depreciationFields = isPrimary ? [] : [
-    { label: 'Land value', key: 'land_value', money: true },
-    { label: 'Construction cost', key: 'construction_price', money: true },
-    { label: 'Recovery period', key: 'depreciation_years', number: true, suffix: 'yrs' },
-  ]
-
-  const solarFields = showSolar ? [
-    { label: 'Solar ownership', key: 'solar_ownership', options: ['None', 'Leased', 'Purchased', 'Included in Purchase'] },
-    { label: 'Solar lease / mo', key: 'solar_monthly_payment', money: true },
-    { label: 'Solar purchase price', key: 'solar_purchase_price', money: true },
-  ] : []
-
-  const visibleSections = [
-    { title: 'Property', fields: propertyFields },
-    { title: 'Expenses', fields: expenseFields },
-    ...(!isPrimary ? [{ title: 'Depreciation', fields: depreciationFields }] : []),
-    ...(showSolar ? [{ title: 'Solar', fields: solarFields }] : []),
-  ].filter((section) => section.fields.length)
-
-  const hiddenNotes = [
-    isPrimary ? 'rental income and rental expense fields hidden' : null,
-    isPrimary ? 'depreciation hidden because primary residence' : null,
-    !showSolar ? 'solar hidden until ownership is set' : null,
-  ].filter(Boolean)
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{propertyLabel(prop)}</h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            {addressMissing ? 'Address not provided' : source.address} · {isPrimary ? 'Primary residence' : 'Rental property'}
-          </p>
-        </div>
-        {!editing ? (
-<button onClick={() => { setForm(mapPropertyToDetailsDraft(prop)); setEditing(true) }} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Pencil className="h-3.5 w-3.5" /> Edit
-          </button>
-        ) : (
-          <div className="flex items-center gap-2">
-            <button onClick={cancel} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={save} disabled={saving} className="btn-primary px-5 text-sm">{saving ? 'Saving...' : 'Save'}</button>
-          </div>
-        )}
-      </div>
-
-      {gaps.length > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-300">
-          <span>{gaps.length} gaps: {gaps.join(', ')}</span>
-          <button type="button" className="font-semibold underline underline-offset-2" onClick={() => setEditing(true)}>Fix</button>
-        </div>
-      )}
-
-      <div className="grid gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-100 dark:border-gray-700 dark:bg-gray-700 sm:grid-cols-2 xl:grid-cols-5">
-        <RealEstateStat label="Purchase Price" value={purchasePrice > 0 ? fmt(purchasePrice) : 'Not set'} />
-        <RealEstateStat label="Market Value" value={marketValue > 0 ? fmt(marketValue) : 'Not set'} note={source.market_value_source || 'source not set'} />
-        <RealEstateStat label="Loan / LTV" value={fmt(totalLoanBalance)} note={ltv == null ? 'LTV unavailable' : `${fmtPct(ltv)} LTV`} />
-        <RealEstateStat label="Equity" value={fmt(equity)} />
-        <RealEstateStat label={isPrimary ? 'Cost to Own' : 'Monthly Outflow'} value={fmt(monthlyCost)} note="/mo" />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {visibleSections.map((section) => {
-          const visibleFields = editing ? section.fields : section.fields.filter((field) => {
-            const value = source[field.key]
-            return value != null && value !== '' && value !== 'Address not provided' && (!field.money || inputNumber(value) !== 0)
-          })
-          const hiddenCount = section.fields.length - visibleFields.length
-          return (
-            <div key={section.title} className="card">
-              <h3 className="mb-2 border-b border-gray-200 pb-2 text-sm font-semibold text-gray-900 dark:border-gray-700 dark:text-white">{section.title}</h3>
-              {visibleFields.length > 0 ? (
-                <div className="divide-y divide-gray-50 dark:divide-gray-700/50">
-{visibleFields.map((field) => <Fragment key={field.key}>{renderFieldValue(field)}</Fragment>)}
-                  {!editing && hiddenCount > 0 ? (
-                    <div className="flex items-center justify-between py-2 text-sm">
-                      <span className="text-gray-500 dark:text-gray-400">Other</span>
-                      <span className="font-medium text-gray-400 dark:text-gray-500">Not set</span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="py-4 text-sm text-gray-400 dark:text-gray-500">Other: Not set</p>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {hiddenNotes.length > 0 ? (
-        <p className="text-xs text-gray-400 dark:text-gray-500">
-          Hidden for this usage: {hiddenNotes.join('; ')}. These appear if the property is converted to rental or the related feature is enabled.
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
-// ── Performance tab ────────────────────────────────────────────────────────────
-function PerformanceTab({ propId }) {
-  const [perf, setPerf] = useState(null)
+function DepreciationTabExact({ propId, onRentalRequest }) {
+  const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [yearNotes, setYearNotes] = useState({})
-  const [editingNoteYear, setEditingNoteYear] = useState(null)
-  const [noteInput, setNoteInput] = useState('')
+  const [showModal, setShowModal] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    type: 'Roof',
+    cost: '',
+    placed_in_service_date: '',
+    recovery_period: '27.5',
+  })
+
+  const loadDepreciation = () => {
+    setLoading(true)
+    propAPI.depreciation(propId)
+      .then((res) => setData(res.data))
+      .catch(() => toast.error('Failed to load depreciation schedule'))
+      .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
-    propAPI.performance(propId)
-      .then((r) => {
-        setPerf(r.data)
-        setYearNotes(r.data.year_notes || {})
-      })
-      .catch(() => toast.error('Failed to load performance'))
-      .finally(() => setLoading(false))
+    loadDepreciation()
   }, [propId])
 
-  const saveYearNote = async (year) => {
-    const note = noteInput.trim()
+  const saveImprovement = async (event) => {
+    event.preventDefault()
+    setSaving(true)
     try {
-      await propAPI.updateYearNote(propId, year, note)
-      setYearNotes(prev => {
-        const next = { ...prev }
-        if (note) next[year] = note
-        else delete next[year]
-        return next
+      const res = await propAPI.addDepreciationAsset(propId, {
+        asset_type: 'depreciation',
+        description: form.type,
+        placed_in_service_date: form.placed_in_service_date,
+        cost_basis: Number(form.cost) || 0,
+        land_portion: 0,
+        method: 'SL',
+        recovery_period: Number(form.recovery_period) || 27.5,
+        prior_depreciation: 0,
+        notes: '',
       })
+      setData(res.data)
+      setShowModal(false)
+      setForm({ type: 'Roof', cost: '', placed_in_service_date: '', recovery_period: '27.5' })
+      toast.success('Improvement added')
     } catch {
-      toast.error('Failed to save note')
+      toast.error('Failed to add improvement')
+    } finally {
+      setSaving(false)
     }
-    setEditingNoteYear(null)
-    setNoteInput('')
   }
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-40">
-      <div className="animate-spin w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full" />
-    </div>
-  )
-  if (!perf) return null
-
-  const latest = perf.yearly[perf.yearly.length - 1]
-  const SOURCE_LABEL = {
-    actual: 'from statements',
-    annualized: 'annualized from 1 statement',
-    estimated: 'estimated from loan',
-    '1098': 'from Form 1098',
+  const deleteImprovement = async (asset) => {
+    if (asset.is_base_building || !asset.id) return
+    if (!window.confirm(`Delete ${asset.description}?`)) return
+    try {
+      const res = await propAPI.deleteDepreciationAsset(propId, asset.id)
+      setData(res.data)
+      toast.success('Improvement deleted')
+    } catch {
+      toast.error('Failed to delete improvement')
+    }
   }
+
+  if (loading) {
+    return <div className="py-16 text-center text-sm text-gray-400">Loading depreciation schedule...</div>
+  }
+
+  if (data?.eligible === false) {
+    return (
+      <div className="card flex flex-col items-center gap-3 py-14 text-center">
+        <div className="rounded-full bg-gray-100 p-3 dark:bg-gray-700">
+          <Home className="h-6 w-6 text-gray-400" />
+        </div>
+        <p className="font-medium text-gray-900 dark:text-white">Not accruing — {data?.reason || 'no rental history'}</p>
+        {onRentalRequest && (
+          <button type="button" className="btn-secondary mt-1 flex items-center gap-1.5 text-sm" onClick={onRentalRequest}>
+            <Home className="h-3.5 w-3.5" /> Go to Rental tab
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  const hero = data?.hero || {}
+  const assets = data?.assets || []
+  const timeline = data?.timeline || []
+  const timelineAssetKeys = data?.timeline_asset_keys || assets.map((asset) => asset.description)
+  const assetColors = [chartColors.sky, chartColors.warning, chartColors.purpleStrong, chartColors.success, chartColors.rose, chartColors.cyan]
+  const nonRentalYears = timeline.filter((row) => !row.is_rental_year).map((row) => row.year)
+  const statusText = data?.status_line?.text || (data?.currently_rental ? 'Active rental — accruing' : 'Not accruing — property is not currently an active rental')
+  const StatusIcon = data?.currently_rental ? TrendingDown : PauseCircle
+
+  const heroCells = [
+    {
+      label: `You deduct this year (${data?.tax_year || CURRENT_YEAR})`,
+      metric: hero.currentYearDeduction,
+      subtext: 'flows to Schedule E line 18',
+      valueClass: 'text-gray-950 dark:text-white',
+      voice: true,
+    },
+    {
+      label: 'Banked so far',
+      metric: hero.accumulatedDepreciation,
+      subtext: 'accumulated',
+      valueClass: 'text-gray-950 dark:text-white',
+    },
+    {
+      label: 'Recapture at sale',
+      metric: hero.recaptureAtSale,
+      subtext: '25% of banked',
+      valueClass: 'text-amber-700 dark:text-amber-300',
+    },
+    {
+      label: 'Remaining',
+      metric: hero.remainingBasis,
+      subtext: `${hero.yearsLeft ?? '—'} yrs left`,
+      valueClass: 'text-gray-950 dark:text-white',
+    },
+  ]
 
   return (
-    <div className="space-y-6">
-      {/* Headline numbers */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPI label="Cash Flow / yr" value={fmt(latest?.cash_flow)}
-          color={latest?.cash_flow >= 0 ? 'text-green-600' : 'text-red-600'} />
-        <KPI label="Principal Paydown / yr" value={fmt(latest?.principal_paid)} color="text-blue-600" />
-        <KPI label="Depreciation / yr" value={fmt(perf.annual_depreciation)} color="text-purple-600" />
-        <KPI label="Return on Equity"
-          value={perf.return_on_equity != null ? `${perf.return_on_equity}%` : 'N/A'}
-          color={perf.return_on_equity >= 5 ? 'text-green-600' : 'text-amber-600'} />
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+        <StatusIcon className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        <span>{statusText}</span>
       </div>
 
-      {/* Signals */}
-      {perf.signals.length > 0 && (
-        <div className="card">
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-3">Keep or Sell — Signals</h3>
-          <ul className="space-y-2">
-            {perf.signals.map((s, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
-                <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                  s.level === 'good' ? 'bg-green-500' : s.level === 'bad' ? 'bg-red-500' : 'bg-amber-400'
-                }`} />
-                {s.text}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <div className="grid overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 sm:grid-cols-2 xl:grid-cols-4">
+        {heroCells.map((cell, index) => (
+          <div key={cell.label} className={`p-4 ${index ? 'border-t border-gray-200 dark:border-gray-700 sm:border-l sm:border-t-0' : ''}`}>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{cell.label}</p>
+            <p
+              className={`mt-2 text-2xl font-medium ${cell.valueClass}`}
+              style={cell.voice ? { fontFamily: 'var(--font-voice)' } : undefined}
+            >
+              {cell.metric?.displayValue || cell.metric?.fullDisplayValue || '—'}
+            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{cell.subtext}</p>
+          </div>
+        ))}
+      </div>
 
-      {/* Yearly table */}
       <div className="card">
-        <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Yearly Breakdown</h3>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="font-semibold text-gray-900 dark:text-white">What&apos;s depreciating</h3>
+          <button type="button" className="btn-primary flex items-center gap-1.5 text-sm" onClick={() => setShowModal(true)}>
+            <Plus className="h-4 w-4" /> Add improvement
+          </button>
+        </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
             <thead>
-              <tr className="border-b border-gray-100 dark:border-gray-700 text-left text-gray-500 dark:text-gray-400">
-                <th className="pb-2 pr-2 font-medium">Year</th>
-                <th className="pb-2 px-2 font-medium text-right">Rent</th>
-                <th className="pb-2 px-2 font-medium text-right">Expenses</th>
-                <th className="pb-2 px-2 font-medium text-right">Interest</th>
-                <th className="pb-2 px-2 font-medium text-right">Taxes</th>
-                <th className="pb-2 px-2 font-medium text-right">Principal</th>
-                <th className="pb-2 px-2 font-medium text-right">Topup</th>
-                <th className="pb-2 px-2 font-medium text-right">Cash Flow</th>
-                <th className="pb-2 px-2 font-medium text-right">Taxable Income</th>
-                <th className="pb-2 px-2 font-medium text-right">Depreciation</th>
-                <th className="pb-2 px-2 font-medium text-right">Escrow</th>
-                <th className="pb-2 pl-2 font-medium text-right">Total Return</th>
-                <th className="pb-2 pl-3 font-medium text-left text-gray-400 dark:text-gray-500">Note</th>
+              <tr className="text-left text-xs font-semibold text-gray-500 dark:text-gray-400">
+                <th className="px-3 py-2">Asset</th>
+                <th className="px-3 py-2">In service</th>
+                <th className="px-3 py-2 text-right">Basis</th>
+                <th className="px-3 py-2 text-right">Annual</th>
+                <th className="px-3 py-2 text-right">Accumulated</th>
+                <th className="px-3 py-2 text-right">actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-              {perf.yearly.map((y) => (
-                <tr key={y.year} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                  <td className="py-2 pr-2 font-medium text-gray-900 dark:text-white">
-                    {y.year}
-                    <span className="block text-[10px] text-gray-400 dark:text-gray-500 font-normal">
-                      {y.statements > 0 ? `${y.statements} stmt · ` : ''}{SOURCE_LABEL[y.source]}
-                    </span>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {assets.map((asset) => (
+                <tr key={asset.id || `asset-${asset.description}`} className="text-gray-700 dark:text-gray-200">
+                  <td className="px-3 py-3">
+                    <p className="font-medium text-gray-900 dark:text-white">{asset.description}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{asset.recovery_period || 27.5}-yr</p>
                   </td>
-                  <td className="py-2 px-2 text-right">
-                    {fmt(y.rental_income)}
-                    {y.rent_source === 'leases' && (
-                      <span className="block text-[10px] text-gray-400 dark:text-gray-500 font-normal">
-                        {y.occupied_months}/{12} mo · {fmtPct(y.occupancy)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-right text-red-500">{fmt(y.operating_expenses)}</td>
-                  <td className="py-2 px-2 text-right text-red-500">{fmt(y.interest_paid)}</td>
-                  <td className="py-2 px-2 text-right text-orange-500">{fmt(y.taxes_paid)}</td>
-                <td className="py-2 px-2 text-right text-blue-600">{fmt(y.principal_paid)}</td>
-                <td className="py-2 px-2 text-right text-indigo-600 dark:text-indigo-400">{fmt(y.principal_topup_paid)}</td>
-                  <td className={`py-2 px-2 text-right font-medium ${y.cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {fmt(y.cash_flow)}
-                  </td>
-                  <td className={`py-2 px-2 text-right ${y.taxable_income < 0 ? 'text-purple-600' : 'text-gray-900 dark:text-white'}`}>
-                    {fmt(y.taxable_income)}
-                  </td>
-                  <td className="py-2 px-2 text-right text-purple-600">{fmt(y.depreciation)}</td>
-                  <td className="py-2 px-2 text-right text-gray-500 dark:text-gray-400">{fmt(y.escrow_paid)}</td>
-                  <td className={`py-2 pl-2 text-right font-semibold ${y.total_return >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {fmt(y.total_return)}
-                  </td>
-                  <td className="py-1 pl-3 min-w-[160px]">
-                    {editingNoteYear === y.year ? (
-                      <input
-                        autoFocus
-                        type="text"
-                        value={noteInput}
-                        onChange={e => setNoteInput(e.target.value)}
-                        onBlur={() => saveYearNote(y.year)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') saveYearNote(y.year)
-                          if (e.key === 'Escape') { setEditingNoteYear(null); setNoteInput('') }
-                        }}
-                        placeholder="Add note…"
-                        className="w-full text-xs border border-blue-300 rounded px-2 py-1 outline-none focus:ring-1 focus:ring-blue-400"
-                      />
-                    ) : (
-                      <span
-                        onClick={() => { setEditingNoteYear(y.year); setNoteInput(yearNotes[y.year] || '') }}
-                        className={`text-xs cursor-pointer rounded px-1 py-0.5 hover:bg-gray-100 ${yearNotes[y.year] ? 'text-gray-700 dark:text-gray-300' : 'text-gray-300 italic'}`}
-                        title="Click to edit note"
-                      >
-                        {yearNotes[y.year] || 'Add note'}
-                      </span>
-                    )}
+                  <td className="px-3 py-3 whitespace-nowrap">{asset.placed_in_service_date || '—'}</td>
+                  <td className="px-3 py-3 text-right whitespace-nowrap">{fmt(asset.depreciable_basis ?? asset.cost_basis)}</td>
+                  <td className="px-3 py-3 text-right whitespace-nowrap">{fmt(asset.annual_depreciation)}</td>
+                  <td className="px-3 py-3 text-right whitespace-nowrap">{fmt(asset.accumulated_depreciation)}</td>
+                  <td className="px-3 py-3 text-right">
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title={asset.is_base_building ? 'Building asset is derived from the property' : 'Delete improvement'}
+                      onClick={() => deleteImprovement(asset)}
+                      disabled={asset.is_base_building}
+                    >
+                      {asset.is_base_building ? '...' : <Trash2 className="h-4 w-4" />}
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-gray-300 font-semibold text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50">
-                <td className="pt-2 pr-2 text-sm">Total</td>
-                <td className="pt-2 px-2 text-right">{fmt(perf.totals.rental_income)}</td>
-                <td className="pt-2 px-2 text-right text-red-500">{fmt(perf.totals.operating_expenses)}</td>
-                <td className="pt-2 px-2 text-right text-red-500">{fmt(perf.totals.interest_paid)}</td>
-              <td className="pt-2 px-2 text-right text-orange-500">{fmt(perf.totals.taxes_paid)}</td>
-              <td className="pt-2 px-2 text-right text-blue-600">{fmt(perf.totals.principal_paid)}</td>
-              <td className="pt-2 px-2 text-right text-indigo-600 dark:text-indigo-400">{fmt(perf.totals.principal_topup_paid)}</td>
-              <td className={`pt-2 px-2 text-right ${perf.totals.cash_flow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {fmt(perf.totals.cash_flow)}
-                </td>
-                <td className={`pt-2 px-2 text-right ${perf.totals.taxable_income < 0 ? 'text-purple-600' : 'text-gray-900 dark:text-white'}`}>
-                  {fmt(perf.totals.taxable_income)}
-                </td>
-                <td className="pt-2 px-2 text-right text-purple-600">{fmt(perf.totals.depreciation)}</td>
-                <td className="pt-2 px-2 text-right text-gray-500 dark:text-gray-400">{fmt(perf.totals.escrow_paid)}</td>
-                <td className={`pt-2 pl-2 text-right font-bold ${perf.totals.total_return >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {fmt(perf.totals.total_return)}
-                </td>
-                <td />
-              </tr>
-            </tfoot>
           </table>
         </div>
-        <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">
-          Upload mortgage statements from different months to turn estimates into actuals —
-          two or more statements per year let the app measure the real principal paydown.
-        </p>
       </div>
 
-      {/* Statement Details per document */}
-      {perf.snapshots.length > 0 && (
-        <div className="card">
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Statement Details</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-gray-700 text-left text-gray-500 dark:text-gray-400">
-                  <th className="pb-2 pr-2 font-medium">Date</th>
-                  <th className="pb-2 px-2 font-medium text-right">Balance</th>
-                  <th className="pb-2 px-2 font-medium text-right">Payment</th>
-                  <th className="pb-2 px-2 font-medium text-right">Principal</th>
-                  <th className="pb-2 px-2 font-medium text-right">Interest</th>
-                  <th className="pb-2 px-2 font-medium text-right">Escrow</th>
-                  <th className="pb-2 pl-2 font-medium text-right">Taxes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                {(() => {
-                  const years = [...new Set(perf.snapshots.map(s => s.year))].sort()
-                  const rows = []
-                  let grandBalance = 0, grandPayment = 0, grandPrincipal = 0, grandInterest = 0, grandEscrow = 0, grandTaxes = 0
-                  years.forEach((year, yi) => {
-                    const yrSnaps = perf.snapshots.filter(s => s.year === year)
-                    let subBalance = 0, subPayment = 0, subPrincipal = 0, subInterest = 0, subEscrow = 0, subTaxes = 0
-                    if (yi > 0) rows.push(<tr key={`gap-${year}`} className="h-2" />)
-                    yrSnaps.forEach((s) => {
-                      subBalance += s.balance || 0; subPayment += s.payment || 0
-                      subPrincipal += s.principal || 0; subInterest += s.interest || 0
-                      subEscrow += s.escrow || 0; subTaxes += s.taxes_paid || 0
-                      rows.push(
-                        <tr key={s.date} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                          <td className="py-1.5 pr-2 text-gray-900 dark:text-white">{s.date}</td>
-                          <td className="py-1.5 px-2 text-right">{fmt(s.balance)}</td>
-                          <td className="py-1.5 px-2 text-right">{fmt(s.payment)}</td>
-                          <td className="py-1.5 px-2 text-right text-blue-600">{fmt(s.principal)}</td>
-                          <td className="py-1.5 px-2 text-right text-red-500">{fmt(s.interest)}</td>
-                          <td className="py-1.5 px-2 text-right text-gray-500 dark:text-gray-400">{fmt(s.escrow)}</td>
-                          <td className="py-1.5 pl-2 text-right text-orange-500">{fmt(s.taxes_paid)}</td>
-                        </tr>
-                      )
-                    })
-                    // Year subtotal
-                    rows.push(
-                      <tr key={`sub-${year}`} className="bg-gray-50 dark:bg-gray-700/50 font-semibold text-gray-900 dark:text-white">
-                        <td className="py-1.5 pr-2 text-xs text-gray-500 dark:text-gray-400">{year} subtotal</td>
-                        <td className="py-1.5 px-2 text-right">{fmt(subBalance)}</td>
-                        <td className="py-1.5 px-2 text-right">{fmt(subPayment)}</td>
-                        <td className="py-1.5 px-2 text-right text-blue-600">{fmt(subPrincipal)}</td>
-                        <td className="py-1.5 px-2 text-right text-red-500">{fmt(subInterest)}</td>
-                        <td className="py-1.5 px-2 text-right text-gray-500 dark:text-gray-400">{fmt(subEscrow)}</td>
-                        <td className="py-1.5 pl-2 text-right text-orange-500">{fmt(subTaxes)}</td>
-                      </tr>
-                    )
-                    grandBalance += subBalance; grandPayment += subPayment
-                    grandPrincipal += subPrincipal; grandInterest += subInterest
-                    grandEscrow += subEscrow; grandTaxes += subTaxes
-                  })
-                  // Grand total
-                  rows.push(
-                    <tr key="grand-total" className="border-t-2 border-gray-300 bg-gray-100 font-bold text-gray-900 dark:text-white">
-                      <td className="pt-2 pr-2">Grand Total</td>
-                      <td className="pt-2 px-2 text-right">{fmt(grandBalance)}</td>
-                      <td className="pt-2 px-2 text-right">{fmt(grandPayment)}</td>
-                      <td className="pt-2 px-2 text-right text-blue-600">{fmt(grandPrincipal)}</td>
-                      <td className="pt-2 px-2 text-right text-red-500">{fmt(grandInterest)}</td>
-                      <td className="pt-2 px-2 text-right text-gray-500 dark:text-gray-400">{fmt(grandEscrow)}</td>
-                      <td className="pt-2 pl-2 text-right text-orange-500">{fmt(grandTaxes)}</td>
-                    </tr>
-                  )
-                  return rows
-                })()}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Loan balance over time */}
-      {perf.snapshots.length >= 2 && (
-        <div className="card">
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Loan Balance Over Time</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={perf.snapshots} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                domain={['auto', 'auto']} />
-              <Tooltip formatter={(v) => fmt(v)} />
-              <Line type="monotone" dataKey="balance" name="Balance" stroke="#3b82f6" strokeWidth={2} dot isAnimationActive={false} />
-            </LineChart>
+      <div className="card">
+        <h3 className="font-semibold text-gray-900 dark:text-white">Deduction each year — flat, straight-line</h3>
+        <div className="mt-4 h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={timeline}>
+              <CartesianGrid strokeDasharray="3 3" stroke={chartColors.borderLight} />
+              {nonRentalYears.map((year) => (
+                <ReferenceArea key={year} x1={year - 0.5} x2={year + 0.5} fill={chartColors.muted} fillOpacity={0.16} ifOverflow="visible" />
+              ))}
+              <XAxis dataKey="year" />
+              <YAxis tickFormatter={formatChartCurrency} />
+              <Tooltip formatter={(value) => fmt(value)} />
+              <Legend />
+              {timelineAssetKeys.map((key, index) => (
+                <Area
+                  key={key}
+                  type="stepAfter"
+                  dataKey={key}
+                  name={key}
+                  stackId="depreciation"
+                  stroke={assetColors[index % assetColors.length]}
+                  fill={assetColors[index % assetColors.length]}
+                  fillOpacity={0.45}
+                />
+              ))}
+            </AreaChart>
           </ResponsiveContainer>
         </div>
-      )}
+      </div>
 
-      {/* All Extracted Data — every document's extracted fields */}
-      {perf.all_documents && perf.all_documents.length > 0 && (
-        <div className="card">
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-4">All Extracted Data ({perf.all_documents.length})</h3>
-          {perf.all_documents.map((doc) => {
-            const entries = Object.entries(doc.extracted).filter(
-              ([k]) => !['raw_text_preview', 'period_type', 'statement_year'].includes(k)
-            )
-            if (entries.length === 0) return null
-            return (
-              <details key={doc.id} className="border border-gray-100 dark:border-gray-700 rounded-lg mb-2 overflow-hidden">
-                <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 text-sm">
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium">
-                    {doc.category}
-                  </span>
-                  <span className="text-gray-900 dark:text-white font-medium truncate">{doc.display_name || doc.original_filename}</span>
-                  {doc.period_type && doc.period_type !== 'other' && (
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-auto">
-                      {doc.period_type} · {doc.period_start || ''}{doc.period_start && doc.period_end ? ' → ' : ''}{doc.period_end || ''}
-                    </span>
-                  )}
-                </summary>
-                <div className="bg-gray-50 dark:bg-gray-700/50 border-t border-gray-100 dark:border-gray-700 px-3 py-2 grid grid-cols-2 gap-x-6 gap-y-1">
-                  {entries.map(([k, v]) => (
-                    <div key={k} className="flex justify-between text-xs py-0.5">
-                      <span className="text-gray-400 dark:text-gray-500 capitalize">{k.replace(/_/g, ' ')}</span>
-                      <span className="font-medium text-gray-700 dark:text-gray-300 ml-2">
-                        {v === null || v === undefined ? '—' :
-                         typeof v === 'number' ? `$${v.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` :
-                         String(v)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )
-          })}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <form onSubmit={saveImprovement} className="w-full max-w-lg rounded-lg border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add improvement</h3>
+              <button type="button" className="icon-btn" onClick={() => setShowModal(false)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="label">Type
+                <select className="input mt-1" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+                  <option>Roof</option>
+                  <option>Renovation</option>
+                  <option>HVAC</option>
+                  <option>Appliances</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label className="label">Cost
+                <input type="number" min="0" step="0.01" className="input mt-1" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} required />
+              </label>
+              <label className="label">In-service date
+                <input type="date" className="input mt-1" value={form.placed_in_service_date} onChange={(e) => setForm({ ...form, placed_in_service_date: e.target.value })} required />
+              </label>
+              <label className="label">Recovery period
+                <select className="input mt-1" value={form.recovery_period} onChange={(e) => setForm({ ...form, recovery_period: e.target.value })}>
+                  <option value="27.5">27.5</option>
+                  <option value="5">5</option>
+                  <option value="7">7</option>
+                  <option value="15">15</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+            </div>
+          </form>
         </div>
       )}
     </div>
   )
 }
 
-// ── Scenarios tab ──────────────────────────────────────────────────────────────
 function ScenariosTab({ prop, propId, currentMonthlyCashFlow = 0, currentDscr = 0 }) {
   const loans = prop.loans || []
   const [selectedLoan, setSelectedLoan] = useState(loans[0]?.id || '')
@@ -2863,12 +2773,39 @@ const [result, setResult] = useState(null)
   const [scheduleSearch, setScheduleSearch] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const parseAmount = (value) => {
-    const parsed = Number(String(value || '').replace(/[^0-9.]/g, ''))
-    return Number.isFinite(parsed) ? parsed : 0
-  }
-  const money = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value || 0)
-  const loanLabel = (loan) => loan ? `${loan.lender_name || `Loan #${loan.id}`} · ${loan.loan_type || 'Mortgage'}` : 'Loan'
+const parseAmount = (value) => {
+const parsed = Number(String(value || '').replace(/[^0-9.]/g, ''))
+return Number.isFinite(parsed) ? parsed : 0
+}
+const money = fmt
+const setScenarioAmounts = ({ type = 'combination', name = 'Custom strategy', extra = 0, annual = 0, annualMonthValue = 12, oneTime = 0, oneTimeMonth = '2028-01', sp500 = 8, hysa = 4, rental = 6, goal = 'interest_saved' }) => {
+setScenarioType(type)
+setScenarioName(name)
+setExtraMonthly(String(extra))
+setAnnualLumpSum(String(annual))
+setAnnualMonth(String(annualMonthValue))
+setOneTimeAmount(String(oneTime))
+setOneTimeDate(oneTimeMonth)
+setSp500Rate(String(sp500))
+setHysaRate(String(hysa))
+setRentalRate(String(rental))
+setHighlightGoal(goal)
+}
+const presets = [
+{ id: 'conservative', label: 'Conservative', config: { name: 'Conservative Plan', type: 'combination', extra: 100, annual: 2000, oneTime: 0, sp500: 6, hysa: 4, rental: 5 } },
+{ id: 'balanced', label: 'Balanced', config: { name: 'Balanced Plan', type: 'combination', extra: 250, annual: 5000, oneTime: 5000, sp500: 8, hysa: 4, rental: 6 } },
+{ id: 'aggressive', label: 'Aggressive', config: { name: 'Aggressive Payoff', type: 'combination', extra: 750, annual: 10000, oneTime: 10000, sp500: 8, hysa: 4, rental: 7 } },
+{ id: 'debt-free', label: 'Debt Free ASAP', config: { name: 'Debt Free ASAP', type: 'combination', extra: 1500, annual: 20000, oneTime: 25000, sp500: 7, hysa: 4, rental: 6, goal: 'interest_saved' } },
+{ id: 'invest', label: 'Invest Instead', config: { name: 'Invest Instead', type: 'baseline', extra: 0, annual: 0, oneTime: 0, sp500: 9, hysa: 4, rental: 7, goal: 'roi' } },
+]
+const activePresetId = presets.find((preset) => (
+  scenarioName === preset.config.name
+  && scenarioType === preset.config.type
+  && parseAmount(extraMonthly) === preset.config.extra
+  && parseAmount(annualLumpSum) === preset.config.annual
+  && parseAmount(oneTimeAmount) === preset.config.oneTime
+))?.id
+const loanLabel = (loan) => loan ? `${loan.lender_name || `Loan #${loan.id}`} · ${loan.loan_type || 'Mortgage'}` : 'Loan'
   const typeAllowsMonthly = ['extra_monthly', 'combination'].includes(scenarioType)
   const typeAllowsAnnual = ['annual_lump_sum', 'combination'].includes(scenarioType)
   const typeAllowsOneTime = scenarioType === 'one_time'
@@ -3001,51 +2938,138 @@ toast.success('Saved scenarios cleared')
   if (!loans.length) return <div className="card text-sm text-gray-500 dark:text-gray-400">Add a loan before running payoff scenarios.</div>
 
   return <div className="space-y-5">
-    <div className="card">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 pb-4 dark:border-gray-700">
-        <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">What-If Financial Simulator</h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Build payoff strategies and compare debt reduction against alternative uses of capital.</p>
-        </div>
-<div className="flex gap-2">{editingScenarioId ? <button className="btn-secondary" onClick={updateScenario}>Update</button> : null}<button className="btn-secondary" onClick={saveScenario}>Save as New</button><button className="btn-primary" onClick={run} disabled={loading}>{loading ? 'Calculating...' : 'Calculate'}</button></div>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">What-If Financial Simulator</h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Adjust strategy controls and review the backend scenario result live.</p>
       </div>
-{result?.opportunityVerdict && <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/30"><div className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-300">Decision verdict</div><div className="mt-1 text-base font-semibold text-emerald-950 dark:text-emerald-100">{result.opportunityVerdict.headline}</div></div>}
-{savedScenarios.length ? <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"><div className="mb-2 flex items-center justify-between gap-3"><span className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{editingScenarioId ? `Editing: ${savedScenarios.find((scenario) => scenario.id === editingScenarioId)?.name || 'Saved scenario'}` : 'Load saved scenario'}</span>{editingScenarioId ? <button type="button" className="text-xs font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200" onClick={() => setEditingScenarioId(null)}>Cancel edit</button> : null}</div><div className="flex flex-wrap gap-2">{savedScenarios.map((scenario) => <button key={scenario.id} type="button" className={`rounded-full border px-3 py-1 text-xs font-medium ${editingScenarioId === scenario.id ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-700'}`} onClick={() => loadSavedScenario(scenario)}>{scenario.name}</button>)}</div></div> : null}
-<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-6">
-        <label className="block"><span className="label">Loan</span><select className="input w-full" value={selectedLoan} onChange={(e) => setSelectedLoan(e.target.value)}>{loans.map((loan) => <option key={loan.id} value={loan.id}>{loanLabel(loan)}</option>)}</select></label>
-        <label className="block"><span className="label">Scenario type</span><select className="input w-full" value={scenarioType} onChange={(e) => setScenarioType(e.target.value)}><option value="baseline">Baseline</option><option value="extra_monthly">Extra Monthly Payment</option><option value="annual_lump_sum">Annual Lump Sum</option><option value="one_time">One-Time Payment</option><option value="combination">Combination Strategy</option></select></label>
-        <label className="block lg:col-span-2"><span className="label">Scenario name</span><input className="input w-full" value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Tax Refund Strategy" /></label>
-        <label className="block"><span className="label">Best by</span><select className="input w-full" value={highlightGoal} onChange={(e) => setHighlightGoal(e.target.value)}><option value="interest_saved">Max interest saved</option><option value="roi">Best annualized return</option></select></label>
-        <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200">Backend run returns every card, chart, verdict, and table row.</div>
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <ScenarioInputGroup disabled={!typeAllowsMonthly} label="Extra monthly"><div className="grid grid-cols-2 gap-2">{[100,250,500,1000].map((amount) => <button key={amount} disabled={!typeAllowsMonthly} className="btn-secondary text-sm disabled:opacity-40" onClick={() => setExtraMonthly(String(amount))}>+{money(amount)}/mo</button>)}</div><input disabled={!typeAllowsMonthly} className="input w-full disabled:opacity-40" inputMode="decimal" value={extraMonthly} onChange={(e) => setExtraMonthly(e.target.value.replace(/[^0-9.]/g, ''))} /></ScenarioInputGroup>
-        <ScenarioInputGroup disabled={!typeAllowsAnnual} label="Annual lump sum"><div className="grid grid-cols-2 gap-2">{[2000,5000,10000].map((amount) => <button key={amount} disabled={!typeAllowsAnnual} className="btn-secondary text-sm disabled:opacity-40" onClick={() => setAnnualLumpSum(String(amount))}>{money(amount)}/yr</button>)}</div><input disabled={!typeAllowsAnnual} className="input w-full disabled:opacity-40" inputMode="decimal" value={annualLumpSum} onChange={(e) => setAnnualLumpSum(e.target.value.replace(/[^0-9.]/g, ''))} /></ScenarioInputGroup>
-        <label className="block"><span className="label">Lump month</span><select disabled={!typeAllowsAnnual} className="input w-full disabled:opacity-40" value={annualMonth} onChange={(e) => setAnnualMonth(e.target.value)}><option value="1">January</option><option value="4">Tax Refund</option><option value="6">Bonus Month</option><option value="12">December</option></select></label>
-        <ScenarioInputGroup disabled={!typeAllowsOneTime} label="One-time payment"><div className="grid grid-cols-2 gap-3"><input disabled={!typeAllowsOneTime} className="input w-full disabled:opacity-40" inputMode="decimal" value={oneTimeAmount} onChange={(e) => setOneTimeAmount(e.target.value.replace(/[^0-9.]/g, ''))} /><input disabled={!typeAllowsOneTime} type="month" className="input w-full disabled:opacity-40" value={oneTimeDate} onChange={(e) => setOneTimeDate(e.target.value)} /></div></ScenarioInputGroup>
-      </div>
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3"><label><span className="label">S&P comparison rate</span><input className="input w-full" inputMode="decimal" value={sp500Rate} onChange={(e) => setSp500Rate(e.target.value.replace(/[^0-9.]/g, ''))} /></label><label><span className="label">HYSA comparison rate</span><input className="input w-full" inputMode="decimal" value={hysaRate} onChange={(e) => setHysaRate(e.target.value.replace(/[^0-9.]/g, ''))} /></label><label><span className="label">Next rental rate</span><input className="input w-full" inputMode="decimal" value={rentalRate} onChange={(e) => setRentalRate(e.target.value.replace(/[^0-9.]/g, ''))} /></label></div>
+      {loading ? <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">Updating live...</span> : <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300">Live simulator</span>}
     </div>
 
-    {summary && <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><ScenarioCard title="Current Loan" value={baseline?.payoff_time || '-'} detail={`${money(baseline?.interest_paid)} interest`} /><ScenarioCard title="Scenario" value={summary.payoff_time} detail={`${money(summary.interest_paid)} interest · ${money(summary.monthly_payment)}/mo`} tone="blue" /><ScenarioCard title="Interest Saved" value={money(summary.interest_saved)} detail={`${summary.years_saved || 0} years saved`} tone="green" /><ScenarioCard title="Return on Capital" value={summary.annualized_return == null ? '-' : `${summary.annualized_return.toFixed(1)}%/yr`} detail={summary.return_on_capital_lifetime == null ? 'Needs extra capital' : `${summary.return_on_capital_lifetime.toFixed(1)}% lifetime`} tone="purple" /></div>}
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_260px] xl:items-start">
+      <div className="space-y-4">
+        <div className="card border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/30">
+          <div className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-300">Decision verdict</div>
+          <div className="mt-1 text-lg font-semibold text-emerald-950 dark:text-emerald-100">{result?.opportunityVerdict?.headline || 'Adjust the controls to compare payoff and investing outcomes.'}</div>
+        </div>
+        {summary ? (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <ScenarioCard title="Payoff time" value={summary.payoff_time} detail={`${money(summary.interest_paid)} interest`} tone="blue" />
+            <ScenarioCard title="Interest saved" value={money(summary.interest_saved)} detail={`${summary.years_saved || 0} years saved`} tone="green" />
+            <ScenarioCard title="Return on capital" value={summary.annualized_return == null ? '-' : `${formatNumber(summary.annualized_return, { maximumFractionDigits: 1 })}%/yr`} detail={summary.return_on_capital_lifetime == null ? 'Needs capital' : `${formatNumber(summary.return_on_capital_lifetime, { maximumFractionDigits: 1 })}% lifetime`} tone="purple" />
+            <ScenarioCard title="Capital used" value={money(summary.total_cash_deployed)} detail={summary.cash_flow_note || 'Backend scenario total'} />
+          </div>
+        ) : null}
+        {result ? (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <ChartCard title="Loan Balance Over Time"><LineChart data={result.charts || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={chartTypography.tick} /><YAxis tickFormatter={formatChartCurrency} tick={chartTypography.tick} /><Tooltip formatter={(v) => money(v)} /><Legend /><Line type="monotone" dataKey="baseline_balance" name="Current loan" stroke={chartColors.mutedAxis} dot={false} /><Line type="monotone" dataKey="scenario_balance" name="Scenario loan" stroke={chartColors.primary} dot={false} /></LineChart></ChartCard>
+            <ChartCard title="Principal / Interest / Extra"><BarChart data={(result.charts || []).filter((_, i) => i % 12 === 0)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={chartTypography.tick} /><YAxis tickFormatter={formatChartCurrency} tick={chartTypography.tick} /><Tooltip formatter={(v) => money(v)} /><Legend /><Bar dataKey="principal" name="Principal" stackId="a" fill={chartColors.principal} /><Bar dataKey="interest" name="Interest" stackId="a" fill={chartColors.warning} /><Bar dataKey="extra" name="Extra" stackId="a" fill={chartColors.primarySoft} /></BarChart></ChartCard>
+          </div>
+        ) : null}
+      </div>
 
-    {result && <div className="grid grid-cols-1 gap-4 xl:grid-cols-2"><ChartCard title="Loan Balance Over Time"><LineChart data={result.charts || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tickFormatter={(v) => `$${Math.round(v/1000)}k`} tick={{ fontSize: 11 }} /><Tooltip formatter={(v) => money(v)} /><Legend /><Line type="monotone" dataKey="baseline_balance" name="Current loan" stroke="#94a3b8" dot={false} /><Line type="monotone" dataKey="scenario_balance" name="Scenario loan" stroke="#2563eb" dot={false} /></LineChart></ChartCard><ChartCard title="Principal / Interest / Extra"><BarChart data={(result.charts || []).filter((_, i) => i % 12 === 0)}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tickFormatter={(v) => `$${Math.round(v/1000)}k`} tick={{ fontSize: 11 }} /><Tooltip formatter={(v) => money(v)} /><Legend /><Bar dataKey="principal" name="Principal" stackId="a" fill="#22c55e" /><Bar dataKey="interest" name="Interest" stackId="a" fill="#f97316" /><Bar dataKey="extra" name="Extra" stackId="a" fill="#3b82f6" /></BarChart></ChartCard><ChartCard title="Equity Growth"><LineChart data={result.charts || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tickFormatter={(v) => `$${Math.round(v/1000)}k`} tick={{ fontSize: 11 }} /><Tooltip formatter={(v) => money(v)} /><Legend /><Line type="monotone" dataKey="baseline_equity" name="Current" stroke="#94a3b8" dot={false} /><Line type="monotone" dataKey="scenario_equity" name="Scenario" stroke="#16a34a" dot={false} /></LineChart></ChartCard><ChartCard title="Cumulative Interest Saved"><AreaChart data={result.charts || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tickFormatter={(v) => `$${Math.round(v/1000)}k`} tick={{ fontSize: 11 }} /><Tooltip formatter={(v) => money(v)} /><Area type="monotone" dataKey="interest_saved" name="Interest saved" stroke="#7c3aed" fill="#ede9fe" /></AreaChart></ChartCard></div>}
+      <aside className="card max-h-[calc(100vh-10rem)] overflow-y-auto p-4 xl:sticky xl:top-4">
+        <div className="space-y-4">
+          <ScenarioControlGroup title="Presets">
+            <div className="flex flex-wrap gap-2">
+              {presets.map((preset) => <button key={preset.id} type="button" className={`rounded-full border px-2.5 py-1 text-xs font-medium ${activePresetId === preset.id ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-300'}`} onClick={() => setScenarioAmounts(preset.config)}>{preset.label}</button>)}
+            </div>
+          </ScenarioControlGroup>
+          <ScenarioControlGroup title="Scenario">
+            <label className="block"><span className="label">Loan</span><select className="input h-9 w-full text-sm" value={selectedLoan} onChange={(e) => setSelectedLoan(e.target.value)}>{loans.map((loan) => <option key={loan.id} value={loan.id}>{loanLabel(loan)}</option>)}</select></label>
+            <label className="block"><span className="label">Name</span><input className="input h-9 w-full text-sm" value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Tax Refund Strategy" /></label>
+            <label className="block"><span className="label">Strategy</span><select className="input h-9 w-full text-sm" value={scenarioType} onChange={(e) => setScenarioType(e.target.value)}><option value="baseline">Baseline</option><option value="extra_monthly">Extra Monthly Payment</option><option value="annual_lump_sum">Annual Lump Sum</option><option value="one_time">One-Time Payment</option><option value="combination">Combination Strategy</option></select></label>
+          </ScenarioControlGroup>
+          <ScenarioControlGroup title="Payoff">
+            <ScenarioSlider disabled={!typeAllowsMonthly} label="Extra/mo" value={parseAmount(extraMonthly)} min={0} max={3000} step={25} display={`${money(parseAmount(extraMonthly))}/mo`} onChange={(value) => setExtraMonthly(String(value))} />
+            <ScenarioSlider disabled={!typeAllowsAnnual} label="Annual lump" value={parseAmount(annualLumpSum)} min={0} max={50000} step={500} display={`${money(parseAmount(annualLumpSum))}/yr`} onChange={(value) => setAnnualLumpSum(String(value))} />
+            <label className="block"><span className="label">Lump month</span><select disabled={!typeAllowsAnnual} className="input h-9 w-full text-sm disabled:opacity-40" value={annualMonth} onChange={(e) => setAnnualMonth(e.target.value)}><option value="1">January</option><option value="4">Tax Refund</option><option value="6">Bonus Month</option><option value="12">December</option></select></label>
+            <ScenarioSlider disabled={!typeAllowsOneTime} label="One-time" value={parseAmount(oneTimeAmount)} min={0} max={100000} step={1000} display={money(parseAmount(oneTimeAmount))} onChange={(value) => setOneTimeAmount(String(value))} footer={<input disabled={!typeAllowsOneTime} type="month" className="input mt-2 h-9 w-full text-sm disabled:opacity-40" value={oneTimeDate} onChange={(e) => setOneTimeDate(e.target.value)} />} />
+          </ScenarioControlGroup>
+          <ScenarioControlGroup title="Compare vs investing">
+            <label className="block"><span className="label">Best by</span><select className="input h-9 w-full text-sm" value={highlightGoal} onChange={(e) => setHighlightGoal(e.target.value)}><option value="interest_saved">Max interest saved</option><option value="roi">Best annualized return</option></select></label>
+            <ScenarioSlider label="Invest return" value={parseAmount(sp500Rate)} min={0} max={14} step={0.25} display={`${formatNumber(parseAmount(sp500Rate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setSp500Rate(String(value))} />
+            <ScenarioSlider label="HYSA" value={parseAmount(hysaRate)} min={0} max={8} step={0.1} display={`${formatNumber(parseAmount(hysaRate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setHysaRate(String(value))} />
+            <ScenarioSlider label="Next rental" value={parseAmount(rentalRate)} min={0} max={14} step={0.25} display={`${formatNumber(parseAmount(rentalRate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setRentalRate(String(value))} />
+          </ScenarioControlGroup>
+          {savedScenarios.length ? <ScenarioControlGroup title={editingScenarioId ? 'Editing saved' : 'Saved'}><div className="flex flex-wrap gap-2">{savedScenarios.map((scenario) => <button key={scenario.id} type="button" className={`rounded-full border px-2.5 py-1 text-xs font-medium ${editingScenarioId === scenario.id ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-700'}`} onClick={() => loadSavedScenario(scenario)}>{scenario.name}</button>)}</div>{editingScenarioId ? <button type="button" className="mt-2 text-xs font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200" onClick={() => setEditingScenarioId(null)}>Cancel edit</button> : null}</ScenarioControlGroup> : null}
+          <div className="border-t border-gray-200 pt-3 dark:border-gray-800">
+            {editingScenarioId ? <button className="btn-secondary mb-2 w-full justify-center" onClick={updateScenario}>Update scenario</button> : null}
+            <button className="btn-primary w-full justify-center" onClick={saveScenario}>Save as scenario</button>
+          </div>
+        </div>
+      </aside>
+    </div>
 
-    {summary && <div className="grid grid-cols-1 gap-4 lg:grid-cols-3"><div className="card"><h4 className="font-semibold text-gray-900 dark:text-white">Cash Flow Impact</h4><div className="mt-4 space-y-2 text-sm"><ScenarioRow label="Current cash flow" value={`${money(summary.current_cash_flow)}/mo`} /><ScenarioRow label="Scenario cash flow" value={`${money(summary.scenario_cash_flow)}/mo`} /><ScenarioRow label="Monthly difference" value={`${money(summary.monthly_cash_flow_difference)}/mo`} />{(summary.cash_outflow_lines || []).map((line) => <ScenarioRow key={`${line.label}-${line.display}`} label={line.label} value={line.display} />)}<ScenarioRow label="Total cash deployed" value={money(summary.total_cash_deployed)} /></div><p className="mt-3 text-sm text-gray-500 dark:text-gray-400">{summary.cash_flow_note}</p></div><div className="card"><h4 className="font-semibold text-gray-900 dark:text-white">Opportunity Cost</h4><div className="mt-4 space-y-2 text-sm">{(result.opportunityCost || []).map((item) => <ScenarioRow key={item.label} label={item.label} value={money(item.future_value)} />)}</div></div><div className="card"><h4 className="font-semibold text-gray-900 dark:text-white">Decision Insights</h4><div className="mt-4 space-y-2 text-sm text-gray-700 dark:text-gray-300">{(result.insights || []).map((item) => <div key={item} className="rounded-md bg-gray-50 px-3 py-2 dark:bg-gray-800">{item}</div>)}</div></div></div>}
+    {result && <div className="grid grid-cols-1 gap-4 xl:grid-cols-3"><div className="card xl:col-span-1"><div className="flex items-center justify-between"><h4 className="font-semibold text-gray-900 dark:text-white">Timeline</h4><button className="text-sm font-medium text-blue-600" onClick={() => setTimelineExpanded(!timelineExpanded)}>{timelineExpanded ? 'Collapse' : 'Expand'}</button></div><div className="mt-4 space-y-3">{shownTimeline.map((event) => <div key={`${event.date}-${event.label}`} className="flex gap-3"><div className="mt-1 h-3 w-3 rounded-full bg-blue-600" /><div><div className="text-sm font-medium text-gray-900 dark:text-white">{event.label}</div><div className="text-xs text-gray-500 dark:text-gray-400">{event.date}</div></div></div>)}</div></div><div className="card xl:col-span-2"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold text-gray-900 dark:text-white">Compare Multiple Scenarios</h4>{savedScenarios.length ? <button type="button" className="text-xs font-medium text-red-600 hover:text-red-700" onClick={clearSavedScenarios}>Clear saved</button> : null}</div><DataTable
+columns={[
+{ id: 'name', header: 'Scenario', cellClassName: 'font-medium text-gray-900 dark:text-white', render: (item) => <>{item.name}{item.is_best ? <span className="ml-2 rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">Best</span> : null}</> },
+{ id: 'payoff_time', header: 'Payoff', accessor: 'payoff_time', sortable: false },
+{ id: 'interest_paid', header: 'Interest', accessor: 'interest_paid', align: 'right', render: (item) => money(item.interest_paid) },
+{ id: 'interest_saved', header: 'Saved', accessor: 'interest_saved', align: 'right', render: (item) => money(item.interest_saved) },
+{ id: 'years_saved', header: 'Years saved', accessor: 'years_saved', align: 'right' },
+{ id: 'cash_required', header: 'Cash required', accessor: 'cash_required', align: 'right', render: (item) => money(item.cash_required) },
+{ id: 'annualized_return', header: 'Return', accessor: 'annualized_return', align: 'right', render: (item) => item.annualized_return == null ? '-' : `${formatNumber(item.annualized_return, { maximumFractionDigits: 1 })}%/yr` },
+{ id: 'action', header: 'Action', align: 'right', sortable: false, render: (item) => item.id === 'baseline' || item.id === 'active-scenario' ? <span className="inline-flex items-center gap-1 text-xs text-gray-400"><Lock className="h-3.5 w-3.5" /> System</span> : <button type="button" className="icon-btn text-red-600" onClick={() => deleteSavedScenario(item.id, item.name)} title="Delete saved scenario"><Trash2 className="h-4 w-4" /></button> },
+]}
+rows={comparison}
+getRowKey={(item) => item.id}
+getRowProps={(item) => ({ className: `border-t border-gray-100 dark:border-gray-700 ${item.is_best ? 'bg-green-50 dark:bg-green-950/20' : ''}` })}
+/></div></div>}
 
-    {result && <div className="grid grid-cols-1 gap-4 xl:grid-cols-3"><div className="card xl:col-span-1"><div className="flex items-center justify-between"><h4 className="font-semibold text-gray-900 dark:text-white">Timeline</h4><button className="text-sm font-medium text-blue-600" onClick={() => setTimelineExpanded(!timelineExpanded)}>{timelineExpanded ? 'Collapse' : 'Expand'}</button></div><div className="mt-4 space-y-3">{shownTimeline.map((event) => <div key={`${event.date}-${event.label}`} className="flex gap-3"><div className="mt-1 h-3 w-3 rounded-full bg-blue-600" /><div><div className="text-sm font-medium text-gray-900 dark:text-white">{event.label}</div><div className="text-xs text-gray-500 dark:text-gray-400">{event.date}</div></div></div>)}</div></div><div className="card xl:col-span-2"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold text-gray-900 dark:text-white">Compare Multiple Scenarios</h4>{savedScenarios.length ? <button type="button" className="text-xs font-medium text-red-600 hover:text-red-700" onClick={clearSavedScenarios}>Clear saved</button> : null}</div><div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="text-left text-xs uppercase text-gray-500"><th className="py-2">Scenario</th><th>Payoff</th><th>Interest</th><th>Saved</th><th>Years saved</th><th>Cash required</th><th>Return</th><th className="text-right">Action</th></tr></thead><tbody>{comparison.map((item) => <tr key={item.id} className={`border-t border-gray-100 dark:border-gray-700 ${item.is_best ? 'bg-green-50 dark:bg-green-950/20' : ''}`}><td className="py-2 font-medium text-gray-900 dark:text-white">{item.name}{item.is_best ? <span className="ml-2 rounded bg-green-100 px-2 py-0.5 text-xs text-green-700">Best</span> : null}</td><td>{item.payoff_time}</td><td>{money(item.interest_paid)}</td><td>{money(item.interest_saved)}</td><td>{item.years_saved}</td><td>{money(item.cash_required)}</td><td>{item.annualized_return == null ? '-' : `${item.annualized_return.toFixed(1)}%/yr`}</td><td className="text-right">{item.id === 'baseline' || item.id === 'active-scenario' ? <span className="inline-flex items-center gap-1 text-xs text-gray-400"><Lock className="h-3.5 w-3.5" /> System</span> : <button type="button" className="icon-btn text-red-600" onClick={() => deleteSavedScenario(item.id, item.name)} title="Delete saved scenario"><Trash2 className="h-4 w-4" /></button>}</td></tr>)}</tbody></table></div></div></div>}
-
-    {result && <div className="card"><div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-gray-900 dark:text-white">Amortization Schedule</h4><div className="flex flex-wrap gap-2"><select className="input w-32" value={scheduleFilter} onChange={(e) => setScheduleFilter(e.target.value)}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select><input className="input w-44" placeholder="Search" value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} /><button className="btn-secondary" onClick={exportSchedule}><Download className="h-4 w-4" /> Export CSV</button></div></div><div className="mt-4 max-h-[520px] overflow-auto"><table className="min-w-full text-sm"><thead className="sticky top-0 bg-white text-left text-xs uppercase text-gray-500 dark:bg-gray-900"><tr><th className="py-2">Payment #</th><th>Date</th><th>Beginning Balance</th><th>Monthly Payment</th><th>Principal</th><th>Interest</th><th>Extra Monthly</th><th>Annual Lump Sum</th><th>Ending Balance</th><th>Running Interest Paid</th></tr></thead><tbody>{rows.map((row) => <tr key={row.payment_number} className="border-t border-gray-100 dark:border-gray-700"><td className="py-2">{row.payment_number}</td><td>{row.date}</td><td>{money(row.beginning_balance)}</td><td>{money(row.monthly_payment)}</td><td>{money(row.principal)}</td><td>{money(row.interest)}</td><td>{money(row.extra_monthly)}</td><td>{money(row.annual_lump_sum + row.one_time_payment)}</td><td>{money(row.ending_balance)}</td><td>{money(row.running_interest_paid)}</td></tr>)}</tbody></table></div></div>}
+    {result && <div className="card"><div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-gray-900 dark:text-white">Amortization Schedule</h4><div className="flex flex-wrap gap-2"><select className="input w-32" value={scheduleFilter} onChange={(e) => setScheduleFilter(e.target.value)}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select><input className="input w-44" placeholder="Search" value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} /><button className="btn-secondary" onClick={exportSchedule}><Download className="h-4 w-4" /> Export CSV</button></div></div><DataTable
+className="mt-4 max-h-[520px] overflow-auto"
+columns={[
+{ id: 'payment_number', header: 'Payment #', accessor: 'payment_number', align: 'center' },
+{ id: 'date', header: 'Date', accessor: 'date' },
+{ id: 'beginning_balance', header: 'Beginning Balance', accessor: 'beginning_balance', align: 'right', render: (row) => money(row.beginning_balance) },
+{ id: 'monthly_payment', header: 'Monthly Payment', accessor: 'monthly_payment', align: 'right', render: (row) => money(row.monthly_payment) },
+{ id: 'principal', header: 'Principal', accessor: 'principal', align: 'right', render: (row) => money(row.principal) },
+{ id: 'interest', header: 'Interest', accessor: 'interest', align: 'right', render: (row) => money(row.interest) },
+{ id: 'extra_monthly', header: 'Extra Monthly', accessor: 'extra_monthly', align: 'right', render: (row) => money(row.extra_monthly) },
+{ id: 'annual_lump_sum', header: 'Annual Lump Sum', align: 'right', sortValue: (row) => (row.annual_lump_sum || 0) + (row.one_time_payment || 0), render: (row) => money((row.annual_lump_sum || 0) + (row.one_time_payment || 0)) },
+{ id: 'ending_balance', header: 'Ending Balance', accessor: 'ending_balance', align: 'right', render: (row) => money(row.ending_balance) },
+{ id: 'running_interest_paid', header: 'Running Interest Paid', accessor: 'running_interest_paid', align: 'right', render: (row) => money(row.running_interest_paid) },
+]}
+rows={rows}
+getRowKey={(row) => row.payment_number}
+defaultSort={{ id: 'payment_number', direction: 'asc' }}
+getRowProps={() => ({ className: 'border-t border-gray-100 dark:border-gray-700' })}
+/></div>}
   </div>
 }
 
 function ScenarioInputGroup({ disabled, label, children }) {
-  return <div className={`space-y-2 ${disabled ? 'opacity-60' : ''}`}><span className="label">{label}</span>{children}</div>
+return <div className={`space-y-2 ${disabled ? 'opacity-60' : ''}`}><span className="label">{label}</span>{children}</div>
+}
+
+function ScenarioControlGroup({ title, children }) {
+  return (
+    <section className="border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 dark:border-gray-800">
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{title}</h4>
+      <div className="space-y-3">{children}</div>
+    </section>
+  )
+}
+
+function ScenarioSlider({ disabled = false, label, value, min, max, step, display, onChange, footer }) {
+const pct = max > min ? ((Number(value || 0) - min) / (max - min)) * 100 : 0
+return (
+<div className={disabled ? 'opacity-55' : ''}>
+<div className="mb-1 flex items-center justify-between gap-3 text-xs">
+<span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
+<span className="font-semibold text-gray-950 dark:text-white">{disabled ? 'Off' : display}</span>
+</div>
+<input disabled={disabled} type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className="h-1.5 w-full cursor-pointer accent-blue-600 disabled:cursor-not-allowed" aria-label={label} />
+<div className="mt-1 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500"><span>{typeof min === 'number' && min >= 100 ? fmt(min) : min}</span><span>{Math.round(Math.max(0, Math.min(100, pct)))}%</span><span>{typeof max === 'number' && max >= 100 ? fmt(max) : max}</span></div>
+{footer}
+</div>
+)
 }
 
 function ScenarioCard({ title, value, detail, tone = 'gray' }) {
-  const tones = { gray: 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800', blue: 'border-blue-200 bg-blue-50 dark:border-blue-900/40 dark:bg-blue-950/30', green: 'border-green-200 bg-green-50 dark:border-green-900/40 dark:bg-green-950/30', purple: 'border-purple-200 bg-purple-50 dark:border-purple-900/40 dark:bg-purple-950/30' }
-  return <div className={`rounded-lg border p-4 ${tones[tone] || tones.gray}`}><div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{title}</div><div className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{value}</div><div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{detail}</div></div>
+const tones = { gray: 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800', blue: 'border-blue-200 bg-blue-50 dark:border-blue-900/40 dark:bg-blue-950/30', green: 'border-green-200 bg-green-50 dark:border-green-900/40 dark:bg-green-950/30', purple: 'border-purple-200 bg-purple-50 dark:border-purple-900/40 dark:bg-purple-950/30' }
+return <div className={`rounded-lg border p-4 ${tones[tone] || tones.gray}`}><div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{title}</div><div className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">{value}</div><div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{detail}</div></div>
 }
 
 function ChartCard({ title, children }) {
@@ -3105,15 +3129,15 @@ function UnifiedTaxPage({ propId, property }) {
     ? {
         header: 'Deductions',
         subtitle: 'Primary residence itemized-deduction view from loan and property-tax engine figures.',
-        hero: { label: 'Estimated itemizable deduction', value: fmt(primaryDeduction), note: 'After SALT cap; mortgage cap label shown below', tone: 'blue' },
+hero: { label: 'Estimated itemizable deduction', value: fmtKMB(primaryDeduction, { threshold: 1000 }), note: 'After SALT cap; mortgage cap label shown below', tone: 'blue' },
         components: [
-          { label: 'Deductible interest', value: fmt(deductibleInterest), note: 'Mortgage cap context' },
-          { label: 'Deductible property tax', value: fmt(deductibleTax), note: 'SALT capped at $10K' },
-          { label: 'Standard deduction', value: fmt(standardDeduction), note: 'MFJ comparison placeholder' },
+{ label: 'Deductible interest', value: fmtKMB(deductibleInterest, { threshold: 1000 }), note: 'Mortgage cap context' },
+{ label: 'Deductible property tax', value: fmtKMB(deductibleTax, { threshold: 1000 }), note: 'SALT capped at $10,000' },
+{ label: 'Standard deduction', value: fmtKMB(standardDeduction, { threshold: 1000 }), note: 'MFJ comparison placeholder' },
         ],
         lifetime: [
-          { label: 'Interest paid to date', value: fmt(lifetime.total_interest_paid) },
-          { label: 'Loan balance', value: fmt(lifetime.current_loan_balance) },
+ { label: 'Interest paid to date', value: fmtKMB(lifetime.total_interest_paid, { threshold: 1000 }) },
+ { label: 'Loan balance', value: fmtKMB(lifetime.current_loan_balance, { threshold: 1000 }) },
           { label: 'Itemize verdict', value: itemizeVerdict },
         ],
         banner: 'Primary residence deductions are subject to mortgage-interest and SALT caps. Filing status and origination rules can change the result; not tax advice.',
@@ -3122,16 +3146,16 @@ function UnifiedTaxPage({ propId, property }) {
     : {
         header: 'Schedule E',
         subtitle: 'Rental taxable P&L from income, expenses, mortgage interest, and depreciation.',
-        hero: { label: 'Net Sch E', value: fmt(rentalCurrent.net_schedule_e), note: 'Flows to 1040', tone: (rentalCurrent.net_schedule_e || 0) < 0 ? 'red' : 'green' },
+hero: { label: 'Net Sch E', value: fmtKMB(rentalCurrent.net_schedule_e, { threshold: 1000 }), note: 'Flows to 1040', tone: (rentalCurrent.net_schedule_e || 0) < 0 ? 'red' : 'green' },
         components: [
-          { label: 'Rental income', value: fmt(rentalCurrent.rental_income) },
-          { label: 'Mortgage interest', value: fmt(rentalCurrent.mortgage_interest), note: 'Fully deductible - rental' },
-          { label: 'Depreciation', value: rentalCurrent.depreciation == null ? 'N/A' : fmt(rentalCurrent.depreciation), note: 'Non-cash' },
+{ label: 'Rental income', value: fmtKMB(rentalCurrent.rental_income, { threshold: 1000 }) },
+{ label: 'Mortgage interest', value: fmtKMB(rentalCurrent.mortgage_interest, { threshold: 1000 }), note: 'Fully deductible - rental' },
+{ label: 'Depreciation', value: rentalCurrent.depreciation == null ? 'N/A' : fmtKMB(rentalCurrent.depreciation, { threshold: 1000 }), note: 'Non-cash' },
         ],
         lifetime: [
-          { label: 'Lifetime net Sch E', value: fmt(rentalLifetime.net_schedule_e) },
-          { label: 'Accumulated depreciation', value: fmt(rentalLifetime.accumulated_depreciation) },
-          { label: 'Suspended losses', value: fmt(rentalLifetime.suspended_losses) },
+ { label: 'Lifetime net Sch E', value: fmtKMB(rentalLifetime.net_schedule_e, { threshold: 1000 }) },
+ { label: 'Accumulated depreciation', value: fmtKMB(rentalLifetime.accumulated_depreciation, { threshold: 1000 }) },
+ { label: 'Suspended losses', value: fmtKMB(rentalLifetime.suspended_losses, { threshold: 1000 }) },
         ],
         banner: 'Passive-loss rules may limit Schedule E losses. If MAGI is above the phaseout range, review Form 8582 carryforwards.',
         columns: ['Year', 'Income', 'Op ex', 'Interest', 'Depreciation', 'Net Sch E'],
@@ -3186,40 +3210,25 @@ function UnifiedTaxPage({ propId, property }) {
 
       <div className="card">
         <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">History</h3>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                {config.columns.map((column, index) => (
-                  <th key={column} className={index === 0 ? 'py-2 pr-3 text-left font-medium' : 'px-3 py-2 text-right font-medium'}>{column}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-              {yearly.map((row) => (
-                <tr key={row.year}>
-                  <td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">{row.is_partial ? `${row.year} partial` : row.year}</td>
-                  {type === 'PRIMARY' ? (
-                    <>
-                      <td className="px-3 py-2 text-right">{fmt(row.taxes_paid || row.property_tax || 0)}</td>
-                      <td className="px-3 py-2 text-right">{fmt(row.interest_paid || 0)}</td>
-                      <td className="px-3 py-2 text-right">{fmt(row.interest_paid || 0)}</td>
-                      <td className="px-3 py-2 text-right">{fmt(row.loan_balance || row.balance || 0)}</td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-3 py-2 text-right text-green-600">{fmt(row.rental_income || 0)}</td>
-                      <td className="px-3 py-2 text-right">{fmt(row.operating_expenses || 0)}</td>
-                      <td className="px-3 py-2 text-right">{fmt(row.interest_paid || 0)}</td>
-                      <td className="px-3 py-2 text-right text-purple-600">{fmt(row.depreciation || 0)}</td>
-                      <td className={(row.taxable_income || 0) < 0 ? 'px-3 py-2 text-right font-semibold text-red-600' : 'px-3 py-2 text-right font-semibold text-green-600'}>{fmt(row.taxable_income || 0)}</td>
-                    </>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+<DataTable
+columns={type === 'PRIMARY' ? [
+{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year} partial` : row.year },
+{ id: 'property_tax', header: 'Property Tax', align: 'right', sortValue: (row) => row.taxes_paid || row.property_tax || 0, render: (row) => fmt(row.taxes_paid || row.property_tax || 0) },
+{ id: 'mortgage_interest', header: 'Mortgage Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
+{ id: 'deductible_interest', header: 'Deductible Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
+{ id: 'loan_balance', header: 'Loan Balance', align: 'right', sortValue: (row) => row.loan_balance || row.balance || 0, render: (row) => fmt(row.loan_balance || row.balance || 0) },
+] : [
+{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year} partial` : row.year },
+{ id: 'rental_income', header: 'Rental Income', align: 'right', accessor: 'rental_income', cellClassName: 'text-green-600', render: (row) => fmt(row.rental_income || 0) },
+{ id: 'operating_expenses', header: 'Operating Expenses', align: 'right', accessor: 'operating_expenses', render: (row) => fmt(row.operating_expenses || 0) },
+{ id: 'mortgage_interest', header: 'Mortgage Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
+{ id: 'depreciation', header: 'Depreciation', align: 'right', accessor: 'depreciation', cellClassName: 'text-purple-600', render: (row) => fmt(row.depreciation || 0) },
+{ id: 'taxable_income', header: 'Taxable Income', align: 'right', accessor: 'taxable_income', render: (row) => <span className={(row.taxable_income || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>{fmt(row.taxable_income || 0)}</span> },
+]}
+rows={yearly}
+getRowKey={(row) => row.year}
+defaultSort={{ id: 'year', direction: 'asc' }}
+/>
       </div>
 
       {showCompare && comparison ? <TaxComparison comparison={comparison} currentPropId={Number(propId)} /> : null}
@@ -3253,521 +3262,221 @@ function TaxStatusMetric({ metric }) {
   )
 }
 
-// ── Taxes tab (tax-return Schedule E / Schedule A) ──────────────────────────────
-function TaxesTabRaw({ propId, property }) {
-  const [lifetimeRows, setLifetimeRows] = useState([])
-const [taxSummary, setTaxSummary] = useState(null)
+function TaxesTab({ propId }) {
+  const navigate = useNavigate()
+  const [scheduleE, setScheduleE] = useState(null)
+  const [selectedYear, setSelectedYear] = useState(null)
   const [comparison, setComparison] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showCompare, setShowCompare] = useState(false)
-  const [taxHistory, setTaxHistory] = useState({})
-  const [taxSaving, setTaxSaving] = useState(false)
+  const [expandedCurrentYear, setExpandedCurrentYear] = useState(false)
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([propAPI.lifetime(propId), propAPI.taxComparison()])
-      .then(([l, c]) => {
-        setLifetimeRows(l.data?.yearly || [])
-setTaxSummary(l.data?.tax_summary || null)
-        setComparison(c.data)
-        setTaxHistory(parseJsonNumberMap(property?.property_tax_history))
+    Promise.all([propAPI.scheduleE(propId, selectedYear), propAPI.taxComparison()])
+      .then(([scheduleRes, comparisonRes]) => {
+        setScheduleE(scheduleRes.data)
+        setComparison(comparisonRes.data)
+        if (!selectedYear && scheduleRes.data?.selectedYear) {
+          setSelectedYear(scheduleRes.data.selectedYear)
+        }
       })
-      .catch(() => toast.error('Failed to load tax figures'))
+      .catch(() => toast.error('Failed to load Schedule E data'))
       .finally(() => setLoading(false))
-  }, [propId, property?.property_tax_history])
+  }, [propId, selectedYear])
 
   if (loading) return (
-    <div className="flex items-center justify-center h-40">
-      <div className="animate-spin w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full" />
+    <div className="flex h-40 items-center justify-center">
+      <div className="h-6 w-6 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
     </div>
   )
 
-  const isPrimary = (property?.usage_type || '').toLowerCase() === 'primary'
-  const currentYear = new Date().getFullYear()
-  const baseTax = inputNumber(property?.property_tax)
-  const lifetimeByYear = new Map((lifetimeRows || []).map((row) => [Number(row.year), row]))
-  const historyYears = Object.keys(taxHistory).map((year) => Number(year))
-  const defaultYears = Array.from({ length: 5 }, (_, index) => currentYear - 4 + index)
-  const years = [...new Set([...defaultYears, ...historyYears, ...lifetimeByYear.keys()])]
-    .filter(Boolean)
-    .sort((a, b) => a - b)
-
-  const labelSource = (source) => {
-    const normalized = String(source || '').toLowerCase()
-    if (normalized === 'reported' || normalized === '1098' || normalized === 'tax_return' || normalized === 'actual') return 'Reported'
-    if (normalized === 'approx') return 'Approx'
-    if (normalized === 'calculated' || normalized === 'backend_amortization') return 'Calculated'
-    return 'Calculated'
-  }
-
-  const badgeClass = (label) => {
-    if (label === 'Reported') return 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-300 dark:border-green-800'
-    if (label === 'Approx') return 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800'
-    return 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
-  }
-
-  const SourceBadge = ({ source }) => {
-    const label = labelSource(source)
-    return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${badgeClass(label)}`}>{label}</span>
-  }
-
-  const purchaseYear = Number(String(property?.purchase_date || '').match(/\b(19|20)\d{2}\b/)?.[0]) || Math.min(...lifetimeByYear.keys(), currentYear)
-  const rows = years
-    .filter((year) => !purchaseYear || year >= purchaseYear)
-    .map((year) => {
-      const backend = lifetimeByYear.get(year) || {}
-      const loans = backend.loans || []
-      const hasLoanData = loans.length > 0
-      const enteredTax = inputNumber(taxHistory[String(year)])
-      const propertyTax = inputNumber(backend.property_tax ?? backend.taxes_paid) || enteredTax || baseTax
-      const propertyTaxSource = backend.property_tax_source || (enteredTax ? 'reported' : 'approx')
-      const propertyTaxNote = backend.property_tax_note || (enteredTax ? 'Entered property tax amount.' : 'Estimated - same current year (no tax doc on file).')
-      const rentalIncome = inputNumber(backend.rental_income)
-      const operatingExpenses = inputNumber(backend.operating_expenses)
-      const mortgageInterest = hasLoanData ? inputNumber(backend.mortgage_interest ?? backend.interest_paid) : 0
-      const depreciation = isPrimary || backend.usage_status === 'Primary' ? null : inputNumber(backend.depreciation)
-      const netScheduleE = isPrimary ? null : rentalIncome - operatingExpenses - mortgageInterest - inputNumber(depreciation)
-      const yearLabel = String(year) + (backend.is_partial ? (year === currentYear ? ' YTD' : ' partial') : '')
-      return {
-        year,
-        yearLabel,
-        propertyTax,
-        propertyTaxSource,
-        propertyTaxNote,
-        hasLoanData,
-        rentalIncome,
-        operatingExpenses,
-        interest: mortgageInterest,
-        interestSource: hasLoanData ? (backend.interest_source || 'calculated') : null,
-        interestNote: hasLoanData ? (backend.interest_note || 'Calculated from shared loan engine. Fully deductible - rental.') : null,
-        depreciation,
-        netScheduleE,
-        balance: hasLoanData ? inputNumber(backend.loan_balance ?? backend.balance) : null,
-        loans,
-        source: backend.source || 'property records',
-        usageStatus: backend.usage_status || (isPrimary ? 'Primary' : 'Rental'),
-      }
-    })
-
-  const setTaxAmount = (year, value) => {
-    setTaxHistory((current) => ({ ...current, [String(year)]: value }))
-  }
-
-  const saveTaxHistory = async () => {
-    setTaxSaving(true)
-    try {
-      const cleaned = Object.fromEntries(
-        Object.entries(taxHistory)
-          .map(([year, amount]) => [year, inputNumber(amount)])
-          .filter(([year, amount]) => /^\d{4}$/.test(String(year)) && amount > 0)
-      )
-      const latestYear = Object.keys(cleaned).map(Number).sort((a, b) => b - a)[0]
-      await propAPI.update(propId, {
-        ...property,
-        property_tax_history: JSON.stringify(cleaned),
-        property_tax: latestYear ? cleaned[String(latestYear)] : baseTax,
-      })
-      setTaxHistory(cleaned)
-      toast.success('Property tax history saved')
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to save property tax history')
-    } finally {
-      setTaxSaving(false)
-    }
-  }
-
-  const exportCSV = () => {
-    const headers = isPrimary
-      ? ['Year', 'Property Tax', 'Property Tax Source', 'Mortgage Interest', 'Interest Source', 'Loan Balance']
-      : ['Year', 'Rental Income', 'Operating Expenses', 'Mortgage Interest', 'Depreciation', 'Net Schedule E', 'Loan Balance']
-    const lines = [
-      headers.join(','),
-      ...rows.map((row) => (isPrimary
-        ? [row.year, row.propertyTax, labelSource(row.propertyTaxSource), row.hasLoanData ? row.interest : '', row.hasLoanData ? labelSource(row.interestSource) : '', row.hasLoanData ? row.balance : '']
-        : [row.year, row.rentalIncome, row.operatingExpenses, row.interest, row.depreciation ?? '', row.netScheduleE, row.balance ?? '']
-      ).join(',')),
-    ]
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'tax_figures_' + (propertyLabel(property).replace(/\s+/g, '_') || propId) + '.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+  const topStrip = scheduleE?.topStrip || {}
+  const summary = scheduleE?.summary || {}
+  const scheduleLines = scheduleE?.lines || []
+  const historyRows = scheduleE?.history || []
+  const availableYears = scheduleE?.availableYears || []
+  const currentYearBreakdown = scheduleE?.currentYearBreakdown
+  const statusClass = (status) => {
+    if (status === 'Match') return 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+    if (status === 'Delta') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300'
+    return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
   }
 
   return (
     <div className="space-y-6">
       <div className="card">
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Tax Return Figures</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              {isPrimary ? 'Primary residence: deductible mortgage interest and property tax.' : 'Rental property: Schedule E figures when available.'}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={exportCSV} className="btn-secondary text-sm flex items-center gap-1.5">
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </button>
-            <button onClick={() => setShowCompare((s) => !s)} className="btn-secondary text-sm">
-              {showCompare ? 'Hide comparison' : 'Compare all properties'}
-            </button>
-          </div>
-        </div>
-
-        {!isPrimary && taxSummary?.current ? (() => {
-          const current = taxSummary.current
-          const lifetime = taxSummary.lifetime || {}
-          return (
-            <div className="mb-4 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Schedule E - {taxSummary.current_year}</h4>
-                <span className="text-xs text-gray-500 dark:text-gray-400">{taxSummary.notes?.current_year_policy}</span>
-              </div>
-              <div className="grid gap-4 md:grid-cols-4">
-                <div className="rounded-lg bg-purple-50 p-4 dark:bg-purple-900/20">
-                  <p className="text-xs font-medium uppercase tracking-wide text-purple-700 dark:text-purple-300">Net Sch E</p>
-                  <p className={current.net_schedule_e < 0 ? 'mt-1 text-2xl font-bold text-red-600' : 'mt-1 text-2xl font-bold text-green-600'}>{fmt(current.net_schedule_e)}</p>
-                  <p className="mt-1 text-xs text-purple-700 dark:text-purple-300">Taxable rental result flowing to 1040</p>
-                </div>
-                <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50"><p className="text-xs text-gray-500 dark:text-gray-400">Rental income</p><p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(current.rental_income)}</p></div>
-                <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50"><p className="text-xs text-gray-500 dark:text-gray-400">Mortgage interest</p><p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(current.mortgage_interest)}</p><p className="text-xs text-gray-500">Fully deductible - rental</p></div>
-                <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50"><p className="text-xs text-gray-500 dark:text-gray-400">Depreciation</p><p className="mt-1 text-xl font-bold text-purple-600">{current.depreciation == null ? 'N/A' : fmt(current.depreciation)}</p><p className="text-xs text-gray-500">Non-cash Sch E line 18</p></div>
-              </div>
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700"><p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Lifetime Net Sch E</p><p className={(lifetime.net_schedule_e || 0) < 0 ? 'mt-1 text-xl font-bold text-red-600' : 'mt-1 text-xl font-bold text-green-600'}>{fmt(lifetime.net_schedule_e)}</p><p className="text-xs text-gray-500">Cumulative rental gain/loss to date</p></div>
-                <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700"><p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Accumulated depreciation</p><p className="mt-1 text-xl font-bold text-purple-600">{fmt(lifetime.accumulated_depreciation)}</p><p className="text-xs text-gray-500">Basis reduction / recapture tracker</p></div>
-                <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700"><p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Suspended losses</p><p className="mt-1 text-xl font-bold text-gray-900 dark:text-white">{fmt(lifetime.suspended_loss)}</p><p className="text-xs text-gray-500">Upload 8582 to report carryforward</p></div>
-              </div>
-              {current.passive_loss_flag ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">Passive-loss check: loss shown for {taxSummary.current_year}. If MAGI is above $150K, losses may be suspended on Form 8582. Upload 1040 / Schedule E / 8582 to calculate allowed vs suspended.</div> : null}
-            </div>
-          )
-        })() : null}
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 dark:border-gray-700">
-                <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Year</th>
-                {isPrimary ? (
-                  <>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Property Tax</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Mortgage Interest</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Loan Balance</th>
-                  </>
-                ) : (
-                  <>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Rental income</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Op ex</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Mortgage interest</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Depreciation</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Net Sch E</th>
-                  </>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-              {rows.map((row, index) => (
-                <tr key={row.year} className={index % 2 === 0 ? 'bg-white dark:bg-gray-800' : 'bg-gray-50 dark:bg-gray-700/50'}>
-                  <td className="py-3 px-3 font-medium text-gray-900 dark:text-white">{row.yearLabel || row.year}</td>
-                  {isPrimary ? (
-                    <>
-                      <td className="py-3 px-3 text-right"><div className="flex flex-col items-end gap-1"><span>{fmt(row.propertyTax)}</span><span className="inline-flex items-center gap-1"><SourceBadge source={row.propertyTaxSource} />{labelSource(row.propertyTaxSource) === 'Approx' ? <Info className="w-3.5 h-3.5 text-amber-500" title={row.propertyTaxNote} /> : null}</span></div></td>
-                      <td className="py-3 px-3 text-right">{row.hasLoanData ? fmt(row.interest) : <span className="text-gray-400 dark:text-gray-500">—</span>}</td>
-                      <td className="py-3 px-3 text-right">{row.hasLoanData ? fmt(row.balance) : <span className="text-gray-400 dark:text-gray-500">—</span>}</td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="py-3 px-3 text-right text-gray-800 dark:text-gray-200">{fmt(row.rentalIncome)}</td>
-                      <td className="py-3 px-3 text-right text-gray-800 dark:text-gray-200">{fmt(row.operatingExpenses)}</td>
-                      <td className="py-3 px-3 text-right text-gray-800 dark:text-gray-200">{fmt(row.interest)}</td>
-                      <td className="py-3 px-3 text-right text-purple-600">{row.depreciation == null ? 'N/A' : fmt(row.depreciation)} <span className="block text-[10px] text-gray-400">non-cash</span></td>
-                      <td className={row.netScheduleE < 0 ? 'py-3 px-3 text-right font-semibold text-red-600' : 'py-3 px-3 text-right font-semibold text-green-600'}>{fmt(row.netScheduleE)}</td>
-                    </>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-          {isPrimary ? 'Primary residence tax model applies mortgage-interest and SALT limits.' : 'Rental Schedule E model: mortgage interest and property tax are fully deductible rental expenses; principal is excluded and shown on Loans. Figures are calculated from the shared engine unless uploaded 1040 / Schedule E marks them Reported.'}
-        </p>
-      </div>
-
-      <div className="card">
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Property Tax Raw Data</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Enter actual tax amounts when known; blank years use the current property tax as an approximation.</p>
-          </div>
-          <button onClick={saveTaxHistory} disabled={taxSaving} className="btn-primary text-sm">
-            {taxSaving ? 'Saving...' : 'Save Taxes'}
-          </button>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {years.map((year) => (
-            <label key={year} className="block">
-              <span className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{year}</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="input w-full"
-                value={taxHistory[String(year)] ?? ''}
-                onChange={(event) => setTaxAmount(year, event.target.value.replace(/[^0-9.]/g, ''))}
-                placeholder={baseTax ? String(baseTax) : '0'}
-              />
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {showCompare && comparison && (
-        <TaxComparison comparison={comparison} currentPropId={Number(propId)} />
-      )}
-    </div>
-  )
-}
-
-function TaxesTab({ propId, property }) {
-  const [entries, setEntries] = useState(null)
-  const [lifetimeRows, setLifetimeRows] = useState([])
-  const [comparison, setComparison] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [showCompare, setShowCompare] = useState(false)
-  const [taxHistory, setTaxHistory] = useState({})
-  const [taxSaving, setTaxSaving] = useState(false)
-
-  useEffect(() => {
-    setLoading(true)
-    Promise.all([propAPI.taxEntries(propId), propAPI.taxComparison(), propAPI.lifetime(propId)])
-      .then(([e, c, l]) => {
-      setEntries(e.data)
-      setComparison(c.data)
-      setLifetimeRows(l.data?.yearly || [])
-      setTaxHistory(parseJsonNumberMap(property?.property_tax_history))
-    })
-      .catch(() => toast.error('Failed to load tax return data'))
-      .finally(() => setLoading(false))
-  }, [propId, property?.property_tax_history])
-
-  if (loading) return (
-    <div className="flex items-center justify-center h-40">
-      <div className="animate-spin w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full" />
-    </div>
-  )
-
-  const isPrimary = (property?.usage_type || '').toLowerCase() === 'primary'
-  const entriesByYear = new Map((entries || []).map((entry) => [Number(entry.tax_year), entry]))
-  const lifetimeByYear = new Map((lifetimeRows || []).map((row) => [Number(row.year), row]))
-  const historyYears = Object.keys(taxHistory).map((year) => Number(year))
-  const currentYear = new Date().getFullYear()
-  const defaultYears = Array.from({ length: 5 }, (_, index) => currentYear - 4 + index)
-  const availableYears = [...new Set([...entriesByYear.keys(), ...lifetimeByYear.keys(), ...historyYears, ...defaultYears])]
-    .filter(Boolean)
-    .sort((a, b) => a - b)
-
-  // Sort ascending by year so cumulative runs forward
-  const sorted = availableYears.map((year) => {
-    const filed = entriesByYear.get(year)
-    if (filed) {
-      return { ...filed, status: 'filed', status_label: '1040 filed' }
-    }
-    const estimate = lifetimeByYear.get(year) || {}
-    return {
-      id: `estimate-${year}`,
-      tax_year: year,
-      property_kind: isPrimary ? 'primary' : 'rental',
-      rents_received: estimate.rental_income || 0,
-      mortgage_interest: estimate.interest_paid || 0,
-      property_taxes: estimate.taxes_paid || 0,
-      depreciation: estimate.depreciation || 0,
-      total_expenses: estimate.operating_expenses || 0,
-      net_income: estimate.taxable_income ?? estimate.cash_flow ?? 0,
-      cumulative_net: 0,
-      status: 'not_filed',
-      status_label: 'Taxes yet to be filed',
-      source: estimate.source || 'property records',
-    }
-  })
-  const hasRows = sorted.length > 0
-
-  // Build cumulative net income column
-  let cumulative = 0
-  const rows = sorted.map(e => {
-    cumulative += (e.net_income || 0)
-    return { ...e, cumulative_net: cumulative }
-  })
-
-  const setTaxAmount = (year, value) => {
-    setTaxHistory((current) => ({ ...current, [String(year)]: value }))
-  }
-
-  const saveTaxHistory = async () => {
-    setTaxSaving(true)
-    try {
-      const cleaned = Object.fromEntries(
-        Object.entries(taxHistory)
-          .map(([year, amount]) => [year, inputNumber(amount)])
-          .filter(([year, amount]) => /^\d{4}$/.test(String(year)) && amount > 0)
-      )
-      const latestYear = Object.keys(cleaned).map(Number).sort((a, b) => b - a)[0]
-      await propAPI.update(propId, {
-        ...property,
-        property_tax_history: JSON.stringify(cleaned),
-        property_tax: latestYear ? cleaned[String(latestYear)] : property?.property_tax || 0,
-      })
-      setTaxHistory(cleaned)
-      toast.success('Property tax history saved')
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Failed to save property tax history')
-    } finally {
-      setTaxSaving(false)
-    }
-  }
-
-  const exportCSV = () => {
-    const headers = ['Year', 'Status', 'Source', 'Rents Received', 'Mortgage Interest', 'Property Taxes',
-      'Depreciation', 'Total Expenses', 'Net Income', 'Cumulative Net Income']
-    const lines = [
-      headers.join(','),
-      ...rows.map(r => [
-        r.tax_year,
-        r.status_label || '',
-        r.source || '',
-        r.rents_received ?? '',
-        r.mortgage_interest ?? '',
-        r.property_taxes ?? '',
-        r.depreciation ?? '',
-        r.total_expenses ?? '',
-        r.net_income ?? '',
-        r.cumulative_net,
-      ].join(','))
-    ]
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `tax_return_${propertyLabel(property).replace(/\s+/g, '_') || propId}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* This property's tax-return figures by year */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Tax Return Figures</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white">Schedule E reconciliation</h3>
             <p className="text-xs text-gray-400 dark:text-gray-500">
-              {isPrimary ? 'Schedule A — primary residence' : 'Schedule E — rental real estate'}
+              Computed PropertyLens lines compared with the filed return for the selected year.
             </p>
           </div>
-          <div className="flex gap-2">
-            {hasRows && (
-              <button onClick={exportCSV} className="btn-secondary text-sm flex items-center gap-1.5">
-                <Download className="w-3.5 h-3.5" /> Export CSV
-              </button>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            {availableYears.length ? (
+              <select
+                value={selectedYear || scheduleE?.selectedYear || ''}
+                onChange={(event) => setSelectedYear(Number(event.target.value))}
+                className="form-input py-2 text-sm"
+                aria-label="Select tax year"
+              >
+                {availableYears.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            ) : null}
+            <button onClick={() => navigate(`/properties/${propId}/documents`)} className="btn-secondary flex items-center gap-1.5 text-sm">
+              <Upload className="h-3.5 w-3.5" /> Upload filed Sch E
+            </button>
             <button onClick={() => setShowCompare((s) => !s)} className="btn-secondary text-sm">
               {showCompare ? 'Hide comparison' : 'Compare all properties'}
             </button>
           </div>
         </div>
 
-        {!hasRows ? (
-          <div className="text-center py-10">
-            <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-400 dark:text-gray-500 text-sm">No tax-return data for this property yet.</p>
-            <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">
-              Upload a 1040 tax return (with Schedule E) or add property records to calculate tax-year estimates.
-            </p>
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricKPI label="Deductible interest" metric={topStrip.deductibleInterest} backendOwned />
+          <MetricKPI label="Property tax" metric={topStrip.propertyTax} backendOwned />
+          <MetricKPI label="Depreciation" metric={topStrip.depreciation} backendOwned />
+          <MetricKPI label="Net Sch E" metric={topStrip.netScheduleE} backendOwned />
+        </div>
+
+        {currentYearBreakdown ? (
+          <div className="mb-5 rounded-lg border border-gray-100 bg-gray-50/50 p-3 dark:border-gray-700 dark:bg-gray-800/30">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="font-medium text-gray-900 dark:text-white">Current-year total</h4>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{currentYearBreakdown.summary}</p>
+              </div>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                As of {formatDate(currentYearBreakdown.asOfDate)}
+              </span>
+            </div>
+            <DataTable
+              columns={[
+                {
+                  id: 'label',
+                  header: 'Line',
+                  sortable: false,
+                  render: (row) => (
+                    <button
+                      type="button"
+                      onClick={() => row.expandable && setExpandedCurrentYear((value) => !value)}
+                      className={`inline-flex items-center gap-2 font-medium ${row.expandable ? 'text-blue-700 hover:text-blue-800 dark:text-blue-300' : 'text-gray-900 dark:text-white'}`}
+                    >
+                      {row.expandable ? (expandedCurrentYear ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />) : <span className="h-4 w-4" />}
+                      <span>{row.label}</span>
+                    </button>
+                  ),
+                },
+                { id: 'source', header: 'Source', sortable: false, render: (row) => row.sourceLabel || '—' },
+                { id: 'rents', header: 'Rents', align: 'right', sortValue: (row) => row.metrics?.rentsReceived?.value ?? 0, render: (row) => row.metrics?.rentsReceived?.display ?? '—' },
+                { id: 'interest', header: 'Interest', align: 'right', sortValue: (row) => row.metrics?.mortgageInterest?.value ?? 0, render: (row) => row.metrics?.mortgageInterest?.display ?? '—' },
+                { id: 'propertyTax', header: 'Property tax', align: 'right', sortValue: (row) => row.metrics?.propertyTax?.value ?? 0, render: (row) => row.metrics?.propertyTax?.display ?? '—' },
+                { id: 'depreciation', header: 'Depreciation', align: 'right', sortValue: (row) => row.metrics?.depreciation?.value ?? 0, render: (row) => row.metrics?.depreciation?.display ?? '—' },
+                { id: 'netScheduleE', header: 'Net Sch E', align: 'right', sortValue: (row) => row.metrics?.netScheduleE?.value ?? 0, render: (row) => row.metrics?.netScheduleE?.display ?? '—' },
+              ]}
+              rows={currentYearBreakdown.rows || []}
+              getRowKey={(row) => row.kind}
+              renderExpandedRow={(row) => (row.expandable && expandedCurrentYear ? (
+                <div className="overflow-auto rounded-lg border border-gray-100 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+                  <table className="min-w-full text-sm">
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                      {(currentYearBreakdown.detailRows || []).map((detail) => (
+                        <tr key={detail.kind}>
+                          <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{detail.label}</td>
+                          <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{detail.sourceLabel}</td>
+                          <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.rentsReceived?.display ?? '—'}</td>
+                          <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.mortgageInterest?.display ?? '—'}</td>
+                          <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.propertyTax?.display ?? '—'}</td>
+                          <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.depreciation?.display ?? '—'}</td>
+                          <td className="px-3 py-2 text-right font-medium text-gray-900 dark:text-white">{detail.metrics?.netScheduleE?.display ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null)}
+              tableWrapperClassName="overflow-auto"
+            />
+          </div>
+        ) : null}
+
+        {!scheduleLines.length ? (
+          <div className="py-10 text-center">
+            <FileText className="mx-auto mb-3 h-10 w-10 text-gray-300" />
+            <p className="text-sm text-gray-400 dark:text-gray-500">No Schedule E data is available yet.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                  <tr className="border-b border-gray-100 dark:border-gray-700">
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Year</th>
-                    <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Status</th>
-                    {!isPrimary && <th className="text-right py-2 px-3 text-xs font-semibold text-green-600">Rents</th>}
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Mortgage Int.</th>
-                    <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Prop. Taxes</th>
-                  <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Depreciation</th>
-                  {!isPrimary && <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Total Exp.</th>}
-                  {!isPrimary && <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500 dark:text-gray-400">Net Income</th>}
-                  {!isPrimary && <th className="text-right py-2 px-3 text-xs font-semibold text-blue-600">Cumulative Net</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((e, i) => (
-                  <tr key={e.id} className={i % 2 === 0 ? 'bg-white dark:bg-gray-800' : 'bg-gray-50 dark:bg-gray-700/50'}>
-                    <td className="py-2 px-3 font-medium text-gray-900 dark:text-white">
-                        {e.tax_year}
-                        <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 capitalize">{e.property_kind}</span>
-                      </td>
-                      <td className="py-2 px-3">
-                        <span className={`text-xs px-2 py-1 rounded-full ${
-                          e.status === 'filed'
-                            ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
-                            : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300'
-                        }`}>
-                          {e.status_label}
-                        </span>
-                        {e.status !== 'filed' && (
-                          <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
-                            From {e.source || 'available records'}
-                          </div>
-                        )}
-                      </td>
-                    {!isPrimary && (
-                      <td className="py-2 px-3 text-right text-green-600 font-medium">{fmt(e.rents_received)}</td>
-                    )}
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(e.mortgage_interest)}</td>
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(e.property_taxes)}</td>
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(e.depreciation)}</td>
-                    {!isPrimary && (
-                      <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(e.total_expenses)}</td>
-                    )}
-                    {!isPrimary && (
-                      <td className={`py-2 px-3 text-right font-medium ${e.net_income >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                        {e.net_income >= 0 ? '+' : ''}{fmt(e.net_income)}
-                      </td>
-                    )}
-                    {!isPrimary && (
-                      <td className={`py-2 px-3 text-right font-semibold ${e.cumulative_net >= 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                        {e.cumulative_net >= 0 ? '+' : ''}{fmt(e.cumulative_net)}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-                {/* Totals row */}
-                {rows.length > 1 && !isPrimary && (
-                  <tr className="border-t-2 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 font-semibold">
-                    <td className="py-2 px-3 text-gray-700 dark:text-gray-300">Total ({rows[0].tax_year}–{rows[rows.length-1].tax_year})</td>
-                    <td className="py-2 px-3 text-gray-500 dark:text-gray-400">Filed + estimated</td>
-                    <td className="py-2 px-3 text-right text-green-600">{fmt(rows.reduce((s,r) => s+(r.rents_received||0), 0))}</td>
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(rows.reduce((s,r) => s+(r.mortgage_interest||0), 0))}</td>
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(rows.reduce((s,r) => s+(r.property_taxes||0), 0))}</td>
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(rows.reduce((s,r) => s+(r.depreciation||0), 0))}</td>
-                    <td className="py-2 px-3 text-right text-gray-700 dark:text-gray-300">{fmt(rows.reduce((s,r) => s+(r.total_expenses||0), 0))}</td>
-                    <td className={`py-2 px-3 text-right ${cumulative >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {cumulative >= 0 ? '+' : ''}{fmt(cumulative)}
-                    </td>
-                    <td className={`py-2 px-3 text-right ${cumulative >= 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                      {cumulative >= 0 ? '+' : ''}{fmt(cumulative)}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={[
+              { id: 'lineNumber', header: 'Line#', align: 'center', accessor: 'lineNumber', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+              { id: 'lineItem', header: 'Line item', accessor: 'lineItem', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+              { id: 'computed', header: 'Computed', align: 'right', sortValue: (row) => row.computed?.value ?? 0, render: (row) => row.computed?.display ?? '—' },
+              { id: 'filed', header: 'Filed', align: 'right', sortValue: (row) => row.filed?.value ?? null, render: (row) => row.filed?.display ?? '—' },
+              { id: 'delta', header: 'Delta', align: 'right', sortValue: (row) => row.delta?.value ?? 0, render: (row) => row.delta?.display ?? '—' },
+              {
+                id: 'status',
+                header: 'Status',
+                sortable: false,
+                render: (row) => <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${statusClass(row.status)}`}>{row.status}</span>,
+              },
+            ]}
+            rows={scheduleLines}
+            getRowKey={(row) => `${row.lineNumber}-${row.key}`}
+            defaultSort={{ id: 'lineNumber', direction: 'asc' }}
+          />
         )}
       </div>
 
-      {/* Cross-property comparison */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="card xl:col-span-1">
+          <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">Filed reconciliation</h3>
+          <dl className="space-y-3 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500 dark:text-gray-400">Lines matched</dt>
+              <dd className="font-medium text-gray-900 dark:text-white">{summary.linesMatched ?? 0} of {summary.linesFiled ?? 0}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500 dark:text-gray-400">Net delta</dt>
+              <dd className="font-medium text-gray-900 dark:text-white">{summary.netDelta?.display ?? '—'}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500 dark:text-gray-400">Filed source</dt>
+              <dd className="max-w-[12rem] truncate text-right font-medium text-gray-900 dark:text-white" title={summary.filedSource || ''}>{summary.filedSource || '—'}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="card xl:col-span-2">
+          <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">Lifetime tax position</h3>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <MetricKPI label="Lifetime net Sch E" metric={summary.lifetimeNetScheduleE} backendOwned />
+            <MetricKPI label="Accumulated depreciation" metric={summary.accumulatedDepreciation} backendOwned />
+            <MetricKPI label="Suspended losses" metric={summary.suspendedLosses} backendOwned />
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="mb-4">
+          <h3 className="font-semibold text-gray-900 dark:text-white">Schedule E history</h3>
+          <p className="text-xs text-gray-400 dark:text-gray-500">Top strip, line table, and history use the same backend Schedule E values.</p>
+        </div>
+        <DataTable
+          columns={[
+            { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+            { id: 'deductibleInterest', header: 'Deductible interest', align: 'right', sortValue: (row) => row.deductibleInterest?.value ?? 0, render: (row) => row.deductibleInterest?.display ?? '—' },
+            { id: 'propertyTax', header: 'Property tax', align: 'right', sortValue: (row) => row.propertyTax?.value ?? 0, render: (row) => row.propertyTax?.display ?? '—' },
+            { id: 'depreciation', header: 'Depreciation', align: 'right', sortValue: (row) => row.depreciation?.value ?? 0, render: (row) => row.depreciation?.display ?? '—' },
+            { id: 'netScheduleE', header: 'Net Sch E', align: 'right', sortValue: (row) => row.netScheduleE?.value ?? 0, render: (row) => row.netScheduleE?.display ?? '—' },
+          ]}
+          rows={historyRows}
+          getRowKey={(row) => row.year}
+          defaultSort={{ id: 'year', direction: 'asc' }}
+        />
+      </div>
+
       {showCompare && comparison && (
         <TaxComparison comparison={comparison} currentPropId={Number(propId)} />
       )}
@@ -3792,46 +3501,50 @@ function TaxComparison({ comparison, currentPropId }) {
       {comparison.years.map((yr) => (
         <div key={yr.tax_year} className="card">
           <h3 className="font-semibold text-gray-900 dark:text-white mb-3">{yr.tax_year} — All Properties</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-gray-700 text-left text-gray-500 dark:text-gray-400">
-                  <th className="pb-2 pr-2 font-medium">Property</th>
-                  {COLS.map(([k, label]) => (
-                    <th key={k} className="pb-2 px-2 font-medium text-right">{label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                {yr.entries.map((e) => (
-                  <tr key={e.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 ${e.property_id === currentPropId ? 'bg-blue-50/50' : ''}`}>
-                    <td className="py-2 pr-2">
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {e.property_name || (e.property_uid ? `ID ${e.property_uid.slice(0, 8).toUpperCase()}` : 'Unlinked property')}
-                    </span>
-                      {e.property_kind === 'primary' && (
-                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600">primary</span>
-                      )}
-                      {!e.property_id && (
-                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:text-gray-400">unlinked</span>
-                      )}
-                    </td>
-                    {COLS.map(([k]) => (
-                      <td key={k} className={`py-2 px-2 text-right ${k === 'net_income' ? (e[k] >= 0 ? 'text-green-600' : 'text-red-500') : ''}`}>
-                        {e[k] ? fmt(e[k]) : '—'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                <tr className="border-t-2 border-gray-200 dark:border-gray-700 font-semibold">
-                  <td className="py-2 pr-2 text-gray-900 dark:text-white">Total</td>
-                  {COLS.map(([k]) => (
-                    <td key={k} className="py-2 px-2 text-right">{fmt(yr.totals[k])}</td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-          </div>
+      <DataTable
+        columns={[
+          {
+            id: 'property',
+            header: 'Property',
+            sortable: false,
+            render: (row) => row.isTotal ? (
+              <span className="font-semibold text-gray-900 dark:text-white">Total</span>
+            ) : (
+              <>
+                <span className="font-medium text-gray-900 dark:text-white">
+                  {row.property_name || (row.property_uid ? `ID ${row.property_uid.slice(0, 8).toUpperCase()}` : 'Unlinked property')}
+                </span>
+                {row.property_kind === 'primary' ? (
+                  <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600">primary</span>
+                ) : null}
+                {!row.property_id ? (
+                  <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 dark:text-gray-400">unlinked</span>
+                ) : null}
+              </>
+            ),
+          },
+          ...COLS.map(([key, label]) => ({
+            id: key,
+            header: label,
+            align: 'right',
+            sortable: false,
+            render: (row) => {
+              const value = row.isTotal ? row.totals?.[key] : row[key]
+              const tone = key === 'net_income' && !row.isTotal
+                ? value >= 0 ? 'text-green-600' : 'text-red-500'
+                : ''
+              return <span className={tone}>{value != null ? fmt(value) : '—'}</span>
+            },
+          })),
+        ]}
+        rows={[...yr.entries, { id: `total-${yr.tax_year}`, isTotal: true, totals: yr.totals }]}
+        getRowKey={(row) => row.id}
+        getRowProps={(row) => ({
+          className: row.isTotal
+            ? 'border-t-2 border-gray-200 bg-gray-50 font-semibold dark:border-gray-700 dark:bg-gray-700/50'
+            : `hover:bg-gray-50 dark:hover:bg-gray-700/50 ${row.property_id === currentPropId ? 'bg-blue-50/50' : ''}`,
+        })}
+      />
         </div>
       ))}
     </div>
@@ -3911,91 +3624,32 @@ function RentalTab({ propId }) {
             No rental periods yet. Add a lease below or upload a tax return to track income per year.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
-                  <th className="pb-2 pr-2 font-medium text-left">Year</th>
-                  <th className="pb-2 px-2 font-medium text-right">Rent Collected</th>
-                  <th className="pb-2 px-2 font-medium text-right">Source</th>
-                  <th className="pb-2 px-2 font-medium text-right">Days Rented<br/><span className="text-gray-400 dark:text-gray-500 font-normal">Sch E line 2</span></th>
-                  <th className="pb-2 px-2 font-medium text-right">Personal Days<br/><span className="text-gray-400 dark:text-gray-500 font-normal">Sch E line 3</span></th>
-                  <th className="pb-2 px-2 font-medium text-right">Occupancy</th>
-                  <th className="pb-2 px-2 font-medium">&nbsp;</th>
-                  <th className="pb-2 pl-2 font-medium text-right">Months / Lease</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-gray-700/50">
-                {allYears.map((yr) => {
-                  const ly   = yearly.find(y => y.year === yr)
-                  const te   = taxByYear[yr]
-                  const isPast    = yr < currentYear
-                  const isCurrent = yr === currentYear
-
-                  // Rent: past years prefer tax return; current uses lease
-                  const rent       = isPast && te?.rents_received ? te.rents_received
-                                   : ly?.income ?? null
-                  const rentSource = isPast && te?.rents_received ? 'tax_return'
-                                   : ly ? 'leases' : 'none'
-                  const daysRented  = te?.days_rented || null
-                  const personalDays = te?.personal_use_days || null
-                  const occupancy  = ly?.occupancy ?? null
-                  const mixedUse   = daysRented != null && personalDays > 0
-
-                  const yearDays = (yr % 4 === 0 && (yr % 100 !== 0 || yr % 400 === 0)) ? 366 : 365
-                  const occupancyFromDays = daysRented != null
-                    ? Math.round(daysRented / yearDays * 100)
-                    : occupancy
-
-                  return (
-                    <tr key={yr} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 ${mixedUse ? 'bg-amber-50 dark:bg-amber-900/20' : ''}`}>
-                      <td className="py-2.5 pr-2 font-semibold text-gray-900 dark:text-white">
-                        {yr}
-                        {isCurrent && <span className="ml-1.5 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">current</span>}
-                        {mixedUse  && <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">mixed use</span>}
-                      </td>
-                      <td className="py-2.5 px-2 text-right font-medium text-green-600">
-                        {rent != null ? fmt(rent) : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="py-2.5 px-2 text-right">
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                          rentSource === 'tax_return' ? 'bg-purple-100 text-purple-700' :
-                          rentSource === 'leases'     ? 'bg-blue-100 text-blue-700' :
-                                                        'bg-gray-100 text-gray-400 dark:text-gray-500'}`}>
-                          {rentSource === 'tax_return' ? 'Sch-E' :
-                           rentSource === 'leases'     ? 'leases' : '—'}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-2 text-right font-medium text-blue-700">
-                        {daysRented != null ? `${daysRented}d` : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="py-2.5 px-2 text-right text-orange-600">
-                        {personalDays != null && personalDays > 0
-                          ? `${personalDays}d`
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="py-2.5 px-2 text-right font-medium">
-                        {occupancyFromDays != null ? fmtPct(occupancyFromDays) : '—'}
-                      </td>
-                      <td className="py-2.5 px-2 w-32">
-                        {occupancyFromDays != null && (
-                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${
-                              occupancyFromDays >= 95 ? 'bg-green-500' :
-                              occupancyFromDays >= 70 ? 'bg-amber-400' : 'bg-red-400'}`}
-                              style={{ width: `${Math.min(occupancyFromDays, 100)}%` }} />
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-2.5 pl-2 text-right text-gray-500 dark:text-gray-400 text-xs">
-                        {ly ? `${ly.occupied_months}/${ly.months_elapsed} mo` : '—'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+<DataTable
+columns={[
+{ id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+{ id: 'rent', header: 'Rent Collected', align: 'right', accessor: 'rent', cellClassName: 'font-medium text-green-600', render: (row) => row.rent != null ? fmt(row.rent) : <span className="text-gray-300">—</span> },
+{ id: 'source', header: 'Source', align: 'right', sortable: false, render: (row) => <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${row.rentSource === 'tax_return' ? 'bg-purple-100 text-purple-700' : row.rentSource === 'leases' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400 dark:text-gray-500'}`}>{row.rentSource === 'tax_return' ? 'Sch-E' : row.rentSource === 'leases' ? 'leases' : '—'}</span> },
+{ id: 'days_rented', header: 'Days Rented', align: 'right', accessor: 'daysRented', cellClassName: 'font-medium text-blue-700', render: (row) => row.daysRented != null ? `${row.daysRented}d` : <span className="text-gray-300">—</span> },
+{ id: 'personal_days', header: 'Personal Days', align: 'right', accessor: 'personalDays', cellClassName: 'text-orange-600', render: (row) => row.personalDays != null && row.personalDays > 0 ? `${row.personalDays}d` : <span className="text-gray-300">—</span> },
+{ id: 'occupancy', header: 'Occupancy', align: 'right', accessor: 'occupancyFromDays', cellClassName: 'font-medium', render: (row) => row.occupancyFromDays != null ? fmtPct(row.occupancyFromDays) : '—' },
+{ id: 'occupancy_bar', header: '', sortable: false, render: (row) => row.occupancyFromDays != null ? <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${row.occupancyFromDays >= 95 ? 'bg-green-500' : row.occupancyFromDays >= 70 ? 'bg-blue-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, row.occupancyFromDays)}%` }} /></div> : null },
+{ id: 'lease_summary', header: 'Months / Lease', align: 'right', sortable: false, render: (row) => <div className="text-right text-xs text-gray-500 dark:text-gray-400">{row.leaseSummary}</div> },
+]}
+rows={allYears.map((yr) => {
+const tax = taxByYear.get(yr)
+const leasePeriods = periodsByYear.get(yr) || []
+const rent = tax?.rents_received ?? leasePeriods.reduce((sum, p) => sum + (p.rent || p.monthly_rent || 0) * (p.months || 0), 0)
+const rentSource = tax?.rents_received != null ? 'tax_return' : leasePeriods.length ? 'leases' : null
+const daysRented = tax?.days_rented ?? tax?.fair_rental_days
+const personalDays = tax?.personal_use_days
+const yearDays = yr % 4 === 0 && (yr % 100 !== 0 || yr % 400 === 0) ? 366 : 365
+const occupancyFromDays = daysRented != null ? Math.round(daysRented / yearDays * 100) : null
+const leaseSummary = leasePeriods.length ? `${leasePeriods.length} period${leasePeriods.length === 1 ? '' : 's'}` : '—'
+return { year: yr, rent, rentSource, daysRented, personalDays, occupancyFromDays, leaseSummary }
+})}
+getRowKey={(row) => row.year}
+defaultSort={{ id: 'year', direction: 'asc' }}
+/>
         )}
         <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-400 dark:text-gray-500">
           <span><span className="inline-block w-2 h-2 rounded bg-purple-400 mr-1" />Sch-E = income / days from uploaded tax return</span>
@@ -4178,649 +3832,364 @@ function RentalForm({ propId, period, onClose, onSaved }) {
   )
 }
 
-// ── Summary / Lifetime tab ─────────────────────────────────────────────────────
-// ── RawDataTab ────────────────────────────────────────────────────────────────
-// Pulls every raw data point from backend and presents them in a year-by-year
-// cross-verification grid, flagging mismatches between sources.
+// Legacy RawDataTab verification grid removed. The active Verify tab now renders backend-owned verification DTOs.
 
-function RawDataTab({ propId, prop }) {
-  const [data, setData]       = useState(null)
-  const [lifetimeData, setLifetimeData] = useState(null)
+function rawDataValueText(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return '—'
+  }
+}
+
+function rawDataRows(payload) {
+  if (!payload) return []
+  const rows = []
+  const addRow = (source, year, field, value, detail = {}) => {
+    if (field === 'id' || field === 'record_uuid' || field === 'internal_source_key' || field === 'document_id') return
+    rows.push({
+      id: `${source}-${year || 'na'}-${field}-${rows.length}`,
+      source,
+      year: year || null,
+      field,
+      value,
+      valueDisplay: rawDataValueText(value),
+      document: detail.document || detail.document_name || detail.filename || '—',
+    })
+  }
+
+  ;(payload.tax_entries || []).forEach((entry) => {
+    Object.entries(entry).forEach(([field, value]) => {
+      addRow(entry.source_type || 'Tax Return / Schedule E', entry.tax_year, field, value, entry)
+    })
+  })
+
+  Object.entries(payload.docs_1098 || {}).forEach(([year, value]) => addRow('Form 1098', year, 'mortgage_interest', value))
+  ;(payload.docs_1098_detail || []).forEach((entry) => {
+    Object.entries(entry).forEach(([field, value]) => {
+      addRow('Form 1098 detail', entry.year, field, value, { document: entry.filename })
+    })
+  })
+  Object.entries(payload.docs_balance || {}).forEach(([year, value]) => addRow('Form 1098', year, 'box_2_balance', value))
+  Object.entries(payload.stmt_annual || {}).forEach(([year, values]) => {
+    Object.entries(values || {}).forEach(([field, value]) => addRow('Mortgage statements', year, field, value))
+  })
+  Object.entries(payload.tax_docs || {}).forEach(([year, value]) => addRow('Property tax documents', year, 'property_tax', value))
+  Object.entries(payload.lease_rent || {}).forEach(([year, values]) => {
+    Object.entries(values || {}).forEach(([field, value]) => addRow('Lease records', year, field, value))
+  })
+  ;(payload.snapshots || []).forEach((snapshot) => {
+    Object.entries(snapshot).forEach(([field, value]) => {
+      addRow('Mortgage statement snapshot', snapshot.year, field, value)
+    })
+  })
+  ;(payload.loans || []).forEach((loan) => {
+    Object.entries(loan).forEach(([field, value]) => {
+      addRow('Loan record', null, field, value, { document: loan.lender })
+    })
+  })
+  ;(payload.duplicate_validations || []).forEach((validation) => {
+    Object.entries(validation).forEach(([field, value]) => {
+      addRow('Duplicate validation', validation.tax_year, field, value)
+    })
+  })
+  if (payload.irs_annual_depreciation !== undefined) {
+    addRow('IRS depreciation model', null, 'irs_annual_depreciation', payload.irs_annual_depreciation)
+  }
+  return rows
+}
+
+function ExtractedRawDataTab({ propId }) {
+  const [payload, setPayload] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [selYear, setSelYear] = useState('all')
+  const [error, setError] = useState('')
 
   useEffect(() => {
+    let active = true
     setLoading(true)
-    Promise.all([
-      propAPI.rawdata(propId),
-      propAPI.lifetime(propId),
-    ])
-      .then(([raw, lifetime]) => {
-        setData(raw.data)
-        setLifetimeData(lifetime.data)
+    setError('')
+    propAPI.rawdata(propId)
+      .then((resp) => {
+        if (active) setPayload(resp.data || {})
       })
-      .catch(() => toast.error('Failed to load verification data'))
-      .finally(() => setLoading(false))
+      .catch((err) => {
+        if (!active) return
+        setError(err.response?.data?.detail?.message || err.response?.data?.detail || err.message || 'Raw data is unavailable.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => { active = false }
   }, [propId])
 
-  if (loading) return (
-    <div className="flex items-center justify-center h-40">
-      <div className="animate-spin w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full" />
-    </div>
-  )
-  if (!data) return null
-
-  const { tax_entries, docs_1098, docs_1098_detail, docs_balance, docs_balance_logic = {},
-          stmt_annual, tax_docs, lease_rent, irs_annual_depreciation,
-          snapshots, loans } = data
-  const lifetime = lifetimeData?.lifetime || {}
-  const yearly = lifetimeData?.yearly || []
- const principalTopupPaid = lifetime.total_principal_topup_paid ?? lifetime.principal_topup_paid
-  const topupRows = yearly.filter(y => (y.principal_topup_paid || 0) > 0)
-  const expectedPrincipalPaid = lifetime.total_expected_principal_paid ?? lifetime.expected_principal_paid
-  const scheduledLoanBalance = lifetime.scheduled_loan_balance
-
-  // Build sorted set of all years across all sources
-  const allYears = Array.from(new Set([
-    ...tax_entries.map(e => e.tax_year),
-    ...Object.keys(docs_1098).map(Number),
-    ...Object.keys(docs_balance).map(Number),
-    ...Object.keys(stmt_annual).map(Number),
-    ...Object.keys(lease_rent).map(Number),
-    ...Object.keys(tax_docs).map(Number),
-  ])).sort((a, b) => b - a)
-
-  const years = selYear === 'all' ? allYears : [Number(selYear)]
-
-  // Tax entry lookup by year
-  const taxByYear = Object.fromEntries(tax_entries.map(e => [e.tax_year, e]))
-
-  // ── Discrepancy detection ───────────────────────────────────────────────────
-  const THRESH = 0.05  // 5% tolerance before flagging
-
-  function discLevel(a, b) {
-    if (a == null || b == null) return 'none'
-    if (a === 0 && b === 0) return 'none'
-    const base = Math.max(Math.abs(a), Math.abs(b), 1)
-    const diff = Math.abs(a - b) / base
-    if (diff > 0.20) return 'high'
-    if (diff > THRESH) return 'low'
-    return 'none'
-  }
-
-  const DISC_STYLE = {
-    none: '',
-    low:  'bg-yellow-50 dark:bg-yellow-900/20',
-    high: 'bg-red-50 dark:bg-red-900/20',
-  }
-  const DISC_TEXT = {
-    none: 'text-gray-700 dark:text-gray-300',
-    low:  'text-yellow-800 dark:text-yellow-300 font-medium',
-    high: 'text-red-700 dark:text-red-400 font-bold',
-  }
-  const DISC_BADGE = {
-    none: null,
-    low:  <span className="ml-1 text-xs text-yellow-600 font-normal">⚠ differs</span>,
-    high: <span className="ml-1 text-xs text-red-600 font-normal">❌ mismatch</span>,
-  }
-
-  // ── Cell renderer ─────────────────────────────────────────────────────────
-  function Val({ v, disc = 'none', na = '—' }) {
-    if (v == null || v === 0) return <span className="text-gray-300">{na}</span>
+  if (loading) {
     return (
-      <span className={DISC_TEXT[disc]}>
-        {fmt(v)}{DISC_BADGE[disc]}
-      </span>
+      <div className="card">
+        <div className="h-5 w-32 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="mt-4 h-48 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+      </div>
     )
   }
 
-  // ── Section: Rental Income ───────────────────────────────────────────────
-  function RentSection() {
+  if (error) {
     return (
-      <Section icon="🏠" title="Rental Income & Days" subtitle="What rent did the property earn, and for how many days was it rented each year?">
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2 w-16">Year</th>
-            <th className="text-right py-2">Sch E Rent<br/><span className="font-normal">Tax Return</span></th>
-            <th className="text-right py-2">Lease Rent<br/><span className="font-normal">Rental tab</span></th>
-            <th className="text-right py-2">Days Rented<br/><span className="font-normal">Sch E line 2</span></th>
-            <th className="text-right py-2">Personal Days<br/><span className="font-normal">Sch E line 3</span></th>
-            <th className="text-right py-2">Lease Days<br/><span className="font-normal">from leases</span></th>
-            <th className="text-right py-2">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {years.map(yr => {
-            const te  = taxByYear[yr]
-            const lr  = lease_rent[yr]
-            const taxRent    = te?.rents_received || null
-            const leaseRent  = lr?.income || null
-            const daysRented = te?.days_rented || null
-            const persUse    = te?.personal_use_days || null
-            const leaseDays  = lr?.lease_days || null
-            const rentDisc   = discLevel(taxRent, leaseRent)
-            const daysDisc   = discLevel(daysRented, leaseDays)
-            const rowDisc    = rentDisc === 'high' || daysDisc === 'high' ? 'high'
-                             : rentDisc === 'low'  || daysDisc === 'low'  ? 'low' : 'none'
-            const totalDays  = daysRented != null && persUse != null ? daysRented + persUse : null
-            return (
-              <tr key={yr} className={`border-b border-gray-100 dark:border-gray-700 text-sm ${DISC_STYLE[rowDisc]}`}>
-                <td className="py-2 font-semibold text-gray-700 dark:text-gray-300">{yr}</td>
-                <td className="py-2 px-2 text-right">
-                  <Val v={taxRent} disc={taxRent && leaseRent ? rentDisc : 'none'} />
-                </td>
-                <td className="py-2 px-2 text-right">
-                  <Val v={leaseRent} disc={taxRent && leaseRent ? rentDisc : 'none'} />
-                </td>
-                <td className="py-2 px-2 text-right font-medium text-blue-700">
-                  {daysRented != null ? `${daysRented}d` : <span className="text-gray-300">—</span>}
-                  {totalDays != null && totalDays < 365 && (
-                    <span className="text-xs text-amber-600 ml-1">(partial yr)</span>
-                  )}
-                </td>
-                <td className="py-2 px-2 text-right text-orange-600">
-                  {persUse != null && persUse > 0 ? `${persUse}d` : <span className="text-gray-300">—</span>}
-                </td>
-                <td className="py-2 px-2 text-right text-gray-500 dark:text-gray-400">
-                  {leaseDays != null ? `~${leaseDays}d` : '—'}
-                  {lr?.occupied_months != null && (
-                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1">({lr.occupied_months} mo)</span>
-                  )}
-                </td>
-                <td className="py-2 pl-2 text-right text-xs">
-                  {rowDisc === 'none' && (taxRent || daysRented) ? <span className="text-green-500">✓</span> : null}
-                  {rentDisc !== 'none' ? <span className={`block ${rentDisc === 'high' ? 'text-red-600' : 'text-yellow-600'}`}>rent {rentDisc === 'high' ? '❌' : '⚠'}</span> : null}
-                  {daysDisc !== 'none' ? <span className={`block ${daysDisc === 'high' ? 'text-red-600' : 'text-yellow-600'}`}>days {daysDisc === 'high' ? '❌' : '⚠'}</span> : null}
-                  {persUse > 0 && <span className="block text-amber-600">mixed use</span>}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </Section>
-    )
-  }
-
-  // ── Section: Mortgage Interest ───────────────────────────────────────────
-  function InterestSection() {
-    return (
-      <Section icon="📄" title="Mortgage Interest" subtitle="Where does the interest number come from — and do sources agree?">
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2 w-16">Year</th>
-            <th className="text-right py-2">Schedule E<br/><span className="font-normal">Tax Return</span></th>
-            <th className="text-right py-2">Form 1098<br/><span className="font-normal">Uploaded doc</span></th>
-            <th className="text-right py-2">Statements<br/><span className="font-normal">annualised</span></th>
-            <th className="text-right py-2">Loan estimate<br/><span className="font-normal">current rate</span></th>
-            <th className="text-right py-2">Discrepancy</th>
-          </tr>
-        </thead>
-        <tbody>
-          {years.map(yr => {
-            const te   = taxByYear[yr]
-            const taxInt  = te?.mortgage_interest || null
-            const docInt  = docs_1098[yr] || null
-            const stmtInt = stmt_annual[yr]?.interest_annual || null
-            const loanInt = loans.reduce((s, l) => s + (l.interest_due || 0), 0) * 12 || null
-
-            // Compare best two available sources
-            const sources = [taxInt, docInt, stmtInt].filter(v => v != null)
-            const maxDisc = sources.length >= 2
-              ? sources.reduce((worst, v, i) =>
-                  sources.slice(i + 1).reduce((w, v2) => {
-                    const d = discLevel(v, v2)
-                    return d === 'high' ? 'high' : w === 'high' ? 'high' : d
-                  }, worst), 'none')
-              : 'none'
-
-            // Priority indicator
-            const used = docInt != null ? '1098' : taxInt != null ? 'Sch-E' : stmtInt != null ? 'stmt' : 'est'
-
-            return (
-              <tr key={yr} className={`border-b border-gray-100 dark:border-gray-700 text-sm ${DISC_STYLE[maxDisc]}`}>
-                <td className="py-2 font-semibold text-gray-700 dark:text-gray-300">{yr}</td>
-                <td className="py-2 px-2 text-right"><Val v={taxInt} /></td>
-                <td className="py-2 px-2 text-right"><Val v={docInt} /></td>
-                <td className="py-2 px-2 text-right text-blue-600"><Val v={stmtInt} /></td>
-                <td className="py-2 px-2 text-right text-gray-400 dark:text-gray-500">
-                  {loanInt ? fmt(loanInt) : '—'}
-                </td>
-                <td className="py-2 pl-2 text-right">
-                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                    used === '1098'  ? 'bg-blue-100 text-blue-700' :
-                    used === 'Sch-E' ? 'bg-purple-100 text-purple-700' :
-                    used === 'stmt'  ? 'bg-gray-100 text-gray-600' :
-                                       'bg-orange-100 text-orange-700'
-                  }`}>
-                    uses {used}
-                  </span>
-                  {maxDisc !== 'none' && (
-                    <span className={`ml-1 text-xs ${maxDisc === 'high' ? 'text-red-600' : 'text-yellow-600'}`}>
-                      {maxDisc === 'high' ? '❌' : '⚠'}
-                    </span>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </Section>
-    )
-  }
-
-  // ── Section: Principal & Balance ─────────────────────────────────────────
-  function PrincipalSection() {
-    return (
-      <Section icon="🏦" title="Principal & Outstanding Balance" subtitle="How fast is the loan being paid down?">
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2 w-16">Year</th>
-            <th className="text-right py-2">Balance (1098)<br/><span className="font-normal">Box 2 Jan-1</span></th>
-            <th className="text-right py-2">Stmt avg balance<br/><span className="font-normal">from statements</span></th>
-            <th className="text-right py-2">Principal paid<br/><span className="font-normal">stmt annualised</span></th>
-            <th className="text-right py-2">Discrepancy</th>
-          </tr>
-        </thead>
-        <tbody>
-          {years.map(yr => {
-            const doc1098Bal  = docs_balance[yr] || null
-            const balanceLogic = docs_balance_logic[yr] || null
-            const selectedDate = balanceLogic?.selected_acquisition_date || balanceLogic?.selected_origination_date
-            const stmtBal     = stmt_annual[yr]?.avg_balance || null
-            const stmtPrin    = stmt_annual[yr]?.principal_annual || null
-            const disc        = discLevel(doc1098Bal, stmtBal)
-            return (
-              <tr key={yr} className={`border-b border-gray-100 dark:border-gray-700 text-sm ${DISC_STYLE[disc]}`}>
-                <td className="py-2 font-semibold text-gray-700 dark:text-gray-300">{yr}</td>
-              <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-400">
-                <Val v={doc1098Bal} />
-                {balanceLogic && (
-                  <div className="mt-1 text-[10px] leading-snug text-gray-400 dark:text-gray-500">
-                    {balanceLogic.mode === 'active_parallel_loans' ? 'summed active loans' : 'latest loan balance'}
-                    {selectedDate ? ` · date ${selectedDate}` : ''}
-                    {balanceLogic.selected_account ? ` · ${balanceLogic.selected_account}` : ''}
-                  </div>
-                )}
-              </td>
-                <td className="py-2 px-2 text-right text-gray-600"><Val v={stmtBal} /></td>
-                <td className="py-2 px-2 text-right text-green-600"><Val v={stmtPrin} /></td>
-                <td className="py-2 pl-2 text-right">
-                  {disc === 'none' && (doc1098Bal || stmtBal) ? <span className="text-green-500 text-xs">✓ ok</span> : null}
-                  {disc !== 'none' ? (
-                    <span className={`text-xs ${disc === 'high' ? 'text-red-600' : 'text-yellow-600'}`}>
-                      {doc1098Bal && stmtBal ? fmt(Math.abs(doc1098Bal - stmtBal)) : ''}
-                      {disc === 'high' ? ' ❌' : ' ⚠'}
-                    </span>
-                  ) : null}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </Section>
-    )
-  }
-
-  // ── Section: Property Taxes ───────────────────────────────────────────────
-  function TaxSection() {
-    return (
-      <Section icon="🧾" title="Property Taxes" subtitle="Three ways property taxes are known — do they agree?">
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2 w-16">Year</th>
-            <th className="text-right py-2">Schedule E<br/><span className="font-normal">Tax Return</span></th>
-            <th className="text-right py-2">Uploaded docs<br/><span className="font-normal">bills / 1098</span></th>
-            <th className="text-right py-2">Static field<br/><span className="font-normal">property card</span></th>
-            <th className="text-right py-2">Discrepancy</th>
-          </tr>
-        </thead>
-        <tbody>
-          {years.map(yr => {
-            const te      = taxByYear[yr]
-            const taxRet  = te?.property_taxes || null
-            const docTax  = tax_docs[yr] || null
-            const staticT = prop.property_tax || null
-
-            const disc = discLevel(taxRet, docTax)
-            return (
-              <tr key={yr} className={`border-b border-gray-100 dark:border-gray-700 text-sm ${DISC_STYLE[disc]}`}>
-                <td className="py-2 font-semibold text-gray-700 dark:text-gray-300">{yr}</td>
-                <td className="py-2 px-2 text-right"><Val v={taxRet} disc={taxRet && docTax ? disc : 'none'} /></td>
-                <td className="py-2 px-2 text-right text-blue-600"><Val v={docTax} disc={taxRet && docTax ? disc : 'none'} /></td>
-                <td className="py-2 px-2 text-right text-gray-400 dark:text-gray-500">{staticT ? fmt(staticT) : '—'}</td>
-                <td className="py-2 pl-2 text-right">
-                  {disc === 'none' && taxRet && docTax ? <span className="text-green-500 text-xs">✓ match</span> : null}
-                  {disc !== 'none' ? (
-                    <span className={`text-xs ${disc === 'high' ? 'text-red-600' : 'text-yellow-600'}`}>
-                      {fmt(Math.abs((taxRet || 0) - (docTax || 0)))} {disc === 'high' ? '❌' : '⚠'}
-                    </span>
-                  ) : null}
-                  {(!taxRet || !docTax) && <span className="text-gray-300 text-xs">only one source</span>}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </Section>
-    )
-  }
-
-  // ── Section: Depreciation ─────────────────────────────────────────────────
-  function DeprSection() {
-    const irsFullYear = irs_annual_depreciation
-    const basis       = (prop.purchase_price || 0) - (prop.land_value || 0)
-    return (
-      <Section icon="📉" title="Depreciation" subtitle="Filed Schedule E vs IRS straight-line. Mixed-use years prorate by days rented.">
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2 w-16">Year</th>
-            <th className="text-right py-2">Days Rented<br/><span className="font-normal">Sch E line 2</span></th>
-            <th className="text-right py-2">IRS Prorated<br/><span className="font-normal">by days rented</span></th>
-            <th className="text-right py-2">Schedule E<br/><span className="font-normal">filed return</span></th>
-            <th className="text-right py-2">Δ vs Filed</th>
-            <th className="text-right py-2">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {years.map(yr => {
-            const te       = taxByYear[yr]
-            const taxDepr  = te?.depreciation || null
-            const dr       = te?.days_rented  || null
-            const pu       = te?.personal_use_days || 0
-            const yearDays = (yr % 4 === 0 && (yr % 100 !== 0 || yr % 400 === 0)) ? 366 : 365
-            // Prorated IRS: if days_rented known, prorate; else full-year
-            const irsProrated = dr != null ? Math.round(irsFullYear * dr / yearDays) : irsFullYear
-            const disc     = discLevel(taxDepr, irsProrated)
-            const diff     = taxDepr != null ? taxDepr - irsProrated : null
-            const mixedUse = dr != null && pu > 0
-            return (
-              <tr key={yr} className={`border-b border-gray-100 dark:border-gray-700 text-sm ${DISC_STYLE[disc]}`}>
-                <td className="py-2 font-semibold text-gray-700 dark:text-gray-300">
-                  {yr}
-                  {mixedUse && <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">mixed</span>}
-                </td>
-                <td className="py-2 px-2 text-right font-medium text-blue-700">
-                  {dr != null ? `${dr}d` : <span className="text-gray-300">—</span>}
-                  {pu > 0 && <span className="text-xs text-orange-500 block">{pu}d personal</span>}
-                </td>
-                <td className="py-2 px-2 text-right text-blue-600">
-                  {fmt(irsProrated)}
-                  {dr != null && dr < yearDays && (
-                    <span className="text-xs text-gray-400 dark:text-gray-500 block">{((dr / yearDays) * 100).toFixed(0)}% of yr</span>
-                  )}
-                </td>
-                <td className="py-2 px-2 text-right"><Val v={taxDepr} /></td>
-                <td className="py-2 px-2 text-right">
-                  {diff != null ? (
-                    <span className={Math.abs(diff) < 200 ? 'text-gray-500 dark:text-gray-400' : diff > 0 ? 'text-orange-600' : 'text-red-600'}>
-                      {diff > 0 ? '+' : ''}{fmt(diff)}
-                    </span>
-                  ) : '—'}
-                </td>
-                <td className="py-2 pl-2 text-right text-xs">
-                  {disc === 'none' && taxDepr    ? <span className="text-green-500">✓ ok</span>       : null}
-                  {disc === 'low'                 ? <span className="text-yellow-600">⚠ small Δ</span> : null}
-                  {disc === 'high'                ? <span className="text-red-600">❌ review</span>    : null}
-                  {!taxDepr                       ? <span className="text-gray-300">no return</span>   : null}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colSpan={6} className="pt-3 text-xs text-gray-400 dark:text-gray-500">
-              Depreciable basis = {fmt(prop.purchase_price)} − {fmt(prop.land_value)} = {fmt(basis)} over {prop.depreciation_years} yrs = {fmt(irsFullYear)}/yr full-year.
-              When Schedule E "Fair Rental Days" &lt; 365, IRS prorates: basis × days / {365}.
-              Mixed-use years (personal use days &gt; 0) further limit the deductible portion.
-            </td>
-          </tr>
-        </tfoot>
-      </Section>
-    )
-  }
-
-  // ── Section: 1098 Document Detail ────────────────────────────────────────
-  function Docs1098Section() {
-    if (!docs_1098_detail.length) return null
-    const dupCount = docs_1098_detail.filter(d => d.is_duplicate).length
-    return (
-      <Section icon="📋" title="Form 1098 — Document Inventory"
-        subtitle={dupCount
-          ? `Every uploaded 1098. ⚠ ${dupCount} duplicate${dupCount > 1 ? 's' : ''} detected — originals used for calculations.`
-          : "Every uploaded 1098, deduplicated by account for each tax year."}>
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-              <th className="text-left py-2">Year</th>
-              <th className="text-left py-2">File</th>
-              <th className="text-left py-2">Account</th>
-              <th className="text-left py-2">Origination</th>
-              <th className="text-left py-2">Acquisition</th>
-              <th className="text-right py-2">Mortgage Interest</th>
-              <th className="text-right py-2">Outstanding Principal</th>
-            <th className="text-left py-2 pl-3">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {[...docs_1098_detail].sort((a, b) => b.year - a.year).map((d, i) => (
-            <tr key={i} className={`border-b text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 ${d.is_duplicate ? 'bg-amber-50 dark:bg-amber-900/20' : ''}`}>
-              <td className="py-2 font-medium text-gray-700 dark:text-gray-300">{d.year}</td>
-            <td className="py-2 px-2 text-blue-600 text-xs truncate max-w-xs" title={d.filename}>{d.filename}</td>
-            <td className="py-2 px-2 text-gray-400 dark:text-gray-500 text-xs">{d.account_number || '—'}</td>
-            <td className="py-2 px-2 text-gray-500 dark:text-gray-400 text-xs">{d.origination_date || '—'}</td>
-                <td className="py-2 px-2 text-gray-500 dark:text-gray-400 text-xs">
-                  {d.mortgage_acquisition_date || <span className="text-gray-300 dark:text-gray-600">Not reported</span>}
-                </td>
-            <td className={`py-2 px-2 text-right ${d.is_duplicate ? 'text-gray-300 line-through' : 'text-orange-600'}`}>
-                {d.mortgage_interest ? fmt(d.mortgage_interest) : '—'}
-              </td>
-              <td className={`py-2 pl-2 text-right ${d.is_duplicate ? 'text-gray-300 line-through' : 'text-blue-600'}`}>
-                {d.outstanding_principal ? fmt(d.outstanding_principal) : '—'}
-              </td>
-              <td className="py-2 pl-3">
-                {d.is_duplicate ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-200 text-amber-800">
-                    ⚠ Duplicate
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-700">
-                    ✓ Original
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </Section>
-    )
-  }
-
-  // ── Section: Mortgage Statement Snapshots ────────────────────────────────
-  function StatementsSection() {
-    if (!snapshots.length) return null
-    const visible = selYear === 'all'
-      ? snapshots
-      : snapshots.filter(s => s.year === Number(selYear))
-    return (
-      <Section icon="📊" title="Mortgage Statement Snapshots" subtitle="Raw point-in-time data extracted from every uploaded statement.">
-        <thead>
-          <tr className="text-xs text-gray-400 dark:text-gray-500 border-b">
-            <th className="text-left py-2">Date</th>
-            <th className="text-right py-2">Balance</th>
-            <th className="text-right py-2">Interest (mo)</th>
-            <th className="text-right py-2">Principal (mo)</th>
-            <th className="text-right py-2">Escrow (mo)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((s, i) => (
-            <tr key={i} className="border-b text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50">
-              <td className="py-1.5 text-gray-600">{s.date}</td>
-              <td className="py-1.5 px-2 text-right">{s.balance ? fmt(s.balance) : '—'}</td>
-              <td className="py-1.5 px-2 text-right text-orange-600">{s.interest ? fmt(s.interest) : '—'}</td>
-              <td className="py-1.5 px-2 text-right text-blue-600">{s.principal ? fmt(s.principal) : '—'}</td>
-              <td className="py-1.5 pl-2 text-right text-gray-400 dark:text-gray-500">{s.escrow ? fmt(s.escrow) : '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </Section>
-    )
-  }
-
-  // ── Master discrepancy summary ────────────────────────────────────────────
-  const discrepancies = []
-  for (const yr of allYears) {
-    const te = taxByYear[yr]
-    const lr = lease_rent[yr]
-    const yearDays = (yr % 4 === 0 && (yr % 100 !== 0 || yr % 400 === 0)) ? 366 : 365
-    // Rent
-    const taxRent  = te?.rents_received || null
-    const lsRent   = lr?.income || null
-    if (discLevel(taxRent, lsRent) !== 'none')
-      discrepancies.push({ yr, field: 'Rent', a: taxRent, b: lsRent, sa: 'Sch-E', sb: 'Leases' })
-    // Days rented
-    const schDays  = te?.days_rented || null
-    const lsDays   = lr?.lease_days  || null
-    if (discLevel(schDays, lsDays) !== 'none')
-      discrepancies.push({ yr, field: 'Days Rented', a: schDays, b: lsDays, sa: 'Sch-E', sb: 'Leases', isDays: true })
-    // Interest
-    const taxInt   = te?.mortgage_interest || null
-    const docInt   = docs_1098[yr] || null
-    const stmtInt  = stmt_annual[yr]?.interest_annual || null
-    if (discLevel(taxInt, docInt) !== 'none')
-      discrepancies.push({ yr, field: 'Interest', a: taxInt, b: docInt, sa: 'Sch-E', sb: '1098' })
-    else if (discLevel(taxInt, stmtInt) !== 'none' && !docInt)
-      discrepancies.push({ yr, field: 'Interest', a: taxInt, b: stmtInt, sa: 'Sch-E', sb: 'Stmt' })
-    // Taxes
-    const taxTax   = te?.property_taxes || null
-    const docTax   = tax_docs[yr] || null
-    if (discLevel(taxTax, docTax) !== 'none')
-      discrepancies.push({ yr, field: 'Property Tax', a: taxTax, b: docTax, sa: 'Sch-E', sb: 'Docs' })
-    // Depreciation — compare filed vs IRS-prorated-by-days
-    const taxDepr  = te?.depreciation || null
-    const dr       = te?.days_rented  || null
-    const irsExp   = dr != null ? Math.round(irs_annual_depreciation * dr / yearDays) : irs_annual_depreciation
-    if (discLevel(taxDepr, irsExp) === 'high')
-      discrepancies.push({ yr, field: 'Depreciation', a: taxDepr, b: irsExp, sa: 'Sch-E', sb: dr != null ? `IRS (${dr}d)` : 'IRS calc' })
-  }
-
-  return (
-    <div className="space-y-6">
-
-      {/* Discrepancy Alert Banner */}
-      {discrepancies.length > 0 && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 dark:bg-red-900/20 px-5 py-4">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-lg">❌</span>
-            <h3 className="font-semibold text-red-800">
-              {discrepancies.length} Data Discrepanc{discrepancies.length === 1 ? 'y' : 'ies'} Found
-            </h3>
-          </div>
-          <div className="space-y-1.5">
-            {discrepancies.map((d, i) => {
-              const disp = (v) => d.isDays ? `${v}d` : fmt(v)
-              return (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  <span className="text-red-400">•</span>
-                  <span className="font-medium text-red-800">{d.yr} {d.field}:</span>
-                  <span className="text-red-700">{d.sa} says {disp(d.a)}</span>
-                  <span className="text-red-400">vs</span>
-                  <span className="text-red-700">{d.sb} says {disp(d.b)}</span>
-                  <span className="text-red-500 ml-auto text-xs">Δ {d.isDays ? `${Math.abs((d.a||0)-(d.b||0))}d` : fmt(Math.abs((d.a || 0) - (d.b || 0)))}</span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* No discrepancies */}
-      {discrepancies.length === 0 && allYears.length > 0 && (
-        <div className="rounded-2xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 px-5 py-4 flex items-center gap-3">
-          <span className="text-2xl">✅</span>
+      <div className="card border-red-200 bg-red-50 dark:border-red-900/70 dark:bg-red-950/20">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600 dark:text-red-300" aria-hidden="true" />
           <div>
-            <div className="font-semibold text-green-800 dark:text-green-300">All sources agree</div>
-            <div className="text-sm text-green-700 dark:text-green-400">No significant discrepancies detected across {allYears.length} years of data.</div>
+            <h2 className="text-lg font-semibold text-red-900 dark:text-red-100">Raw data unavailable</h2>
+            <p className="mt-1 text-sm text-red-700 dark:text-red-200">{rawDataValueText(error)}</p>
           </div>
         </div>
-      )}
+      </div>
+    )
+  }
 
-      {/* Year filter */}
-      {allYears.length > 1 && (
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">Filter by year:</span>
-          <div className="flex gap-1.5 flex-wrap">
-            <button onClick={() => setSelYear('all')}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${selYear === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}>
-              All years
-            </button>
-            {allYears.map(yr => (
-              <button key={yr} onClick={() => setSelYear(String(yr))}
-                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${selYear === String(yr) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}>
-                {yr}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {allYears.length === 0 && (
-        <div className="text-center py-16 text-gray-400 dark:text-gray-500">
-          <div className="text-4xl mb-3">📂</div>
-          <div className="font-medium">No data to verify yet</div>
-          <div className="text-sm mt-1">Upload tax returns, 1098s, or mortgage statements to populate this view.</div>
-        </div>
-      )}
-
-      <RentSection />
-      <InterestSection />
-      <PrincipalSection />
-      <TaxSection />
-      <DeprSection />
-      <Docs1098Section />
-      <StatementsSection />
-
-    </div>
-  )
-}
-
-// Collapsible card wrapper for each verification section
-function Section({ icon, title, subtitle, children }) {
-  const [open, setOpen] = useState(true)
+  const rows = rawDataRows(payload)
   return (
-    <div className="card">
-      <button onClick={() => setOpen(o => !o)}
-        className="flex items-center justify-between w-full text-left group">
+    <section className="card">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-base">{icon}</span>
-            <h3 className="font-semibold text-gray-900 dark:text-white">{title}</h3>
-          </div>
-          {subtitle && <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 ml-6">{subtitle}</p>}
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Raw data</p>
+          <h2 className="mt-1 text-xl font-semibold text-gray-900 dark:text-white">Source records</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Backend-provided document, loan, tax, and lease source values.</p>
         </div>
-        <ChevronDown className={`w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform shrink-0 ml-4 ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm">
-            {children}
-          </table>
-        </div>
-      )}
-    </div>
+        <span className="text-sm text-gray-500 dark:text-gray-400">{rows.length} values</span>
+      </div>
+      <DataTable
+        rows={rows}
+        columns={[
+          { id: 'source', header: 'Source', accessor: 'source', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+          { id: 'year', header: 'Year', align: 'center', accessor: 'year', render: (row) => row.year || '—' },
+          { id: 'field', header: 'Field', accessor: 'field' },
+          { id: 'value', header: 'Value', accessor: 'valueDisplay', render: (row) => <span className="break-all">{row.valueDisplay}</span> },
+          { id: 'document', header: 'Document', accessor: 'document' },
+        ]}
+        getRowKey={(row) => row.id}
+        defaultSort={{ id: 'year', direction: 'asc' }}
+        searchable
+        searchPlaceholder="Search raw data"
+        exportFilename={`property-${propId}-raw-data.csv`}
+        emptyMessage="No raw source records available."
+      />
+    </section>
   )
 }
 
+const DATA_HEALTH_TAB_KEY_MAP = {
+  usage: 'rental',
+}
+
+function displayText(value, fallback = '—') {
+  if (value == null || value === '') return fallback
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  if (typeof value === 'object') {
+    return value.display || value.displayValue || value.label || value.message || value.value || fallback
+  }
+  return fallback
+}
+
+function dataHealthSeverityClasses(severity) {
+  if (severity === 'critical') return 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200'
+  if (severity === 'warning') return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200'
+  if (severity === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/30 dark:text-emerald-200'
+  return 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/70 dark:bg-blue-950/30 dark:text-blue-200'
+}
+
+function DataHealthTab({ propId, onJump }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError('')
+    propAPI.verification(propId)
+      .then((resp) => {
+        if (!active) return
+        setData(resp.data?.dataHealth || null)
+      })
+      .catch((err) => {
+        if (!active) return
+        setError(err.response?.data?.detail?.message || err.response?.data?.detail || err.message || 'Data health is unavailable.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => { active = false }
+  }, [propId])
+
+  const goToIssue = (issue) => {
+    const tabKey = issue?.primaryAction?.tabKey
+    if (!tabKey) return
+    onJump(DATA_HEALTH_TAB_KEY_MAP[tabKey] || tabKey)
+  }
+
+  if (loading) {
+    return (
+      <div className="card">
+        <div className="h-5 w-40 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {[0, 1, 2].map((item) => <div key={item} className="h-20 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />)}
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="card border-red-200 bg-red-50 dark:border-red-900/70 dark:bg-red-950/20">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600 dark:text-red-300" aria-hidden="true" />
+          <div>
+            <h2 className="text-lg font-semibold text-red-900 dark:text-red-100">Data health unavailable</h2>
+            <p className="mt-1 text-sm text-red-700 dark:text-red-200">{displayText(error, 'Unable to load data health right now.')}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!data) {
+    return (
+      <div className="card">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Data health</h2>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Unavailable</p>
+      </div>
+    )
+  }
+
+  const summary = data.summary || {}
+  const groups = data.groups || []
+  const fastestFix = data.fastestFix
+
+  return (
+    <div className="space-y-5">
+      <section className="card">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Data health</p>
+            <h2 className="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{displayText(data.title, 'Data health')}</h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{displayText(data.subtitle, 'See what needs review.')}</p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <div className="text-xs text-gray-500 dark:text-gray-400">Score</div>
+              <div className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{displayText(summary.score)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <div className="text-xs text-gray-500 dark:text-gray-400">Status</div>
+              <div className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{displayText(summary.status)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <div className="text-xs text-gray-500 dark:text-gray-400">Checks</div>
+              <div className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{displayText(summary.checksPassed)}</div>
+            </div>
+          </div>
+        </div>
+
+        {fastestFix && (
+          <div className="mt-5 flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/70 dark:bg-blue-950/30 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-blue-900 dark:text-blue-100">{displayText(fastestFix.fastestFixLabel, 'Fastest fix')}</p>
+              <p className="mt-1 text-sm text-blue-700 dark:text-blue-200">{displayText(fastestFix.summary)}</p>
+            </div>
+            <button type="button" className="btn-secondary w-fit" onClick={() => goToIssue({ primaryAction: fastestFix.primaryAction })}>
+              {displayText(fastestFix.primaryAction?.label, 'Open details')}
+            </button>
+          </div>
+        )}
+      </section>
+
+      {groups.map((group) => (
+        <section key={group.key} className="card">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{displayText(group.label)}</h3>
+            <span className="rounded-full border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              {(group.issues || []).length}
+            </span>
+          </div>
+
+          {(group.issues || []).length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">No items in this group.</p>
+          ) : (
+            <div className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
+              {(group.issues || []).map((issue) => (
+                <article key={issue.id} className="py-4 first:pt-0 last:pb-0">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${dataHealthSeverityClasses(issue.severity)}`}>
+                          {displayText(issue.status)}
+                        </span>
+                        {issue.confidenceLabel && (
+                          <span className="text-xs text-gray-500 dark:text-gray-400">{displayText(issue.confidenceLabel)} confidence</span>
+                        )}
+                      </div>
+                      <h4 className="mt-2 text-base font-semibold text-gray-900 dark:text-white">{displayText(issue.title)}</h4>
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{displayText(issue.summary)}</p>
+                      {issue.shortExplanation && (
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{displayText(issue.shortExplanation)}</p>
+                      )}
+                    </div>
+                    {issue.primaryAction?.label && (
+                      <button type="button" className="btn-secondary w-fit shrink-0" onClick={() => goToIssue(issue)}>
+                        {displayText(issue.primaryAction.label)}
+                        <ChevronRight className="ml-1 h-4 w-4" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-3 grid gap-2 text-sm md:grid-cols-3">
+                    <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800/70">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Expected</div>
+                      <div className="mt-1 font-medium text-gray-900 dark:text-white">{displayText(issue.shouldBe)}</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800/70">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Actual</div>
+                      <div className="mt-1 font-medium text-gray-900 dark:text-white">{displayText(issue.actually)}</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800/70">
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Difference</div>
+                      <div className="mt-1 font-medium text-gray-900 dark:text-white">{displayText(issue.difference)}</div>
+                    </div>
+                  </div>
+
+                  {(issue.recommendedSteps || []).length > 0 && (
+                    <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-gray-500 dark:text-gray-400">
+                      {issue.recommendedSteps.map((step, index) => <li key={`${issue.id}-step-${index}`}>{displayText(step)}</li>)}
+                    </ol>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      ))}
+    </div>
+  )
+}
 
 function SumRow({ label, value, color = 'text-gray-700 dark:text-gray-300', bold, plus }) {
-  const abs = Math.abs(value || 0)
-  const neg = (value || 0) < 0
-  return (
-    <div className={`flex justify-between text-sm ${bold ? 'font-semibold' : ''}`}>
-      <span className="text-gray-500 dark:text-gray-400">{label}</span>
-      <span className={color}>{!neg && plus ? '+' : neg ? '–' : ''}{fmt(abs)}</span>
-    </div>
-  )
+  if (typeof value === 'string') {
+    return (
+      <div className={`flex justify-between text-sm ${bold ? 'font-semibold' : ''}`}>
+        <span className="text-gray-500 dark:text-gray-400">{label}</span>
+        <span className={color}>{plus && !value.startsWith('-') ? '+' : ''}{value}</span>
+      </div>
+    )
+  }
+const abs = Math.abs(value || 0)
+const neg = (value || 0) < 0
+return (
+<div className={`flex justify-between text-sm ${bold ? 'font-semibold' : ''}`}>
+<span className="text-gray-500 dark:text-gray-400">{label}</span>
+<span className={color}>{!neg && plus ? '+' : neg ? '–' : ''}{fmtKMB(abs, { threshold: 1000 })}</span>
+</div>
+)
 }
 
 function AnalysisCard({ label, value, sub, color }) {
@@ -4889,7 +4258,163 @@ function UsageHistoryStrip({ periods = [], usage = {} }) {
   )
 }
 
-function PropertyStorySummary({ propId, prop, metrics }) {
+const equityStoryTone = {
+  acquisition_cash: 'var(--chart-equity-cash)',
+  principal_reduction: 'var(--chart-equity-owner)',
+  remaining_secured_debt: 'var(--chart-equity-debt)',
+  cash: 'var(--chart-equity-cash)',
+  equity: 'var(--chart-equity-owner)',
+  debt: 'var(--chart-equity-debt)',
+  appreciation: 'var(--chart-equity-appreciation)',
+  total: 'var(--chart-equity-total)',
+}
+
+function EquityStoryCharts({ story, onJump }) {
+return (
+<div className="grid items-start gap-4 lg:grid-cols-[minmax(300px,0.36fr)_minmax(620px,0.64fr)]">
+<OwnershipStoryChart ownership={story?.ownership} onJump={onJump} />
+<ValueWaterfallStoryChart waterfall={story?.waterfall} onJump={onJump} />
+</div>
+)
+}
+
+function EquityStorySection({ story, onJump }) {
+return (
+<section className="space-y-3">
+<div>
+<h3 className="text-lg font-semibold text-gray-900 dark:text-white">Equity Story</h3>
+<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">How today’s property value was built and how much you own.</p>
+</div>
+<EquityStoryCharts story={story} onJump={onJump} />
+</section>
+)
+}
+
+function StoryUnavailable({ reason, action, onJump }) {
+  return (
+    <div className="grid min-h-44 place-items-center rounded-lg bg-gray-50 p-4 text-center text-sm text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+      <div>
+        <p>{reason || 'This chart is unavailable.'}</p>
+        {action?.label ? <button type="button" className="btn-secondary mt-3 text-sm" onClick={() => action.tabKey && onJump?.(action.tabKey)}>{action.label}</button> : null}
+      </div>
+    </div>
+  )
+}
+
+function OwnershipStoryChart({ ownership, onJump }) {
+  const segments = ownership?.segments || []
+  const status = ownership?.status
+  if (status === 'negative_equity') {
+    return (
+      <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{ownership.title}</h4>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{ownership.explanation}</p>
+        <div className="mt-4 space-y-2">
+          {(ownership.comparison || []).map((row) => <div key={row.key} className="flex justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800"><span className="text-gray-500 dark:text-gray-400">{row.label}</span><span className={`font-semibold ${row.value < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>{row.display}</span></div>)}
+        </div>
+        {ownership.recommendedAction?.label ? <button type="button" className="btn-secondary mt-4 text-sm" onClick={() => ownership.recommendedAction.tabKey && onJump?.(ownership.recommendedAction.tabKey)}>{ownership.recommendedAction.label}</button> : null}
+      </div>
+    )
+  }
+  if (status !== 'available') {
+    return <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700"><h4 className="text-sm font-semibold text-gray-900 dark:text-white">{ownership?.title || 'Who owns property value today'}</h4><StoryUnavailable reason={ownership?.unavailableReason} action={ownership?.recommendedAction} onJump={onJump} /></div>
+  }
+  let offset = 25
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  return (
+    <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{ownership.title}</h4>
+      <div className="mt-4 flex flex-col items-center gap-4">
+        <div className="relative h-36 w-36 shrink-0">
+          <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90" role="img" aria-label={ownership.explanation || ownership.title}>
+            <circle cx="60" cy="60" r={radius} fill="none" stroke="currentColor" className="text-gray-100 dark:text-gray-800" strokeWidth="18" />
+            {segments.map((segment) => {
+              const length = ((segment.percent || 0) / 100) * circumference
+              const color = equityStoryTone[segment.tone] || equityStoryTone.equity
+              const circle = <circle key={segment.key} cx="60" cy="60" r={radius} fill="none" stroke={color} strokeWidth="18" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} />
+              offset += length
+              return circle
+            })}
+          </svg>
+          <div className="absolute inset-0 grid place-items-center text-center"><div><div className="text-xs text-gray-500 dark:text-gray-400">{ownership.centerLabel?.label || 'Estimated value'}</div><div className="text-sm font-semibold text-gray-900 dark:text-white">{ownership.centerLabel?.display || '—'}</div></div></div>
+        </div>
+        <div className="w-full space-y-2">
+          {segments.map((segment) => <div key={segment.key} className="flex items-center justify-between gap-3 text-sm"><span className="flex items-center gap-2 text-gray-600 dark:text-gray-300"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: equityStoryTone[segment.tone] || equityStoryTone.equity }} />{segment.label}</span><span className="font-semibold text-gray-900 dark:text-white">{segment.display} <span className="text-gray-500 dark:text-gray-400">· {segment.percentDisplay}</span></span></div>)}
+        </div>
+      </div>
+      {ownership.explanation ? <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">{ownership.explanation}</p> : null}
+    </div>
+  )
+}
+
+function wrapWaterfallLabel(label) {
+  const words = String(label || '').split(' ')
+  if (words.length <= 1) return [label]
+  if (words.length === 2) return words
+  return [words.slice(0, -1).join(' '), words.at(-1)]
+}
+
+function ValueWaterfallStoryChart({ waterfall, onJump }) {
+  if (waterfall?.status !== 'available') {
+    return <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700"><h4 className="text-sm font-semibold text-gray-900 dark:text-white">{waterfall?.title || 'Purchase price plus appreciation = today’s value'}</h4><p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{waterfall?.subtitle}</p><StoryUnavailable reason={waterfall?.unavailableReason} action={waterfall?.recommendedAction} onJump={onJump} /></div>
+  }
+  const nodes = waterfall.series || []
+  const chartHeight = 400
+  const chartWidth = 680
+  const left = 58
+  const right = 24
+  const top = 28
+  const bottom = 104
+  const plotHeight = chartHeight - top - bottom
+  const barWidth = 48
+  const gap = 56
+  const maxValue = Math.max(...nodes.map((node) => Math.max(node.startValue ?? node.start ?? 0, node.endValue ?? node.end ?? 0)), 1)
+  const axisMax = maxValue * 1.08
+  const y = (value) => top + plotHeight - ((value || 0) / axisMax) * plotHeight
+  const ticks = [0, axisMax / 2, maxValue]
+  const barCenter = (index) => left + index * (barWidth + gap) + barWidth / 2
+  const barX = (index) => left + index * (barWidth + gap)
+  const nodeById = Object.fromEntries(nodes.map((node, index) => [node.id || node.key, { node, index }]))
+  const srSummary = waterfall.screenReaderSummary || `${waterfall.title}. ${nodes.map((node) => `${node.label}: ${node.fullDisplay || node.display}`).join(', ')}.`
+  return (
+    <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
+      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{waterfall.title}</h4>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{waterfall.subtitle}</p>
+      <p className="sr-only">{srSummary}</p>
+      <div className="mt-4 overflow-x-auto">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[680px]" role="img" aria-label={waterfall.title}>
+          {ticks.map((tick) => <g key={tick}><line x1={left - 6} x2={chartWidth - right} y1={y(tick)} y2={y(tick)} stroke="currentColor" className="text-gray-100 dark:text-gray-800" /><text x={0} y={y(tick) + 4} className="fill-gray-500 text-[11px] dark:fill-gray-400">{fmtKMB(tick)}</text></g>)}
+          {nodes.map((node, index) => {
+            const startValue = node.startValue ?? node.start ?? 0
+            const endValue = node.endValue ?? node.end ?? 0
+            const isTotal = Boolean(node.isTotal ?? node.total)
+            const topY = y(Math.max(startValue, endValue))
+            const bottomY = y(Math.min(startValue, endValue))
+            const x = barX(index)
+            const next = nodes[index + 1]
+            const nextIsTotal = Boolean(next?.isTotal ?? next?.total)
+            const connectorY = y(endValue)
+            const labelLines = wrapWaterfallLabel(node.label)
+            return <g key={node.id || node.key} tabIndex="0" aria-label={`${node.label}. ${node.fullDisplay || node.display}. ${node.tooltip?.role || ''}.`}><title>{`${node.label}\nAmount: ${node.fullDisplay || node.display}\n${isTotal ? 'Current market value' : `Cumulative value after this step: ${node.tooltip?.cumulativeValue || node.fullDisplay || node.display}`}`}</title><rect x={x} y={topY} width={isTotal ? barWidth + 8 : barWidth} height={Math.max(5, bottomY - topY)} rx="3" fill={equityStoryTone[node.semanticType] || equityStoryTone[node.tone] || equityStoryTone.total} /><text x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={topY - 8} textAnchor="middle" className="fill-gray-900 text-[11px] font-semibold dark:fill-white">{node.display}</text>{labelLines.map((line, lineIndex) => <text key={line} x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={chartHeight - 70 + lineIndex * 12} textAnchor="middle" className="fill-gray-500 text-[11px] dark:fill-gray-400">{line}</text>)}{next && !nextIsTotal ? <line x1={x + (isTotal ? barWidth + 8 : barWidth)} x2={barX(index + 1)} y1={connectorY} y2={connectorY} stroke="currentColor" className="text-gray-300 dark:text-gray-600" strokeDasharray="3 3" /> : null}</g>
+          })}
+          {(waterfall.annotations || []).map((annotation) => {
+            const start = nodeById[annotation.startBarId]
+            const end = nodeById[annotation.endBarId]
+            if (!start || !end) return null
+            const x1 = barCenter(start.index)
+            const x2 = barCenter(end.index)
+            const yBase = chartHeight - 30
+            const colorClass = annotation.semanticType === 'appreciation' ? 'fill-amber-600 text-amber-500' : 'fill-gray-500 text-gray-400'
+            return <g key={`${annotation.startBarId}-${annotation.endBarId}`}><path d={`M ${x1} ${yBase - 14} V ${yBase - 4} H ${x2} V ${yBase - 14}`} fill="none" stroke="currentColor" className={annotation.semanticType === 'appreciation' ? 'text-amber-500' : 'text-gray-400'} strokeWidth="1" /><text x={(x1 + x2) / 2} y={yBase + 12} textAnchor="middle" className={`${colorClass} text-[11px]`}>{annotation.label}</text></g>
+          })}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+function PropertyStorySummary({ propId, prop, metrics, metricVault, onJump }) {
   const [data, setData] = useState(null)
   const [summaryView, setSummaryView] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -4920,15 +4445,17 @@ function PropertyStorySummary({ propId, prop, metrics }) {
 
 const { lifetime = {}, yearly = [], usage = {}, usage_periods: usagePeriods = [], summary_metrics: summaryMetrics = {} } = data
 const summaryDtoMetrics = summaryView?.metrics || {}
+const vaultMetrics = metricVault?.metrics || {}
+const equityStory = metricVault?.charts?.equityStory
+const metricDisplay = (metric, fallback = '—') => metric?.displayValue ?? metric?.display ?? fallback
   const propertyKind = (usage.current_type || prop.usage_type || '').toLowerCase() === 'primary' ? 'PRIMARY' : 'RENTAL'
   const config = summaryMetricConfig[propertyKind]
   const latestYear = yearly[yearly.length - 1] || {}
   const marketValue = lifetime.market_value || prop.market_value || 0
-  const loanBalance = lifetime.current_loan_balance || metrics?.total_loan_balance || 0
-  const equity = lifetime.equity ?? Math.max(marketValue - loanBalance, 0)
-  const ownedPct = marketValue > 0 ? (equity / marketValue) * 100 : 0
-  const loanPct = marketValue > 0 ? Math.min(100, Math.max(0, (loanBalance / marketValue) * 100)) : 0
-  const equityPct = Math.min(100, Math.max(0, ownedPct))
+const loanBalance = metrics?.total_loan_balance ?? summaryDtoMetrics.totalDebt?.value ?? lifetime.current_loan_balance ?? 0
+const equity = metrics?.equity ?? summaryDtoMetrics.equity?.value ?? lifetime.equity ?? Math.max(marketValue - loanBalance, 0)
+const ownedPct = marketValue > 0 ? (equity / marketValue) * 100 : 0
+const equityColorClass = 'text-green-600'
 const annualMortgage = (latestYear.interest_paid || 0) + (latestYear.principal_paid || 0)
 const annualTaxes = latestYear.taxes_paid || prop.property_tax || 0
 const monthlyCostToOwn = summaryMetrics.monthly_cost_to_own || 0
@@ -4973,65 +4500,31 @@ const Metric = ({ label, value, sub, color = 'text-gray-900 dark:text-white', so
       <div className="space-y-2">{children}</div>
     </div>
   )
+  const trendRows = metricVault?.yearlyMetrics?.length ? metricVault.yearlyMetrics : yearly
   const TrendTable = () => (
     <div className="card">
       <h3 className="mb-4 font-semibold text-gray-900 dark:text-white">{propertyKind === 'PRIMARY' ? 'Multi-Year Wealth Trend' : 'Multi-Year Income Trend'}</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-xs text-gray-500 dark:text-gray-400">
-              <th className="py-2 text-left font-medium">Year</th>
-              {propertyKind === 'PRIMARY' ? (
-                <>
-                  <th className="px-2 py-2 text-right font-medium">Value</th>
-                  <th className="px-2 py-2 text-right font-medium">Loan Balance</th>
-                  <th className="px-2 py-2 text-right font-medium">Equity</th>
-                  <th className="px-2 py-2 text-right font-medium">Principal</th>
-                  <th className="px-2 py-2 text-right font-medium">2026 Interest/Tax</th>
-                </>
-              ) : (
-                <>
-                  <th className="px-2 py-2 text-right font-medium">Income</th>
-                  <th className="px-2 py-2 text-right font-medium">OpEx</th>
-                  <th className="px-2 py-2 text-right font-medium">NOI</th>
-                  <th className="px-2 py-2 text-right font-medium">Debt Service</th>
-                  <th className="px-2 py-2 text-right font-medium">Cash Flow</th>
-                </>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {yearly.map((y) => {
-              const balance = y.loan_balance ?? y.balance ?? loanBalance
-              const trendEquity = Math.max(0, marketValue - (balance || 0))
-              const debtService = (y.interest_paid || 0) + (y.principal_paid || 0)
-              const trendNoi = (y.rental_income || 0) - (y.operating_expenses || 0)
-              return (
-                <tr key={y.year} className="border-b border-gray-100 dark:border-gray-700/50">
-                  <td className="py-2 font-medium text-gray-900 dark:text-white">{y.is_partial ? `${y.year}*` : y.year}</td>
-                  {propertyKind === 'PRIMARY' ? (
-                    <>
-                      <td className="px-2 py-2 text-right">{fmt(marketValue)}</td>
-                      <td className="px-2 py-2 text-right">{fmt(balance)}</td>
-                      <td className="px-2 py-2 text-right text-green-600">{fmt(trendEquity)}</td>
-                      <td className="px-2 py-2 text-right text-blue-600">{fmt(y.principal_paid || 0)}</td>
-                      <td className="px-2 py-2 text-right text-gray-700 dark:text-gray-300">{fmt((y.interest_paid || 0) + (y.taxes_paid || 0))}</td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="px-2 py-2 text-right text-green-600">{fmt(y.rental_income || 0)}</td>
-                      <td className="px-2 py-2 text-right text-gray-700 dark:text-gray-300">{fmt(y.operating_expenses || 0)}</td>
-                      <td className="px-2 py-2 text-right">{fmt(trendNoi)}</td>
-                      <td className="px-2 py-2 text-right">{fmt(debtService)}</td>
-                      <td className={(y.cash_flow || 0) >= 0 ? 'px-2 py-2 text-right text-green-600' : 'px-2 py-2 text-right text-red-600'}>{fmt(y.cash_flow || 0)}</td>
-                    </>
-                  )}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+<DataTable
+columns={propertyKind === 'PRIMARY' ? [
+{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.isPartial || row.is_partial ? `${row.year}*` : row.year },
+{ id: 'value', header: 'Value', align: 'right', sortValue: () => marketValue, render: (row) => row.marketValueDisplay || fmt(marketValue) },
+{ id: 'loan_balance', header: 'Loan Balance', align: 'right', sortValue: (row) => row.loan_balance ?? row.balance ?? loanBalance, render: (row) => row.loanBalanceDisplay || fmt(row.loan_balance ?? row.balance ?? loanBalance) },
+{ id: 'equity', header: 'Equity', align: 'right', cellClassName: 'text-green-600', sortValue: (row) => Math.max(0, marketValue - ((row.loan_balance ?? row.balance ?? loanBalance) || 0)), render: (row) => row.equityDisplay || fmt(Math.max(0, marketValue - ((row.loan_balance ?? row.balance ?? loanBalance) || 0))) },
+{ id: 'principal', header: 'Principal', align: 'right', accessor: 'principal_paid', cellClassName: 'text-blue-600', render: (row) => row.principalPaidDisplay || fmt(row.principal_paid || 0) },
+{ id: 'interest_tax', header: '2026 Interest/Tax', align: 'right', sortValue: (row) => (row.interest_paid || 0) + (row.taxes_paid || 0), render: (row) => row.interestTaxDisplay || fmt((row.interest_paid || 0) + (row.taxes_paid || 0)) },
+] : [
+{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.isPartial || row.is_partial ? `${row.year}*` : row.year },
+{ id: 'income', header: 'Income', align: 'right', accessor: 'rental_income', cellClassName: 'text-green-600', render: (row) => row.incomeDisplay || fmt(row.rental_income || 0) },
+{ id: 'opex', header: 'OpEx', align: 'right', accessor: 'operating_expenses', render: (row) => row.operatingExpensesDisplay || fmt(row.operating_expenses || 0) },
+{ id: 'noi', header: 'NOI', align: 'right', sortValue: (row) => (row.rental_income || 0) - (row.operating_expenses || 0), render: (row) => row.noiDisplay || fmt((row.rental_income || 0) - (row.operating_expenses || 0)) },
+{ id: 'debt_service', header: 'Debt Service', align: 'right', sortValue: (row) => (row.interest_paid || 0) + (row.principal_paid || 0), render: (row) => row.debtServiceDisplay || fmt((row.interest_paid || 0) + (row.principal_paid || 0)) },
+{ id: 'cash_flow', header: 'Cash Flow', align: 'right', accessor: 'cash_flow', render: (row) => <span className={((row.cashFlow ?? row.cash_flow) || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>{row.cashFlowDisplay || fmt(row.cash_flow || 0)}</span> },
+]}
+rows={trendRows}
+getRowKey={(row) => row.year}
+defaultSort={{ id: 'year', direction: 'asc' }}
+getRowProps={() => ({ className: 'border-b border-gray-100 dark:border-gray-700/50' })}
+/>
     </div>
   )
 
@@ -5042,85 +4535,75 @@ const Metric = ({ label, value, sub, color = 'text-gray-900 dark:text-white', so
           <div className="card">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
-<p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"><MetricLabel label="Equity" metric={summaryDtoMetrics.equity} /></p>
-                <p className="mt-1 text-3xl font-bold text-green-600">{fmt(equity)}</p>
+<p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"><MetricLabel label="Equity" metric={vaultMetrics.equity || summaryDtoMetrics.equity} /></p>
+<p className={`mt-1 text-3xl font-bold ${equityColorClass}`}>{metricDisplay(vaultMetrics.equity || summaryDtoMetrics.equity, fmtKMB(equity))}</p>
                 <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">You own {fmtPct(ownedPct)} of this home</p>
               </div>
               <SourceBadge />
             </div>
-            <div className="mt-5 h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
-              <div className="h-full bg-green-500" style={{ width: `${equityPct}%` }} />
-              {loanPct > 0 ? <div className="-mt-3 h-full bg-gray-300 dark:bg-gray-600" style={{ width: `${loanPct}%`, marginLeft: `${equityPct}%` }} /> : null}
-            </div>
-            <div className="mt-2 flex justify-between text-xs text-gray-500 dark:text-gray-400">
-              <span>Equity {fmt(equity)}</span>
-              <span>Loan {fmt(loanBalance)}</span>
-            </div>
-          </div>
+<EquityStorySection story={equityStory} onJump={onJump} />
+</div>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <Metric label="Wealth built YTD" value={fmt(wealthBuiltYTD)} sub={`${fmt(0)} appreciation · ${fmt(principalYTD)} paydown`} color="text-green-600" />
-            <Metric label="Monthly cost to own" value={fmt(monthlyCostToOwn)} sub="P&I + property tax + insurance / 12" color="text-gray-900 dark:text-white" />
-            <Metric label="Loan-free by" value={payoffYear} sub="From loan amortization maturity dates" />
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Since You Bought">
-              <SumRow label="Purchase price" value={prop.purchase_price || 0} />
-              <SumRow label="Value today" value={marketValue} />
-              <SumRow label={`Appreciation (${fmtPct(appreciationPct)})`} value={appreciationSincePurchase} color="text-green-600" plus />
-            </Panel>
-            <Panel title="Tax Benefit (Annual)">
-              <SumRow label={`${latestYear.year || new Date().getFullYear()} mortgage interest`} value={latestYear.interest_paid || 0} color="text-orange-500" />
-              <SumRow label="Property tax under SALT cap" value={saltDeduction} />
-              <SumRow label="Estimated annual deduction" value={annualTaxBenefit} color="text-green-600" bold />
-            </Panel>
+<div className="grid gap-4 lg:grid-cols-2">
+<Panel title="Since You Bought">
+		              <SumRow label="Purchase price" value={metricDisplay(vaultMetrics.purchasePrice, fmtKMB(prop.purchase_price || 0))} />
+		              <SumRow label="Value today" value={metricDisplay(vaultMetrics.marketValue || summaryDtoMetrics.marketValue, fmtKMB(marketValue))} />
+	              <SumRow label={`Appreciation (${fmtPct(appreciationPct)})`} value={fmtKMB(appreciationSincePurchase)} color="text-green-600" plus />
+	            </Panel>
+<Panel title="Tax Benefit (Annual)">
+	              <SumRow label={`${latestYear.year || new Date().getFullYear()} mortgage interest`} value={fmtKMB(latestYear.interest_paid || 0)} color="text-orange-500" />
+	              <SumRow label="Property tax under SALT cap" value={fmtKMB(saltDeduction)} />
+	              <SumRow label="Estimated annual deduction" value={fmtKMB(annualTaxBenefit)} color="text-green-600" bold />
+	            </Panel>
           </div>
         </>
       ) : (
         <>
-          <div className="card">
-            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-              <div>
-<p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"><MetricLabel label="Monthly Cash Flow" metric={summaryDtoMetrics.monthlyCashFlow} /></p>
-<p className={`mt-1 text-3xl font-bold ${metricToneClass(summaryDtoMetrics.monthlyCashFlow)}`}>{summaryDtoMetrics.monthlyCashFlow?.display || fmt(monthlyCashFlow)}</p> <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{summaryDtoMetrics.annualCashFlow?.display || fmt(annualCashFlow)}/yr</p>
-              </div>
-              <SourceBadge />
-            </div>
-          </div>
+<section className="card">
+<h3 className="mb-4 font-semibold text-gray-900 dark:text-white">Monthly Operating Snapshot</h3>
+<div className="grid gap-4 md:grid-cols-2">
+<div className="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+<p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"><MetricLabel label="Rent per Month" metric={vaultMetrics.rentPerMonth || summaryDtoMetrics.rentPerMonth} /></p>
+<p className="mt-1 text-2xl font-semibold text-gray-900 dark:text-white">{metricDisplay(vaultMetrics.rentPerMonth || summaryDtoMetrics.rentPerMonth, fmt(prop.monthly_rent || 0))}</p>
+<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Current occupied rent</p>
+</div>
+<div className="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+<p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400"><MetricLabel label="Monthly Cash Flow" metric={vaultMetrics.monthlyCashFlow || summaryDtoMetrics.monthlyCashFlow} /></p>
+<p className={`mt-1 text-2xl font-semibold ${metricToneClass(vaultMetrics.monthlyCashFlow || summaryDtoMetrics.monthlyCashFlow)}`}>{metricDisplay(vaultMetrics.monthlyCashFlow || summaryDtoMetrics.monthlyCashFlow, fmt(monthlyCashFlow))}</p>
+<p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{metricDisplay(vaultMetrics.annualCashFlow || summaryDtoMetrics.annualCashFlow, fmt(annualCashFlow))}/year</p>
+</div>
+</div>
+</section>
 
-          <div className="grid gap-4 md:grid-cols-4"> <Metric label="Cash-on-cash return" metric={summaryDtoMetrics.cashOnCashReturn} value={summaryDtoMetrics.cashOnCashReturn?.display || '—'} sub={summaryDtoMetrics.cashOnCashReturn?.hint || 'Annual cash flow / cash invested'} color={metricToneClass(summaryDtoMetrics.cashOnCashReturn)} /> <Metric label="Cap rate" metric={summaryDtoMetrics.capRate} value={summaryDtoMetrics.capRate?.display || fmtPct(capRate)} sub="NOI / market value" />
-            <Metric label="DSCR" metric={summaryDtoMetrics.dscr} value={summaryDtoMetrics.dscr?.display || (dscr ? dscr.toFixed(2) : '—')} sub="NOI / annual debt service" color={metricToneClass(summaryDtoMetrics.dscr)} />
-            <Metric label="Total return YTD" metric={summaryDtoMetrics.totalReturnYtd} value={summaryDtoMetrics.totalReturnYtd?.display || fmt(totalReturnYTD)} sub="Cash flow + principal paydown" color={metricToneClass(summaryDtoMetrics.totalReturnYtd)} />
-          </div>
+<div className="grid gap-4 md:grid-cols-4">
+<MetricCard metric={vaultMetrics.cashOnCashReturn || summaryDtoMetrics.cashOnCashReturn} label="Cash-on-cash return" fallbackValue={summaryDtoMetrics.cashOnCashReturn?.display || '—'} note={(vaultMetrics.cashOnCashReturn || summaryDtoMetrics.cashOnCashReturn)?.hint || 'Annual cash flow / cash invested'} backendOwned />
+<MetricCard metric={vaultMetrics.capRate || summaryDtoMetrics.capRate} label="Cap rate" fallbackValue={summaryDtoMetrics.capRate?.display || fmtPct(capRate)} note="NOI / market value" backendOwned />
+<MetricCard metric={vaultMetrics.dscr || summaryDtoMetrics.dscr} label="DSCR" fallbackValue={summaryDtoMetrics.dscr?.display || (dscr ? formatRatio(dscr) : '—')} note="NOI / annual debt service" backendOwned />
+<MetricCard metric={vaultMetrics.totalReturnYtd || summaryDtoMetrics.totalReturnYtd} label="Total return YTD" fallbackValue={summaryDtoMetrics.totalReturnYtd?.value != null ? fmtKMB(summaryDtoMetrics.totalReturnYtd.value) : fmtKMB(totalReturnYTD)} note="Cash flow + principal paydown" backendOwned />
+</div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+<EquityStorySection story={equityStory} onJump={onJump} />
+
+<div className="grid gap-4 lg:grid-cols-2">
 <Panel title="Annual P&L">
-	              <SumRow label="Income" value={pnlIncome} color="text-green-600" plus />
-	              <SumRow label="Operating expenses" value={pnlOperatingExpenses} />
-	              <SumRow label="NOI" value={pnlNoi} bold />
-	              <SumRow label="Debt service" value={pnlAnnualDebtService} />
-	              <SumRow label="Net cash flow" value={pnlNetCashFlow} color={pnlNetCashFlow >= 0 ? 'text-green-600' : 'text-red-600'} />
-	            </Panel>
-            <Panel title="Tax Picture">
-              <SumRow label="Depreciation (Sch E line 18)" value={latestYear.depreciation || 0} color="text-purple-600" />
-              <SumRow label="Suspended losses" value={0} />
-              <SumRow label="Net tax P&L" value={latestYear.taxable_income || 0} color={(latestYear.taxable_income || 0) >= 0 ? 'text-green-600' : 'text-red-600'} />
-            </Panel>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-4">
-            <Metric label="Value" value={fmt(marketValue)} />
-            <Metric label="Loan balance" value={fmt(loanBalance)} />
-            <Metric label="Equity" value={fmt(equity)} color="text-green-600" />
-<Metric label="Rent per month" metric={summaryDtoMetrics.rentPerMonth} value={summaryDtoMetrics.rentPerMonth?.display || fmt(prop.monthly_rent || 0)} />
-          </div>
+<SumRow label="Income" value={vaultMetrics.effectiveGrossIncome?.displayValue || pnlIncome} color="text-green-600" plus />
+<SumRow label="Operating expenses" value={vaultMetrics.operatingExpenses?.displayValue || pnlOperatingExpenses} />
+<SumRow label="NOI" value={vaultMetrics.noi?.displayValue || pnlNoi} bold />
+<SumRow label="Debt service" value={vaultMetrics.annualDebtService?.displayValue || pnlAnnualDebtService} />
+<SumRow label="Net cash flow" value={vaultMetrics.annualCashFlow?.displayValue || pnlNetCashFlow} color={(vaultMetrics.annualCashFlow?.value ?? pnlNetCashFlow) >= 0 ? 'text-green-600' : 'text-red-600'} />
+</Panel>
+<Panel title="Tax Picture">
+<SumRow label="Depreciation (Sch E line 18)" value={vaultMetrics.depreciation?.displayValue || latestYear.depreciation || 0} color="text-purple-600" />
+<SumRow label="Suspended losses" value={vaultMetrics.suspendedLosses?.displayValue || 0} />
+<SumRow label="Net tax P&L" value={vaultMetrics.taxableIncome?.displayValue || latestYear.taxable_income || 0} color={(vaultMetrics.taxableIncome?.value ?? latestYear.taxable_income ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'} />
+</Panel>
+</div>
         </>
       )}
 
-      <TrendTable />
-      <UsageHistoryStrip periods={usagePeriods} usage={usage} />
-    </div>
+<TrendTable />
+{propertyKind !== 'PRIMARY' ? <UsageHistoryStrip periods={usagePeriods} usage={usage} /> : null}
+</div>
   )
 }
 
@@ -5163,10 +4646,10 @@ const monthlyCashFlow = summaryMetrics.monthly_cash_flow || 0
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-4">
-        <RealEstateStat label="Market Value" value={fmt(marketValue)} />
-        <RealEstateStat label="Total Debt" value={fmt(loanBalance)} note={ltv == null ? 'LTV unavailable' : `${fmtPct(ltv)} LTV`} />
-        <RealEstateStat label="Equity" value={fmt(equity)} />
-<RealEstateStat label={isPrimaryOnly ? 'Monthly Carrying Cost' : 'Monthly Cash Flow'} value={fmt(isPrimaryOnly ? monthlyCarryingCost : monthlyCashFlow)} />
+<RealEstateStat label="Market Value" value={fmtKMB(marketValue)} />
+<RealEstateStat label="Total Debt" value={fmtKMB(loanBalance)} note={ltv == null ? 'LTV unavailable' : `${fmtPct(ltv)} LTV`} />
+<RealEstateStat label="Equity" value={fmtKMB(equity)} />
+<RealEstateStat label={isPrimaryOnly ? 'Monthly Carrying Cost' : 'Monthly Cash Flow'} value={`${fmtKMB(isPrimaryOnly ? monthlyCarryingCost : monthlyCashFlow, { threshold: 1000 })} / mo`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -5212,37 +4695,23 @@ const monthlyCashFlow = summaryMetrics.monthly_cash_flow || 0
         </div>
       </div>
 
-      <div className="card">
-        <h3 className="mb-4 font-semibold text-gray-900 dark:text-white">Yearly Performance</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-xs text-gray-500 dark:text-gray-400">
-                <th className="py-2 text-left font-medium">Year</th>
-                <th className="px-2 py-2 text-right font-medium">Mortgage</th>
-                <th className="px-2 py-2 text-right font-medium">Principal</th>
-                <th className="px-2 py-2 text-right font-medium">Interest</th>
-                <th className="px-2 py-2 text-right font-medium">Taxes</th>
-                {showDepreciation && <th className="px-2 py-2 text-right font-medium">Depreciation</th>}
-                <th className="py-2 pl-2 text-right font-medium">Cash Flow</th>
-              </tr>
-            </thead>
-            <tbody>
-              {yearly.map((y) => (
-                <tr key={y.year} className="border-b border-gray-100 dark:border-gray-700/50">
-                  <td className="py-2 font-medium text-gray-900 dark:text-white">{y.is_partial ? String(y.year) + '*' : y.year}</td>
-                  <td className="px-2 py-2 text-right text-orange-600">{fmt((y.interest_paid || 0) + (y.principal_paid || 0))}</td>
-                  <td className="px-2 py-2 text-right text-blue-600">{fmt(y.principal_paid || 0)}</td>
-                  <td className="px-2 py-2 text-right text-orange-600">{fmt(y.interest_paid || 0)}</td>
-                  <td className="px-2 py-2 text-right text-gray-700 dark:text-gray-300">{fmt(y.taxes_paid || 0)}</td>
-                  {showDepreciation && <td className="px-2 py-2 text-right text-purple-600">{fmt(y.depreciation || 0)}</td>}
-                  <td className={(y.cash_flow || 0) >= 0 ? 'py-2 pl-2 text-right text-green-600' : 'py-2 pl-2 text-right text-red-600'}>{fmt(y.cash_flow || 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+<div className="card">
+<h3 className="mb-4 font-semibold text-gray-900 dark:text-white">Yearly Performance</h3>
+<DataTable
+columns={[
+{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year}*` : row.year },
+{ id: 'mortgage', header: 'Mortgage', align: 'right', sortValue: (row) => (row.interest_paid || 0) + (row.principal_paid || 0), cellClassName: 'text-orange-600', render: (row) => fmt((row.interest_paid || 0) + (row.principal_paid || 0)) },
+{ id: 'principal', header: 'Principal', align: 'right', accessor: 'principal_paid', cellClassName: 'text-blue-600', render: (row) => fmt(row.principal_paid || 0) },
+{ id: 'interest', header: 'Interest', align: 'right', accessor: 'interest_paid', cellClassName: 'text-orange-600', render: (row) => fmt(row.interest_paid || 0) },
+{ id: 'taxes', header: 'Taxes', align: 'right', accessor: 'taxes_paid', render: (row) => fmt(row.taxes_paid || 0) },
+{ id: 'depreciation', header: 'Depreciation', align: 'right', accessor: 'depreciation', hidden: !showDepreciation, cellClassName: 'text-purple-600', render: (row) => fmt(row.depreciation || 0) },
+{ id: 'cash_flow', header: 'Cash Flow', align: 'right', accessor: 'cash_flow', render: (row) => <span className={(row.cash_flow || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>{fmt(row.cash_flow || 0)}</span> },
+]}
+rows={yearly}
+getRowKey={(row) => row.year}
+defaultSort={{ id: 'year', direction: 'asc' }}
+/>
+</div>
     </div>
   )
 }

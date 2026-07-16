@@ -2,6 +2,8 @@ import { useState, useRef } from 'react'
 import { docAPI } from '../services/api'
 import { Upload, FileText, Trash2, ChevronDown, Wand2, CheckSquare, Square, AlertTriangle, Copy, X, RefreshCw, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { formatCurrency, formatFileSize, formatInteger, formatNumber, formatPercent } from '../utils/formatters'
+import DataTable from './DataTable'
 
 const CATEGORIES = [
   { value: 'auto', label: 'Auto-detect' },
@@ -19,30 +21,17 @@ const CATEGORIES = [
 ]
 
 const YEAR_FIELD_RE = /year$/i
-// Years must never pick up thousands separators ("2,024"); money/count
-// fields should. schedule1_line5_delta reads "n/a" (not "—") when the
-// return's own Schedule 1 total wasn't found — that's a known cross-check
-// gap, not a missing field.
+
 const formatFieldValue = (key, value, allData) => {
-  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData?.schedule1_line5_total == null) {
-    return 'n/a'
-  }
+  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData?.schedule1_line5_total == null) return 'n/a'
   if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'number') {
-    return YEAR_FIELD_RE.test(key) ? String(Math.trunc(value)) : value.toLocaleString()
-  }
+  if (typeof value === 'number') return YEAR_FIELD_RE.test(key) ? formatInteger(value) : formatNumber(value)
   return String(value)
 }
 
-const fmtSize = (bytes) => {
-  if (!bytes) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
 export default function DocumentUpload({ propertyId, docs, onUploaded }) {
-  const [category, setCategory] = useState('auto')
+docs = Array.isArray(docs) ? docs : []
+const [category, setCategory] = useState('auto')
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [selected, setSelected] = useState(new Set())
@@ -268,7 +257,7 @@ export default function DocumentUpload({ propertyId, docs, onUploaded }) {
 <p className="text-xs font-bold uppercase tracking-wide text-blue-500">Review extracted fields</p>
 <h3 className="font-semibold text-gray-900 dark:text-white mt-1">{previewDoc.original_filename}</h3>
 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-{catLabel(previewDoc.category)} · {fmtSize(previewDoc.file_size)}
+{catLabel(previewDoc.category)} · {formatFileSize(previewDoc.file_size)}
 </p>
 </div>
 <button type="button" onClick={cancelPreview} className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Cancel upload">
@@ -277,83 +266,80 @@ export default function DocumentUpload({ propertyId, docs, onUploaded }) {
 </div>
 
 {(() => {
-  const previewFields = Object.entries(previewDoc.extracted_data || {}).filter(
-    ([key, value]) => key !== 'raw_text_preview' && (value === null || (!Array.isArray(value) && typeof value !== 'object'))
-  )
-  const previewProperties = previewDoc.extracted_data?.properties || []
-  return previewFields.length ? (
-<div className="max-h-72 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
-<table className="min-w-full text-sm">
-<thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
-<tr>
-<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Field</th>
-<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Extracted Value</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-{previewFields.map(([key, value]) => (
-<tr key={key}>
-<td className="px-3 py-2 text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap">{key.replace(/_/g, ' ')}</td>
-<td className="px-3 py-2 text-gray-900 dark:text-gray-100">
-{formatFieldValue(key, value, previewDoc.extracted_data)}
-</td>
-</tr>
-))}
-</tbody>
-</table>
-</div>
-  ) : previewProperties.length === 0 ? (
-<div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-No structured fields were extracted. Cancel this upload or save it as a document record for manual review.
-</div>
-  ) : null
-})()}
-
-{(previewDoc.extracted_data?.properties || []).length > 0 && (
-<div className="mt-4">
-<p className="text-xs font-bold uppercase tracking-wide text-blue-500 mb-2">
-Per-property Schedule E figures ({previewDoc.extracted_data.properties.length})
-</p>
-<div className="max-h-72 overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
-<table className="min-w-full text-sm">
-<thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
-<tr>
-<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Property</th>
-<th className="text-left px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Kind</th>
-<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Rents</th>
-<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Total Exp.</th>
-<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Mortgage Int.</th>
-<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Depreciation</th>
-<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Net Income</th>
-<th className="text-right px-3 py-2 font-semibold text-gray-500 dark:text-gray-300">Confidence</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-{previewDoc.extracted_data.properties.map((p, i) => (
-<tr key={i} className="align-top">
-<td className="px-3 py-2 text-gray-900 dark:text-gray-100">
-{p.address || '—'}
-{p.unresolved_fields?.length > 0 && (
+const previewFields = Object.entries(previewDoc.extracted_data || {}).filter(
+([key, value]) => key !== 'raw_text_preview' && (value === null || (!Array.isArray(value) && typeof value !== 'object'))
+)
+const previewProperties = previewDoc.extracted_data?.properties || []
+const previewPropertyRows = previewProperties.map((property, index) => ({
+...property,
+previewRowId: property.id || `${property.address || 'property'}-${index}`,
+}))
+const previewFieldRows = previewFields.map(([key, value]) => ({
+id: key,
+field: key.replace(/_/g, ' '),
+value: formatFieldValue(key, value, previewDoc.extracted_data),
+}))
+const previewFieldColumns = [
+{ id: 'field', header: 'Field', accessor: 'field', cellClassName: 'text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap' },
+{ id: 'value', header: 'Extracted Value', accessor: 'value', cellClassName: 'text-gray-900 dark:text-gray-100' },
+]
+const previewPropertyColumns = [
+{
+id: 'property',
+header: 'Property',
+accessor: 'address',
+render: (row) => (
+<>
+{row.address || '—'}
+{row.unresolved_fields?.length > 0 && (
 <div className="mt-1 flex items-start gap-1 text-xs text-amber-600">
 <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />
-<span>{p.unresolved_fields.join(' ')}</span>
+<span>{row.unresolved_fields.join(' ')}</span>
 </div>
 )}
-</td>
-<td className="px-3 py-2 text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap">{p.property_kind || '—'}</td>
-<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.rents_received != null ? `$${Number(p.rents_received).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
-<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.total_expenses != null ? `$${Number(p.total_expenses).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
-<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.mortgage_interest != null ? `$${Number(p.mortgage_interest).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
-<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.depreciation != null ? `$${Number(p.depreciation).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
-<td className="px-3 py-2 text-right text-gray-900 dark:text-gray-100 whitespace-nowrap">{p.net_income != null ? `$${Number(p.net_income).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
-<td className="px-3 py-2 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">{p.confidence != null ? `${Math.round(p.confidence * 100)}%` : '—'}</td>
-</tr>
-))}
-</tbody>
-</table>
+</>
+),
+cellClassName: 'text-gray-900 dark:text-gray-100',
+},
+{ id: 'kind', header: 'Kind', accessor: 'property_kind', render: (row) => row.property_kind || '—', cellClassName: 'text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap' },
+{ id: 'rents', header: 'Rents', accessor: 'rents_received', render: (row) => formatCurrency(row.rents_received), align: 'right', cellClassName: 'text-gray-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'total_expenses', header: 'Total Exp.', accessor: 'total_expenses', render: (row) => formatCurrency(row.total_expenses), align: 'right', cellClassName: 'text-gray-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'mortgage_interest', header: 'Mortgage Int.', accessor: 'mortgage_interest', render: (row) => formatCurrency(row.mortgage_interest), align: 'right', cellClassName: 'text-gray-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'depreciation', header: 'Depreciation', accessor: 'depreciation', render: (row) => formatCurrency(row.depreciation), align: 'right', cellClassName: 'text-gray-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'net_income', header: 'Net Income', accessor: 'net_income', render: (row) => formatCurrency(row.net_income), align: 'right', cellClassName: 'text-gray-900 dark:text-gray-100 whitespace-nowrap' },
+{ id: 'confidence', header: 'Confidence', accessor: 'confidence', render: (row) => formatPercent(row.confidence), align: 'right', cellClassName: 'text-gray-500 dark:text-gray-400 whitespace-nowrap' },
+]
+return (
+<>
+{previewFields.length ? (
+<DataTable
+columns={previewFieldColumns}
+rows={previewFieldRows}
+getRowKey={(row) => row.id}
+className="max-h-72"
+/>
+) : previewProperties.length === 0 ? (
+<div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+No structured fields extracted. Cancel upload to skip, or save to keep the document record for manual review.
 </div>
+) : null}
+
+{previewProperties.length > 0 && (
+<div className="mt-4">
+<p className="text-xs font-bold uppercase tracking-wide text-blue-500 mb-2">
+Per-property Schedule E figures ({previewProperties.length})
+</p>
+<DataTable
+columns={previewPropertyColumns}
+rows={previewPropertyRows}
+getRowKey={(row) => row.previewRowId}
+className="max-h-72"
+/>
 </div>
 )}
+</>
+)
+})()}
 
 {previewDoc.extracted_data?.parse_error && (
 <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -452,7 +438,7 @@ function DocRow({ doc, catLabel, selected, onToggle, onDelete, onApply }) {
             {catLabel(doc.doc_category)}
             {doc.statement_year && ` · ${doc.statement_year}`}
             {doc.loan_account_number && ` · acct ${doc.loan_account_number}`}
-            {' · '}{fmtSize(doc.file_size)}
+            {' · '}{formatFileSize(doc.file_size)}
           </p>
           {isDup && (
             <p className="text-xs text-amber-600 mt-0.5">

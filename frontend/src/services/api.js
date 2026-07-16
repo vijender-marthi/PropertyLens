@@ -49,11 +49,19 @@ export const propAPI = {
   update: (id, data) => api.put(`/properties/${id}`, data),
   delete: (id) => api.delete(`/properties/${id}`),
   metrics: (id) => api.get(`/properties/${id}/metrics`),
+  metricVault: (id) => api.get(`/properties/${id}/metric-vault`),
+  verification: (id) => api.get(`/properties/${id}/verification`),
   summary: (id) => api.get(`/properties/${id}/summary`),
   performance: (id) => api.get(`/properties/${id}/performance`),
   lifetime: (id) => api.get(`/properties/${id}/lifetime`),
   rawdata: (id) => api.get(`/properties/${id}/rawdata`),
   checklist: (id) => api.get(`/properties/${id}/checklist`),
+  setupStatus: (id) => api.get(`/properties/${id}/setup-status`),
+  finalizeSetup: (id, data) => api.post(`/properties/${id}/setup-finalize`, data),
+  preview: (id, data, config = {}) => api.post(`/properties/${id}/preview`, data, config),
+  annualExpenses: (id) => api.get(`/properties/${id}/annual-expenses`),
+  expensesView: (id) => api.get(`/properties/${id}/expenses-view`),
+  upsertAnnualExpense: (id, year, data) => api.put(`/properties/${id}/annual-expenses/${year}`, data),
   checklistSummary: () => api.get('/properties/checklist-summary'),
   depreciation: (id, taxYear) => api.get(`/properties/${id}/depreciation`, { params: taxYear ? { tax_year: taxYear } : {} }),
   addDepreciationAsset: (id, data) => api.post(`/properties/${id}/depreciation-assets`, data),
@@ -67,6 +75,8 @@ export const propAPI = {
   addLoan: (propId, data) => api.post(`/properties/${propId}/loans`, data),
   updateLoan: (propId, loanId, data) => api.put(`/properties/${propId}/loans/${loanId}`, data),
   deleteLoan: (propId, loanId) => api.delete(`/properties/${propId}/loans/${loanId}`),
+  loanTransferSuggestions: (propId) => api.get(`/properties/${propId}/loans/servicing-transfer-suggestions`),
+  groupServicingTransfer: (propId, data) => api.post(`/properties/${propId}/loans/group-servicing-transfer`, data),
   amortization: (propId, loanId, extra = 0) =>
     api.get(`/properties/${propId}/loans/${loanId}/amortization?extra_monthly=${extra}`),
   simulateScenarios: (propId, data) => api.post(`/properties/${propId}/scenarios/simulate`, data),
@@ -75,9 +85,14 @@ export const propAPI = {
   debt: (propId) => api.get(`/properties/${propId}/debt`),
   // Tax return entries
   taxEntries: (propId) => api.get(`/properties/${propId}/tax-entries`),
+  scheduleE: (propId, year) => api.get(`/properties/${propId}/taxes/schedule-e`, { params: year ? { year } : {} }),
   upsertYearEntry: (propId, data) => api.post(`/properties/${propId}/tax-entries`, data),
   taxComparison: () => api.get('/properties/tax-returns/comparison'),
   // Rental periods
+  rentalTimeline: (propId) => api.get(`/properties/${propId}/rental-timeline`),
+  createRentalTimelinePeriod: (propId, data) => api.post(`/properties/${propId}/rental-timeline/periods`, data),
+  updateRentalTimelinePeriod: (propId, data) => api.put(`/properties/${propId}/rental-timeline/periods`, data),
+  deleteRentalTimelinePeriod: (propId, periodRef) => api.delete(`/properties/${propId}/rental-timeline/periods/${encodeURIComponent(periodRef)}`),
   rentals: (propId) => api.get(`/properties/${propId}/rentals`),
   addRental: (propId, data) => api.post(`/properties/${propId}/rentals`, data),
   updateRental: (propId, rentalId, data) =>
@@ -111,6 +126,18 @@ export const docAPI = {
   reparse: (docId) => api.post(`/documents/${docId}/reparse`),
   reprocessAll: () => api.post('/documents/reprocess-all'),
   markdown: (docId) => api.get(`/documents/${docId}/markdown`),
+  setupImportReview: (docId) => api.get(`/documents/${docId}/setup-import-review`),
+  applySetupImport: (docId, data) => api.post(`/documents/${docId}/apply-setup-import`, data),
+  loanStatementReview: (docId) => api.get(`/documents/${docId}/loan-statement-review`),
+  applyLoanStatement: (docId, data) => api.post(`/documents/${docId}/apply-loan-statement`, data),
+  consolidatedLoanReview: (data) => api.post('/documents/loan-documents/consolidated-review', data),
+  applyConsolidatedLoanDocuments: (data) => api.post('/documents/loan-documents/apply-consolidated', data),
+  uploadExpenseField: (formData) =>
+    api.post('/documents/upload/expense-field', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  applyExpenseFieldDocument: (docId, data) => api.post(`/documents/${docId}/apply-expense-field-document`, data),
+  removeExpenseFieldDocument: (params) => api.post('/documents/expense-field-document/remove', null, { params }),
   delete: (docId) => api.delete(`/documents/${docId}`),
   deleteBatch: (ids) => api.post('/documents/delete-batch', { ids }),
 }
@@ -120,6 +147,11 @@ export const sharingAPI = {
   list: () => api.get('/sharing'),
   share: (email) => api.post('/sharing', { email }),
   remove: (id) => api.delete(`/sharing/${id}`),
+}
+
+// ── Help / Formula Catalog ────────────────────────────────────────────────────
+export const helpAPI = {
+  formulas: (params = {}) => api.get('/help/formulas', { params }),
 }
 
 export default api

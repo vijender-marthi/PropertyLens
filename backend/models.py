@@ -52,7 +52,8 @@ class Property(Base):
     city = Column(String)
     state = Column(String)
     zip_code = Column(String)
-    property_type = Column(String, default=PropertyType.SINGLE_FAMILY)
+    property_type = Column(String, default="single_family")
+    property_type_raw = Column(String)
     usage_type = Column(String, default="Rental")  # Rental | Primary
     # True once the user has explicitly changed Usage themselves — locks out
     # the tax-return importer's "latest primary home" auto-detection so a
@@ -64,6 +65,7 @@ class Property(Base):
     primary_end_date = Column(String)
     rental_start_date = Column(String)
     rental_end_date = Column(String)
+    rental_start_date_origin = Column(String)
     recorded_date = Column(String)
     held_period = Column(String)
     purchase_date = Column(String)
@@ -76,7 +78,8 @@ class Property(Base):
     monthly_rent = Column(Float, default=0.0)
     occupancy_rate = Column(Float, default=100.0)  # percentage
 
-    # Expenses (monthly)
+    # Legacy expense snapshot. AnnualExpense is the canonical per-year source
+    # for setup and year-specific metrics when rows are present.
     property_tax = Column(Float, default=0.0)
     property_tax_history = Column(Text, default="{}")
     insurance = Column(Float, default=0.0)
@@ -112,6 +115,14 @@ class Property(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    @property
+    def createdAt(self):
+        return self.created_at
+
+    @property
+    def updatedAt(self):
+        return self.updated_at
+
     owner = relationship("User", back_populates="properties")
     loans = relationship("Loan", back_populates="property", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="property", cascade="all, delete-orphan")
@@ -125,6 +136,9 @@ class Property(Base):
         "TaxReturnEntry", back_populates="property", cascade="all, delete-orphan")
     depreciation_assets = relationship(
         "DepreciationAsset", back_populates="property", cascade="all, delete-orphan")
+    annual_expenses = relationship(
+        "AnnualExpense", back_populates="property", cascade="all, delete-orphan",
+        order_by="AnnualExpense.year")
 
 
 class Loan(Base):
@@ -136,6 +150,16 @@ class Loan(Base):
     lender_name = Column(String)
     loan_product = Column(String)
     loan_type = Column(String, default=LoanType.FIXED)
+    status = Column(String, default="OPEN")
+    closed_date = Column(String)
+    closure_reason = Column(String)
+    replacement_loan_id = Column(Integer)
+    loan_group_id = Column(String)
+    servicer_sequence = Column(Integer)
+    servicer_start_date = Column(String)
+    servicer_end_date = Column(String)
+    transfer_reason = Column(String)
+    is_current_servicer = Column(Boolean, default=True)
     original_amount = Column(Float, nullable=False)
     current_balance = Column(Float, nullable=False)
     interest_rate = Column(Float, nullable=False)  # annual percentage
@@ -164,6 +188,18 @@ class Loan(Base):
     # Escrow
     escrow_included = Column(Boolean, default=False)
     escrow_amount = Column(Float, default=0.0)  # monthly taxes+insurance in escrow
+    monthly_property_tax_escrow = Column(Float, default=0.0)
+    monthly_insurance_escrow = Column(Float, default=0.0)
+    monthly_mortgage_insurance = Column(Float, default=0.0)
+    monthly_other_escrow = Column(Float, default=0.0)
+
+    # Import provenance for setup/document-assisted loan creation.
+    source_document_id = Column(Integer, ForeignKey("documents.id"))
+    source_type = Column(String)
+    import_status = Column(String)
+    current_balance_source = Column(String)
+    current_balance_as_of = Column(String)
+    current_balance_verified = Column(Boolean, default=True)
 
     # ARM specific
     arm_initial_period = Column(Integer)  # years before first adjustment
@@ -186,6 +222,7 @@ class Document(Base):
 
     filename = Column(String, nullable=False)
     original_filename = Column(String, nullable=False)
+    record_uuid = Column(String, unique=True, index=True)
     display_name = Column(String)  # human-readable name derived from extracted content, not the uploaded filename
     file_type = Column(String)  # pdf, xlsx, etc.
     doc_category = Column(String)  # mortgage_statement, tax_return, 1099, loan_disclosure, other
@@ -252,6 +289,33 @@ class UsagePeriod(Base):
     property = relationship("Property", back_populates="usage_periods")
 
 
+class AnnualExpense(Base):
+    """Per-year annual operating expense inputs for one property."""
+    __tablename__ = "annual_expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    year = Column(Integer, nullable=False, index=True)
+    property_tax = Column(Float, default=0.0)
+    insurance = Column(Float, default=0.0)
+    hoa = Column(Float, default=0.0)
+    repairs_maintenance = Column(Float, default=0.0)
+    property_management = Column(Float, default=0.0)
+    utilities = Column(Float, default=0.0)
+    vacancy_allowance = Column(Float, default=0.0)
+    capex_reserve = Column(Float, default=0.0)
+    other = Column(Float, default=0.0)
+    property_tax_source = Column(String, default="manual")
+    insurance_source = Column(String, default="manual")
+    source_status = Column(String, default="manual")
+    notes = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship("Property", back_populates="annual_expenses")
+
+
 class DepreciationAsset(Base):
     """Asset-level depreciation/amortization schedule item for one property."""
     __tablename__ = "depreciation_assets"
@@ -285,6 +349,7 @@ class TaxReturnEntry(Base):
     __tablename__ = "tax_return_entries"
 
     id = Column(Integer, primary_key=True, index=True)
+    record_uuid = Column(String, unique=True, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     property_id = Column(Integer, ForeignKey("properties.id"))  # null = unmatched
     document_id = Column(Integer, ForeignKey("documents.id"))   # source return
@@ -320,6 +385,21 @@ class TaxReturnEntry(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     property = relationship("Property", back_populates="tax_entries")
+
+
+class MetricSnapshot(Base):
+    """Frozen backend-owned metric/verification payload for auditability."""
+    __tablename__ = "metric_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    snapshot_uuid = Column(String, unique=True, index=True, nullable=False)
+    snapshot_type = Column(String, index=True, nullable=False) # metric_vault | verification
+    schema_version = Column(String)
+    payload_json = Column(Text, nullable=False)
+    generated_at = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class UserSharing(Base):

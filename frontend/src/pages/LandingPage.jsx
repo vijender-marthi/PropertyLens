@@ -11,6 +11,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import BrandLogo from '../components/BrandLogo'
 import heroImage from '../assets/propertylens-hero.png'
+import { landingCssVars } from '../utils/landingTokens'
 
 const metrics = [
   { label: 'Net cash flow', value: '$18.6K', note: 'Trailing 30 days' },
@@ -52,27 +53,27 @@ const checks = [
 
 function Header({ primaryHref, primaryLabel, user }) {
   return (
-    <header className="border-b border-[#d7d1c8] bg-[#ece8df]/95 backdrop-blur">
+<header className="border-b border-[var(--landing-header-border)] bg-[var(--landing-header-bg)] backdrop-blur">
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
         <Link to="/" aria-label="PropertyLens home">
           <BrandLogo
             markClassName="h-10 w-10"
-            textClassName="text-base text-[#242321]"
-            subtitleClassName="text-[#766f66]"
+            textClassName="text-base text-[var(--landing-logo-text)]"
+            subtitleClassName="text-[var(--landing-logo-subtitle)]"
           />
         </Link>
         <div className="flex items-center gap-2">
           {!user && (
             <Link
               to="/login"
-              className="rounded-lg px-4 py-2 text-sm font-semibold text-[#4f4942] hover:bg-white/70"
+className="rounded-lg px-4 py-2 text-sm font-semibold text-[var(--landing-link-text)] hover:bg-white/70"
             >
               Sign in
             </Link>
           )}
           <Link
             to={primaryHref}
-            className="inline-flex items-center gap-2 rounded-lg bg-[#2f2c29] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#1f1d1b]"
+className="inline-flex items-center gap-2 rounded-lg bg-[var(--landing-dark)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[var(--landing-dark-hover)]"
           >
             {primaryLabel}
             <ArrowRight className="h-4 w-4" />
@@ -85,7 +86,7 @@ function Header({ primaryHref, primaryLabel, user }) {
 
 function PalmPanel({ children, className = '' }) {
   return (
-    <div className={`rounded-lg border border-[#d8d1c7] bg-[#f7f4ee] shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_18px_45px_rgba(61,50,40,0.08)] ${className}`}>
+<div className={`rounded-lg border border-[var(--landing-panel-border)] bg-[var(--landing-panel-bg)] shadow-[var(--landing-panel-shadow)] ${className}`}>
       {children}
     </div>
   )
@@ -95,25 +96,25 @@ function PortfolioPreview() {
   return (
     <PalmPanel className="p-3">
       <div className="grid gap-3 lg:grid-cols-[0.72fr_1fr]">
-        <div className="rounded-lg bg-[#383532] p-4 text-white shadow-inner">
+        <div className="rounded-lg bg-[var(--landing-preview-dark)] p-4 text-white shadow-inner">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#f6a64b]">Portfolio readout</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--landing-gold)]">Portfolio readout</p>
               <p className="mt-1 text-sm text-white/70">Current operating view</p>
             </div>
-            <ShieldCheck className="h-5 w-5 text-[#f6a64b]" />
+            <ShieldCheck className="h-5 w-5 text-[var(--landing-gold)]" />
           </div>
           <div className="mt-4 space-y-3">
             {metrics.map((metric) => (
-              <div key={metric.label} className="rounded-lg border border-white/10 bg-[#4a4642] p-4">
+              <div key={metric.label} className="rounded-lg border border-white/10 bg-[var(--landing-preview-card)] p-4">
                 <p className="text-xs font-medium text-white/58">{metric.label}</p>
                 <p className="mt-1 text-2xl font-semibold text-white">{metric.value}</p>
-                <p className="mt-1 text-xs font-semibold text-[#f6a64b]">{metric.note}</p>
+                <p className="mt-1 text-xs font-semibold text-[var(--landing-gold)]">{metric.note}</p>
               </div>
             ))}
           </div>
         </div>
-        <div className="overflow-hidden rounded-lg border border-[#d5cec4] bg-[#ddd7ce]">
+        <div className="overflow-hidden rounded-lg border border-[var(--landing-preview-border)] bg-[var(--landing-preview-bg)]">
           <img
             src={heroImage}
             alt="PropertyLens portfolio analytics preview"
@@ -131,19 +132,19 @@ export default function LandingPage() {
   const primaryLabel = user ? 'Open dashboard' : 'Start tracking'
 
   return (
-    <div className="min-h-screen bg-[#e8e3da] text-[#252321]">
+<div className="min-h-screen bg-[var(--landing-page-bg)] text-[var(--landing-page-text)]" style={landingCssVars}>
       <Header primaryHref={primaryHref} primaryLabel={primaryLabel} user={user} />
 
       <main>
         <section className="mx-auto grid max-w-7xl gap-12 px-5 py-16 sm:px-8 sm:py-20 lg:grid-cols-[0.88fr_1.12fr] lg:items-center">
           <div>
-            <p className="inline-flex items-center rounded-lg border border-[#e2a04a]/40 bg-[#fff4e5] px-3 py-2 text-sm font-semibold text-[#8b4b0d]">
+<p className="inline-flex items-center rounded-lg border border-[var(--landing-accent-border)] bg-[var(--landing-accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--landing-accent-text)]">
               Rental property financial intelligence
             </p>
-            <h1 className="mt-6 max-w-3xl text-4xl font-semibold leading-tight text-[#1f1d1b] sm:text-5xl lg:text-6xl">
+<h1 className="mt-6 max-w-3xl text-4xl font-semibold leading-tight text-[var(--landing-heading)] sm:text-5xl lg:text-6xl">
               See the financial health of every rental.
             </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-[#625b52]">
+<p className="mt-6 max-w-2xl text-lg leading-8 text-[var(--landing-muted-text)]">
               PropertyLens organizes rent, debt, tax, valuation, and document data into a calm operating view for
               rental-property owners.
             </p>
@@ -151,14 +152,14 @@ export default function LandingPage() {
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
                 to={primaryHref}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#ef7d22] px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#d96d1c]"
+className="inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--landing-accent)] px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[var(--landing-accent-hover)]"
               >
                 {primaryLabel}
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
                 to="/login"
-                className="inline-flex items-center justify-center rounded-lg border border-[#cbc3b8] bg-[#f8f5ef] px-5 py-3 text-sm font-semibold text-[#3e3934] hover:bg-white"
+className="inline-flex items-center justify-center rounded-lg border border-[var(--landing-secondary-border)] bg-[var(--landing-secondary-bg)] px-5 py-3 text-sm font-semibold text-[var(--landing-secondary-text)] hover:bg-white"
               >
                 View portfolio
               </Link>
@@ -166,7 +167,7 @@ export default function LandingPage() {
 
             <div className="mt-10 grid max-w-xl grid-cols-3 gap-3">
               {['Cash flow', 'Debt', 'Taxes'].map((item) => (
-                <PalmPanel key={item} className="px-3 py-3 text-sm font-semibold text-[#5a524a]">
+<PalmPanel key={item} className="px-3 py-3 text-sm font-semibold text-[var(--landing-chip-text)]">
                   {item}
                 </PalmPanel>
               ))}
@@ -176,24 +177,24 @@ export default function LandingPage() {
           <PortfolioPreview />
         </section>
 
-        <section className="border-y border-[#d6cec2] bg-[#f4f1eb] py-16">
+<section className="border-y border-[var(--landing-section-border)] bg-[var(--landing-section-bg)] py-16">
           <div className="mx-auto max-w-7xl px-5 sm:px-8">
             <div className="flex flex-col justify-between gap-6 sm:flex-row sm:items-end">
               <div className="max-w-2xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#b65e19]">What it monitors</p>
-                <h2 className="mt-3 text-3xl font-semibold text-[#1f1d1b] sm:text-4xl">
+<p className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--landing-accent-muted)]">What it monitors</p>
+<h2 className="mt-3 text-3xl font-semibold text-[var(--landing-heading)] sm:text-4xl">
                   A disciplined view across properties, loans, taxes, and documents.
                 </h2>
               </div>
-              <ShieldCheck className="h-10 w-10 text-[#ef7d22]" />
+<ShieldCheck className="h-10 w-10 text-[var(--landing-accent)]" />
             </div>
 
             <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               {features.map((feature) => (
                 <PalmPanel key={feature.title} className="p-5">
-                  <feature.icon className="h-6 w-6 text-[#c46219]" />
-                  <h3 className="mt-4 text-base font-semibold text-[#1f1d1b]">{feature.title}</h3>
-                  <p className="mt-3 text-sm leading-6 text-[#625b52]">{feature.body}</p>
+                  <feature.icon className="h-6 w-6 text-[var(--landing-accent-deep)]" />
+                  <h3 className="mt-4 text-base font-semibold text-[var(--landing-heading)]">{feature.title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-[var(--landing-muted-text)]">{feature.body}</p>
                 </PalmPanel>
               ))}
             </div>
@@ -202,11 +203,11 @@ export default function LandingPage() {
 
         <section className="mx-auto grid max-w-7xl gap-10 px-5 py-16 sm:px-8 lg:grid-cols-[0.78fr_1.22fr] lg:items-center">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#b65e19]">Owner mode</p>
-            <h2 className="mt-3 text-3xl font-semibold text-[#1f1d1b] sm:text-4xl">
+<p className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--landing-accent-muted)]">Owner mode</p>
+<h2 className="mt-3 text-3xl font-semibold text-[var(--landing-heading)] sm:text-4xl">
               The quick answer to how your rentals are actually doing.
             </h2>
-            <p className="mt-5 text-base leading-7 text-[#625b52]">
+<p className="mt-5 text-base leading-7 text-[var(--landing-muted-text)]">
               Use it after tax uploads, loan updates, new purchases, rent changes, or before financing and sell-hold
               decisions.
             </p>
@@ -215,22 +216,22 @@ export default function LandingPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             {checks.map((check) => (
               <PalmPanel key={check} className="flex items-center gap-3 p-4">
-                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#ef7d22]" />
-                <span className="text-sm font-medium text-[#4d4740]">{check}</span>
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-[var(--landing-accent)]" />
+                <span className="text-sm font-medium text-[var(--landing-check-text)]">{check}</span>
               </PalmPanel>
             ))}
           </div>
         </section>
 
         <section className="mx-auto max-w-7xl px-5 pb-20 sm:px-8">
-          <div className="rounded-lg bg-[#2f2c29] px-6 py-8 text-white shadow-[0_18px_45px_rgba(47,44,41,0.22)] sm:px-8 lg:flex lg:items-center lg:justify-between">
+          <div className="rounded-lg bg-[var(--landing-dark)] px-6 py-8 text-white shadow-[var(--landing-cta-shadow)] sm:px-8 lg:flex lg:items-center lg:justify-between">
             <div>
-              <p className="text-sm font-semibold text-[#f6a64b]">Ready when the portfolio gets serious.</p>
+              <p className="text-sm font-semibold text-[var(--landing-gold)]">Ready when the portfolio gets serious.</p>
               <h2 className="mt-2 text-2xl font-semibold sm:text-3xl">Turn rental data into decisions.</h2>
             </div>
             <Link
               to={primaryHref}
-              className="mt-6 inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 text-sm font-semibold text-[#2f2c29] hover:bg-[#fff4e5] lg:mt-0"
+              className="mt-6 inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 text-sm font-semibold text-[var(--landing-dark)] hover:bg-[var(--landing-accent-soft)] lg:mt-0"
             >
               {primaryLabel}
               <ArrowRight className="h-4 w-4" />

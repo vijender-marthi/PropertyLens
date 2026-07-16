@@ -7,7 +7,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  standards:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run standards validation
+        run: npm run standards:check
+
   deploy:
+    needs: standards
     runs-on: ubuntu-latest
 
     steps:

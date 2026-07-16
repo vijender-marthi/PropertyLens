@@ -5,30 +5,40 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="87a89b4e-a93c-4bdb-b093-b530634c91bc" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.github/workflows/deploy-propertylens.yml" beforeDir="false" afterPath="$PROJECT_DIR$/.github/workflows/deploy-propertylens.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/models.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/routers/documents.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/documents.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/routers/properties.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/properties.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/services/document_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/document_config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/services/document_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/document_parser.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/index.html" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/index.html" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/services/loan_calculator.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/loan_calculator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/services/property_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/property_engine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_calculations.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_calculations.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_debt_endpoint.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_debt_endpoint.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_depreciation_assets.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_depreciation_assets.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_document_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_document_parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_rawdata.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_rawdata.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_schedule_e.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_schedule_e.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/package.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/AmortizationModal.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/AmortizationModal.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/DocumentUpload.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/DocumentUpload.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/Layout.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/Layout.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/LoanCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/LoanCard.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/LoanModal.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/LoanModal.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/index.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/AdminPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/AdminPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/DashboardPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/DashboardPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/HelpPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/HelpPage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/LoginPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/LoginPage.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/LandingPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/LandingPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/PropertiesPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/PropertiesPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/PropertyDetailPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/PropertyDetailPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/PropertyFormPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/PropertyFormPage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/RegisterPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/RegisterPage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/SettingsPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/SettingsPage.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ReportsPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ReportsPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/UploadsPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/UploadsPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/services/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/api.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/tailwind.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/tailwind.config.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -58,30 +68,21 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "main",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "/Users/vijender/Development/RentalProps"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.Python.executor&quot;: &quot;Debug&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;Shell Script.start.sh.executor&quot;: &quot;Debug&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/vijender/Development/PropertyLens&quot;
   }
-}]]></component>
-  <component name="RunManager">
-    <configuration default="true" type="JetRunConfigurationType">
-      <module name="PropertyLens" />
-      <method v="2">
-        <option name="Make" enabled="true" />
-      </method>
-    </configuration>
-    <configuration default="true" type="KotlinStandaloneScriptRunConfigurationType">
-      <module name="PropertyLens" />
-      <option name="filePath" />
-      <method v="2" />
-    </configuration>
-    <configuration default="true" type="PythonConfigurationType" factoryName="Python">
+}</component>
+  <component name="RunManager" selected="Python.Python">
+    <configuration name="Python" type="PythonConfigurationType" factoryName="Python">
       <module name="PropertyLens" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -90,31 +91,39 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/backend" />
+      <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
-      <option name="SCRIPT_NAME" value="" />
-      <option name="PARAMETERS" value="" />
+      <option name="SCRIPT_NAME" value="uvicorn" />
+      <option name="PARAMETERS" value="main:app --host 127.0.0.1 --port 8000" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
-      <option name="MODULE_MODE" value="false" />
+      <option name="MODULE_MODE" value="true" />
       <option name="REDIRECT_INPUT" value="false" />
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration default="true" type="Tox" factoryName="Tox">
-      <module name="PropertyLens" />
-      <option name="ENV_FILES" value="" />
+    <configuration name="start.sh" type="ShConfigurationType" temporary="true">
+      <option name="SCRIPT_TEXT" value="" />
+      <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+      <option name="SCRIPT_PATH" value="$PROJECT_DIR$/start.sh" />
+      <option name="SCRIPT_OPTIONS" value="" />
+      <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+      <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="INDEPENDENT_INTERPRETER_PATH" value="true" />
+      <option name="INTERPRETER_PATH" value="/bin/bash" />
       <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="" />
-      <option name="IS_MODULE_SDK" value="false" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="EXECUTE_IN_TERMINAL" value="true" />
+      <option name="EXECUTE_SCRIPT_FILE" value="true" />
+      <envs />
       <method v="2" />
     </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Shell Script.start.sh" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">
@@ -125,5 +134,46 @@
       <updated>1781199309919</updated>
     </task>
     <servers />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>2561</line>
+          <option name="timeStamp" value="2" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>2550</line>
+          <option name="timeStamp" value="3" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>2556</line>
+          <option name="timeStamp" value="4" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>3514</line>
+          <option name="timeStamp" value="5" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>3515</line>
+          <option name="timeStamp" value="6" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>1830</line>
+          <option name="timeStamp" value="7" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
+          <line>3513</line>
+          <option name="timeStamp" value="8" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
   </component>
 </project>
