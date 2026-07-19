@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { propAPI, docAPI } from '../services/api'
 import {
@@ -24,10 +25,9 @@ import MetricCard from '../components/metrics/MetricCard'
 import MetricKPI from '../components/metrics/MetricKPI'
 import { useAuth } from '../hooks/useAuth'
 import { propertyTabs } from '../config/propertyTabs'
-import { propertyIdentitySections } from '../config/propertyDetailsSchema'
 import { homeTypeLabel } from '../config/propertySetupPresentation'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
-import { formatChartCurrency, formatCurrency as fmt, formatInterestRate, formatMetricCurrency as fmtKMB, formatDate, formatMonthYear, formatNumber, formatPercent as fmtPct, formatYear, formatRatio, rawExportValue } from '../utils/formatters'
+import { formatChartCurrency, formatCurrency as fmt, formatCurrencyCompact, formatInterestRate, formatMetricCurrency as fmtKMB, formatDate, formatMonthYear, formatNumber, formatPercent as fmtPct, formatYear, formatRatio, rawExportValue } from '../utils/formatters'
 import { chartColors, chartTypography } from '../utils/chartTokens'
 
 const CURRENT_YEAR = new Date().getFullYear()
@@ -77,15 +77,15 @@ const PROPERTY_TAB_METRICS = {
   summary: [
     { label: 'Market value', key: 'marketValue' },
     { label: 'Equity', key: 'equity' },
-    { label: 'Monthly cash flow', key: 'monthlyCashFlow' },
+    { label: 'Monthly cash flow', key: 'monthlyCashFlow', hideForPrimary: true },
     { label: 'Cost to own', key: 'monthlyCostToOwn' },
   ],
   loans: [
-    { label: 'Total loan', key: 'loanTotalOriginal', subLabel: 'original borrowed' },
-    { label: 'Total balance', key: 'loanTotalBalance', subLabel: 'owed today' },
-    { label: 'Paid to date', key: 'loanPrincipalPaidToDate', subLabel: 'principal' },
-    { label: 'Interest to date', key: 'loanInterestToDate', subLabel: 'paid so far' },
-    { label: 'Interest', key: 'loanInterestRateSummary' },
+    { label: 'Total loan', key: 'loanTotalOriginal', subLabel: 'original borrowed', display: (metric) => formatCurrencyCompact(metric?.value, { threshold: 100_000, kDigits: 0, mDigits: 1 }) },
+    { label: 'Total balance', key: 'loanTotalBalance', subLabel: 'owed today', display: (metric) => formatCurrencyCompact(metric?.value, { threshold: 100_000, kDigits: 1, mDigits: 1 }) },
+    { label: 'Paid to date', key: 'loanPrincipalPaidToDate', subLabel: 'principal', display: (metric) => fmt(metric?.value) },
+    { label: 'Interest to date', key: 'loanInterestToDate', subLabel: 'paid so far', display: (metric) => fmt(metric?.value) },
+    { label: 'Interest', key: 'loanInterestRateSummary', subLabel: '' },
   ],
   rental: [
     { label: 'Monthly rent', key: 'rentPerMonth', hideForPrimary: true },
@@ -103,7 +103,7 @@ function metricDisplayText(metric, fallback = '—') {
 
 function propertyIsPrimary(prop) {
   const usage = String(prop?.usage_type || prop?.usage || '').toLowerCase()
-  return usage.includes('primary') && !prop?.has_rental_history && !prop?.currently_rental
+  return usage.includes('primary') && !prop?.currently_rental
 }
 
 function PropertyTabMetrics({ activeTab, metricVault, isPrimary }) {
@@ -113,7 +113,11 @@ function PropertyTabMetrics({ activeTab, metricVault, isPrimary }) {
 
   if (!items.length) return null
 
-  const gridClass = items.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
+  const gridClass = items.length === 5
+    ? 'lg:grid-cols-5'
+    : items.length === 3
+      ? 'lg:grid-cols-3'
+      : 'lg:grid-cols-4'
 
   return (
     <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${gridClass}`} aria-label={`${activeTab} metrics`}>
@@ -124,6 +128,7 @@ function PropertyTabMetrics({ activeTab, metricVault, isPrimary }) {
           metric={item.key ? metrics[item.key] : null}
           fallbackValue="—"
           subLabel={item.subLabel}
+          displayValue={item.display ? item.display(metrics[item.key]) : undefined}
           backendOwned
         />
       ))}
@@ -347,10 +352,11 @@ function PropertySetupDetailsTab({ prop }) {
             <SetupDetailField label="Purchase price" value={setupDetailMoney(prop?.purchase_price)} />
             <SetupDetailField label="Down payment" value={setupDetailMoney(prop?.down_payment)} />
             <SetupDetailField label="Closing costs" value={setupDetailMoney(prop?.closing_costs)} />
+            <SetupDetailField label="Final settlement total" value={setupDetailMoney(prop?.settlement_total_amount)} />
           </SetupDetailsSection>
 
           <SetupDetailsSection title="Valuation">
-            <SetupDetailField label="Current value" value={setupDetailMoney(prop?.market_value)} />
+            <SetupDetailField label="Market Price" value={setupDetailMoney(prop?.market_value)} />
             <SetupDetailField label="Valuation source" value={setupDetailText(prop?.market_value_source)} />
             <SetupDetailField label="Valuation date" value={setupDetailDate(prop?.market_value_updated)} />
           </SetupDetailsSection>
@@ -516,37 +522,26 @@ if (loading) return (
 </div>
 )
 
+if (!prop) return (
+<div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400">
+Property details are unavailable.
+</div>
+)
+
 const topSummaryMetrics = summaryView?.metrics || {}
 const topVaultMetrics = metricVault?.metrics || {}
 const topMonthlyCashFlow = topSummaryMetrics.monthlyCashFlow?.value || 0
 const topIsPrimary = propertyIsPrimary(prop)
 const headerMarketValue = topVaultMetrics.marketValue || topSummaryMetrics.marketValue
 const headerEquity = topVaultMetrics.equity || topSummaryMetrics.equity
-const displayDetail = (value, formatter) => {
-  if (value === null || value === undefined || value === '') return 'Not provided'
-  if (formatter === 'currency') return fmtKMB(value)
-  if (formatter === 'date') return formatDate(value)
-  if (formatter === 'datetime') return formatDate(value, { includeTime: true })
-  if (formatter === 'percent') return fmtPct(value)
-  if (typeof formatter === 'function') return formatter(value, prop)
-  return String(value)
-}
-const shouldShowDetailField = (field) => {
-  const usage = String(prop.usage_type || '').toLowerCase()
-  if (field.appliesTo && !field.appliesTo.some((type) => usage.includes(type))) return false
-  if (field.showWhen && !field.showWhen(prop)) return false
-  const value = prop[field.id]
-  if (field.hideValues?.includes(value)) return false
-  if (value === null || value === undefined || value === '') return Boolean(field.required)
-  if (Number(value) === 0 && field.showZero !== true) return false
-  return true
-}
-const detailGroups = propertyIdentitySections
-  .map((section) => ({
-    ...section,
-    rows: section.fields.filter(shouldShowDetailField).map((field) => [field.label, prop[field.id], field.formatter]),
-  }))
-  .filter((section) => section.rows.length)
+const compactAddress = [prop.address, prop.city, prop.state, prop.zip_code].filter(Boolean).join(', ')
+const compactHeaderDetails = [
+  { label: 'Current use', value: prop.current_residency_status || prop.usage_type || '—' },
+  { label: 'Original use', value: prop.original_residency_status || '—' },
+  { label: 'Purchased', value: prop.purchase_date ? formatDate(prop.purchase_date) : '—' },
+  { label: 'Purchase price', value: prop.purchase_price ? fmt(prop.purchase_price) : '—' },
+  { label: 'Market price', value: prop.market_value ? fmt(prop.market_value) : '—' },
+]
 const documentCount = docs.length
 const dataHealthStatus = prop.data_health || prop.dataHealth || metrics?.data_health || metrics?.dataHealth || metricVault?.dataHealth
 const dataHealthIssueCount = Number(prop.data_health_issue_count ?? prop.dataHealthIssueCount ?? metrics?.data_health_issue_count ?? metrics?.dataHealthIssueCount ?? metricVault?.dataHealthIssueCount ?? 0)
@@ -583,27 +578,17 @@ className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-
 {showAddress ? 'Hide Details' : 'Show Details'}
 </button>
 {showAddress ? (
-<section id="property-header-details" aria-labelledby="property-header-details-title" className="mt-3 max-w-6xl rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
-<div className="mb-3 flex items-center justify-between gap-3">
-<h2 id="property-header-details-title" className="text-sm font-semibold text-gray-900 dark:text-white">Property Details</h2>
-<Link to={`/properties/${id}/edit`} className="btn-secondary flex items-center gap-1.5 text-xs">
-<Pencil className="h-3.5 w-3.5" /> Edit Details
-</Link>
-</div>
-<div className="space-y-4">
-{detailGroups.map((group) => (
-<section key={group.title} className="min-w-0 border-t border-gray-200 pt-3 dark:border-gray-700">
-<h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{group.title}</h3>
-<dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
-{group.rows.map(([label, value, formatter]) => (
-<div key={`${group.title}-${label}`} className="grid min-w-0 grid-cols-[minmax(8rem,0.55fr)_minmax(0,1fr)] gap-3">
-<dt className="text-sm text-gray-500 dark:text-gray-400">{label}</dt>
-<dd className="truncate text-sm font-medium text-gray-900 dark:text-white">{displayDetail(value, formatter)}</dd>
+<section id="property-header-details" aria-label="Property details" className="mt-2 max-w-6xl overflow-x-auto border-y border-gray-200 py-2 dark:border-gray-700">
+<div className="min-w-max space-y-1.5 text-xs">
+<p className="text-gray-700 dark:text-gray-200"><span className="font-medium text-gray-500 dark:text-gray-400">Address</span><span className="mx-2 text-gray-300 dark:text-gray-600">·</span><span className="font-medium">{compactAddress || '—'}</span></p>
+<dl className="flex items-center gap-4">
+{compactHeaderDetails.map((item) => (
+<div key={item.label} className="flex items-center gap-1.5 whitespace-nowrap">
+<dt className="text-gray-500 dark:text-gray-400">{item.label}</dt>
+<dd className="font-medium text-gray-900 dark:text-white">{item.value}</dd>
 </div>
 ))}
 </dl>
-</section>
-))}
 </div>
 </section>
 ) : null}
@@ -1491,6 +1476,7 @@ function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize
   const [debt, setDebt] = useState(null)
   const [uploadingLoanId, setUploadingLoanId] = useState(null)
   const [highlightedLoanYears, setHighlightedLoanYears] = useState({})
+  const [showClosedLoans, setShowClosedLoans] = useState(false)
   const debtRefreshVersion = useRef(0)
 
   const refreshDebt = async () => {
@@ -1627,50 +1613,110 @@ function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize
   }
 
   const logicalLoans = debt?.loans || []
+  const isClosedLoan = (loan) => ['CLOSED', 'REFINANCED', 'PAID_OFF'].includes(String(loan.status || '').toUpperCase())
+  const activeLoans = logicalLoans
+    .filter((loan) => !isClosedLoan(loan))
+    .sort((left, right) => String(right.disbursementDate || right.origination_date || '').localeCompare(String(left.disbursementDate || left.origination_date || '')))
+  const closedLoans = logicalLoans
+    .filter(isClosedLoan)
+    .sort((left, right) => String(right.closed_date || '').localeCompare(String(left.closed_date || '')))
+  const refinanceChains = debt?.refinanceChains || []
   const loanMetricRows = metricVault?.loanMetrics || {}
+
+  const renderLoanCard = (loan) => (
+    <LoanCard
+      key={loan.logicalLoanId || loan.id}
+      loan={loan}
+      debt={loan}
+      metrics={loanMetricRows[String(loan.id)]}
+      onEdit={() => onEditLoan(loan)}
+      onAmortize={() => onAmortize(loan)}
+      onPreviewStatement={(file) => previewLoanDocumentUpload(loan, file)}
+      onAcceptStatement={(preview, options) => applyLoanDocumentUpload(loan, preview, options)}
+      onDeleted={async () => {
+        await Promise.resolve(onDeleted?.())
+        await refreshDebt().catch(() => {})
+      }}
+      propId={propId}
+      uploadingStatement={uploadingLoanId === loan.id}
+      highlightedYears={highlightedLoanYears[loan.id] || []}
+      closed={isClosedLoan(loan)}
+    />
+  )
 
   return (
     <div className="space-y-5">
+      {refinanceChains.map((chain) => (
+        <LoanRefinanceChain key={chain.chainId} chain={chain} />
+      ))}
       <div className="grid gap-4">
-        {logicalLoans.map((loan) => (
-          <LoanCard
-            key={loan.logicalLoanId || loan.id}
-            loan={loan}
-            debt={loan}
-            metrics={loanMetricRows[String(loan.id)]}
-            onEdit={() => onEditLoan(loan)}
-            onAmortize={() => onAmortize(loan)}
-            onPreviewStatement={(file) => previewLoanDocumentUpload(loan, file)}
-            onAcceptStatement={(preview, options) => applyLoanDocumentUpload(loan, preview, options)}
-            onDeleted={async () => {
-              await Promise.resolve(onDeleted?.())
-              await refreshDebt().catch(() => {})
-            }}
-            propId={propId}
-            uploadingStatement={uploadingLoanId === loan.id}
-            highlightedYears={highlightedLoanYears[loan.id] || []}
-            closed={loan.status === 'CLOSED'}
-          />
-        ))}
+        {activeLoans.map(renderLoanCard)}
       </div>
+
+      {closedLoans.length ? (
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-neutral-700/70 dark:bg-neutral-900">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-gray-50 dark:hover:bg-neutral-800/60"
+            onClick={() => setShowClosedLoans((current) => !current)}
+            aria-expanded={showClosedLoans}
+          >
+            <span>
+              <span className="block text-sm font-semibold text-gray-950 dark:text-white">Closed loan history</span>
+              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                {closedLoans.length} {closedLoans.length === 1 ? 'loan' : 'loans'} closed or refinanced
+              </span>
+            </span>
+            <ChevronDown className={`h-5 w-5 text-gray-500 transition-transform ${showClosedLoans ? 'rotate-180' : ''}`} aria-hidden="true" />
+          </button>
+          {showClosedLoans ? <div className="grid gap-4 border-t border-gray-200 p-4 dark:border-neutral-700/70">{closedLoans.map(renderLoanCard)}</div> : null}
+        </section>
+      ) : null}
 
       <button
         type="button"
         onClick={onAddLoan}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-8 text-center text-lg font-medium text-gray-500 hover:border-blue-300 hover:text-blue-600 dark:border-neutral-600 dark:bg-neutral-900/90 dark:text-neutral-500 dark:hover:border-neutral-400 dark:hover:text-neutral-300"
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 bg-white px-4 py-5 text-center text-sm font-medium text-gray-500 hover:border-blue-300 hover:text-blue-600 dark:border-neutral-600 dark:bg-neutral-900/90 dark:text-neutral-500 dark:hover:border-neutral-400 dark:hover:text-neutral-300"
       >
-        <Plus className="h-5 w-5" aria-hidden="true" />
+        <Plus className="h-4 w-4" aria-hidden="true" />
         Add a loan - a HELOC or second mortgage stacks here as its own card with its own year table. The portfolio strip sums all loans.
       </button>
     </div>
   )
 }
 
+function LoanRefinanceChain({ chain }) {
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900" aria-label="Loan refinance history">
+      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-950 dark:text-white">
+        <GitBranch className="h-4 w-4 text-gray-400" aria-hidden="true" />
+        Loan history
+      </div>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        {(chain.nodes || []).map((node, index) => (
+          <Fragment key={node.loanId}>
+            {index > 0 ? <ChevronRight className="hidden h-5 w-5 shrink-0 text-gray-300 md:block" aria-hidden="true" /> : null}
+            <div className="min-w-0 flex-1 rounded-md bg-gray-50 px-3 py-2.5 dark:bg-gray-950">
+              <div className="flex items-center justify-between gap-3">
+                <p className="truncate text-sm font-semibold text-gray-950 dark:text-white">{node.lender}</p>
+                <span className={`text-xs font-medium ${node.status === 'OPEN' ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-gray-400'}`}>{node.statusLabel}</span>
+              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{node.periodDisplay}</p>
+              <p className="mt-1 text-xs font-medium text-gray-700 dark:text-gray-300">{node.originalAmountDisplay} · {node.rateDisplay}</p>
+              {node.status === 'OPEN' ? <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Current balance {node.currentBalanceDisplay}</p> : null}
+            </div>
+          </Fragment>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function LoanPortfolioMetric({ label, value, tone }) {
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-900 dark:bg-neutral-950/95">
-      <p className="text-base font-medium text-gray-500 dark:text-neutral-500">{label}</p>
-      <p className={`mt-2 truncate text-3xl font-medium ${tone === 'positive' ? 'text-emerald-600 dark:text-emerald-500' : 'text-gray-950 dark:text-white'}`}>{value}</p>
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-neutral-900 dark:bg-neutral-950/95">
+      <p className="text-xs font-medium text-gray-500 dark:text-neutral-500">{label}</p>
+      <p className={`mt-1 truncate text-xl font-semibold ${tone === 'positive' ? 'text-emerald-600 dark:text-emerald-500' : 'text-gray-950 dark:text-white'}`}>{value}</p>
     </div>
   )
 }
@@ -1704,19 +1750,91 @@ function ExpenseFieldSourceBadge({ source }) {
   )
 }
 
+function ExpenseSourceDialog({ row, onClose }) {
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  const metrics = row?.source?.metrics || []
+  if (!row || !metrics.length) return null
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-950/35 p-4" role="presentation" onMouseDown={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${row.year} expense source details`}
+        className="max-h-[82vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-gray-200 bg-white px-5 py-4 dark:border-gray-700 dark:bg-gray-900">
+          <div>
+            <h3 className="font-semibold text-gray-950 dark:text-white">{row.year} Expense Sources</h3>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Backend-selected values and calendar-year allocation</p>
+          </div>
+          <button type="button" className="icon-btn" aria-label="Close source details" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="space-y-5 p-5">
+          {metrics.map((metric) => {
+            const title = metric.expenseType === 'PROPERTY_TAX' ? 'Property Tax' : 'Homeowners Insurance'
+            const coverage = metric.coverage || {}
+            const allDocuments = [...(metric.documents || []), ...(metric.supportingDocuments || [])]
+            return (
+              <section key={metric.expenseType} className="rounded-md border border-gray-200 p-4 dark:border-gray-700">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-semibold text-gray-950 dark:text-white">{row.year} {title}</h4>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{metric.sourceLabel}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-semibold text-gray-950 dark:text-white">{metric.display}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{metric.status?.replaceAll('_', ' ')} · {metric.completeness}</p>
+                  </div>
+                </div>
+                <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
+                  <div><dt className="text-gray-500">Calendar year</dt><dd className="mt-1 font-medium text-gray-900 dark:text-white">Jan 1 – Dec 31, {row.year}</dd></div>
+                  {coverage.sourcePeriodStart && coverage.sourcePeriodEnd ? <div><dt className="text-gray-500">Source period</dt><dd className="mt-1 font-medium text-gray-900 dark:text-white">{formatDate(coverage.sourcePeriodStart)} – {formatDate(coverage.sourcePeriodEnd)}</dd></div> : null}
+                  <div><dt className="text-gray-500">Confidence</dt><dd className="mt-1 font-medium text-gray-900 dark:text-white">{metric.confidence == null ? 'Not provided' : `${Math.round(metric.confidence * 100)}%`}</dd></div>
+                </dl>
+                {metric.inputs?.length ? (
+                  <div className="mt-4">
+                    <p className="text-xs font-semibold uppercase text-gray-500">Included</p>
+                    <div className="mt-2 divide-y divide-gray-100 rounded-md border border-gray-100 dark:divide-gray-800 dark:border-gray-800">
+                      {metric.inputs.map((input, index) => <div key={`${input.date}-${index}`} className="flex items-center justify-between gap-4 px-3 py-2 text-sm"><span className="text-gray-600 dark:text-gray-300">{input.date ? `${formatDate(input.date)} · ` : ''}{input.label}</span><strong className="text-gray-950 dark:text-white">{input.display}</strong></div>)}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mt-4 rounded-md bg-gray-50 p-3 text-xs dark:bg-gray-800/60">
+                  <p className="font-semibold text-gray-900 dark:text-white">Calculation</p>
+                  <p className="mt-1 text-gray-600 dark:text-gray-300">{metric.computation || metric.formula}</p>
+                  <p className="mt-1 text-gray-500">Allocation: {metric.allocationMethod?.replaceAll('_', ' ')}</p>
+                </div>
+                {metric.discrepancies?.length ? <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">{metric.discrepancies.map((item, index) => <p key={index}>Supporting source differs by {fmt(Math.abs(item.difference || 0))}.</p>)}</div> : null}
+                {allDocuments.length ? <div className="mt-4"><p className="text-xs font-semibold uppercase text-gray-500">Source documents</p><div className="mt-2 flex flex-wrap gap-2">{allDocuments.map((document) => <a key={document.id} href={document.previewUrl} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-gray-700 dark:text-blue-300 dark:hover:bg-gray-800"><FileText className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{document.name}</span></a>)}</div></div> : null}
+              </section>
+            )
+          })}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 function ExpensesTab({ propId }) {
   const [data, setData] = useState(null)
   const [annualRows, setAnnualRows] = useState([])
+  const [sourceRow, setSourceRow] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [expandedYear, setExpandedYear] = useState(null)
   const [editingYear, setEditingYear] = useState(null)
   const [editorRow, setEditorRow] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [uploadTarget, setUploadTarget] = useState(null)
-  const [uploading, setUploading] = useState(false)
+  const [escrowUploading, setEscrowUploading] = useState(false)
   const [addressReview, setAddressReview] = useState(null)
-  const fileInputRef = useRef(null)
+  const escrowInputRef = useRef(null)
 
   const loadExpenses = () => {
     let active = true
@@ -1822,35 +1940,43 @@ function ExpensesTab({ propId }) {
       setSaving(false)
     }
   }
-  const openDocumentUpload = (field) => {
-    setUploadTarget(field)
-    fileInputRef.current?.click()
-  }
-  const handleDocumentUpload = async (file) => {
-    if (!file || !uploadTarget || !editingYear) return
-    const formData = new FormData()
-    formData.append('property_id', propId)
-    formData.append('year', String(editingYear))
-    formData.append('field', uploadTarget)
-    formData.append('file', file)
-    setUploading(true)
+  const handleEscrowUpload = async (fileList) => {
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+    setEscrowUploading(true)
+    let imported = 0
+    let preserved = 0
+    const failures = []
     try {
-      const response = await docAPI.uploadExpenseField(formData)
-      if (response.data?.status === 'address_review_required') {
-        setAddressReview({ ...response.data, field: uploadTarget, year: editingYear })
-        toast.error(response.data?.message || 'Address confirmation required')
-        return
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('property_id', propId)
+        formData.append('file', file)
+        try {
+          const response = await docAPI.uploadExpenseDocument(formData)
+          if (response.data?.status === 'address_review_required') {
+            setAddressReview({
+              ...response.data,
+              field: response.data.detectedField,
+              year: response.data.expenseYear,
+            })
+            continue
+          }
+          imported += 1
+          preserved += response.data?.expenseApplication?.preserved?.length || 0
+        } catch (err) {
+          failures.push(`${file.name}: ${apiErrorMessage(err, 'Upload failed')}`)
+        }
       }
-      const refreshed = await refreshAfterMutation()
-      const saved = (refreshed.annualRows || []).find((row) => Number(row.year) === Number(editingYear))
-      if (saved) setEditorRow(normalizeAnnualExpense(saved))
-      toast.success(`Reported ${uploadTarget === 'property_tax' ? 'property tax' : 'insurance'} imported from document.`)
-    } catch (err) {
-      toast.error(apiErrorMessage(err, 'Expense document upload failed'))
+      if (imported) {
+        await refreshAfterMutation()
+        const preservedText = preserved ? ` ${preserved} existing expense value${preserved === 1 ? ' was' : 's were'} preserved.` : ''
+        toast.success(`${imported} expense document${imported === 1 ? '' : 's'} imported and assigned by document period.${preservedText}`)
+      }
+      if (failures.length) toast.error(failures.join(' '))
     } finally {
-      setUploading(false)
-      setUploadTarget(null)
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      setEscrowUploading(false)
+      if (escrowInputRef.current) escrowInputRef.current.value = ''
     }
   }
   const acceptAddressReview = async () => {
@@ -1903,88 +2029,6 @@ function ExpensesTab({ propId }) {
       ? <span className="text-gray-400 dark:text-gray-500">—</span>
       : component.display
   )
-  const renderDocumentControl = (field) => {
-    if (!['property_tax', 'insurance'].includes(field.key)) return null
-    const sourceDocument = selectedEditorRow[`${field.key}_document`]
-    const uploadingThisField = uploading && uploadTarget === field.key
-    const pendingReview = addressReview?.field === field.key ? addressReview : null
-    if (pendingReview) {
-      const validation = pendingReview.addressValidation || {}
-      const missingAddress = validation.status === 'document_address_missing'
-      return (
-        <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold">{missingAddress ? "Couldn't read an address" : 'Address mismatch'}</p>
-              <p className="mt-0.5 text-red-700 dark:text-red-200">
-                {missingAddress ? "Confirm this is the right document before it drives expenses." : 'This document is blocked until the address is confirmed.'}
-              </p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <div>
-                  <p className="font-medium text-red-700 dark:text-red-200">Property address</p>
-                  <p className="mt-0.5 break-words text-red-950 dark:text-red-50">{validation.normalizedPropertyAddress || 'No property address'}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-red-700 dark:text-red-200">On-document address</p>
-                  <p className="mt-0.5 break-words text-red-950 dark:text-red-50">{validation.normalizedDocumentAddress || 'No address found'}</p>
-                </div>
-              </div>
-              <p className="mt-2 text-red-700 dark:text-red-200">Match confidence: {validation.matchScoreDisplay || '0%'}</p>
-              <div className="mt-2 flex flex-wrap gap-3 font-medium">
-                <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptAddressReview}>
-                  Same address — accept
-                </button>
-                <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeAddressReview}>
-                  Wrong document — remove
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    }
-    if (sourceDocument) {
-      return (
-        <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-start gap-2">
-            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-gray-700 dark:text-gray-200" title={sourceDocument.name}>{sourceDocument.name}</p>
-              <p className="mt-0.5 truncate text-gray-500 dark:text-gray-400">
-                {sourceDocument.docType || 'document'} · {sourceDocument.amountDisplay || '—'} · parsed {documentDisplayDate(sourceDocument.parsedAt)}
-              </p>
-              {sourceDocument.addressConfirmed ? (
-                <p className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">Address confirmed</p>
-              ) : null}
-              <div className="mt-1.5 flex flex-wrap gap-3 font-medium">
-                <Link to={`/properties/${propId}/documents`} className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300">
-                  <FileText className="h-3.5 w-3.5" aria-hidden="true" /> Preview
-                </Link>
-                <button type="button" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300" onClick={() => openDocumentUpload(field.key)} disabled={uploading}>
-                  <Upload className="h-3.5 w-3.5" aria-hidden="true" /> Replace
-                </button>
-                <button type="button" className="inline-flex items-center gap-1 text-gray-600 hover:underline dark:text-gray-300" onClick={() => removeExpenseDocument(field.key)}>
-                  <X className="h-3.5 w-3.5" aria-hidden="true" /> Remove
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <button
-        type="button"
-        className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs font-medium text-gray-500 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:text-blue-300"
-        onClick={() => openDocumentUpload(field.key)}
-        disabled={uploading}
-      >
-        <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-        {uploadingThisField ? 'Uploading...' : `Upload ${field.key === 'property_tax' ? 'tax bill' : 'insurance'} doc — PDF, xls`}
-      </button>
-    )
-  }
   const renderExpenseEditor = (row) => {
     if (Number(editingYear) !== Number(row.year)) return null
     return (
@@ -2022,14 +2066,13 @@ function ExpensesTab({ propId }) {
                 <div className="mt-1 min-h-5">
                   <ExpenseFieldSourceBadge source={source} />
                 </div>
-                {renderDocumentControl(field)}
               </div>
             )
           })}
         </div>
         <div className="mt-5 flex items-center justify-end gap-2 border-t border-blue-100 pt-4 dark:border-blue-900/40">
-          <button type="button" className="btn-secondary text-sm" onClick={() => closeEditor()} disabled={saving || uploading}>Cancel</button>
-          <button type="button" className="btn-primary text-sm" onClick={saveExpense} disabled={saving || uploading}>
+          <button type="button" className="btn-secondary text-sm" onClick={() => closeEditor()} disabled={saving}>Cancel</button>
+          <button type="button" className="btn-primary text-sm" onClick={saveExpense} disabled={saving}>
             {saving ? 'Saving...' : 'Save expenses'}
           </button>
         </div>
@@ -2106,18 +2149,49 @@ function ExpensesTab({ propId }) {
       <section className="card">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-semibold text-gray-900 dark:text-white">Expense documents</h3>
+              <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">All years</span>
+            </div>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Select one or more escrow analyses, property-tax statements, or insurance declarations. The backend detects each document type and assigns values using its tax year or covered period.</p>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary inline-flex shrink-0 items-center gap-2 text-sm"
+            onClick={() => escrowInputRef.current?.click()}
+            disabled={escrowUploading}
+          >
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            {escrowUploading ? 'Importing documents...' : 'Upload documents'}
+          </button>
+        </div>
+        <input
+          ref={escrowInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.xlsx,.xls"
+          className="sr-only"
+          onChange={(event) => handleEscrowUpload(event.target.files)}
+        />
+        {addressReview ? (
+          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+            <p className="font-semibold">Confirm document address</p>
+            <p className="mt-1 text-xs">{addressReview.addressValidation?.normalizedDocumentAddress || 'No address found'} · {addressReview.expenseYear || addressReview.year}</p>
+            <div className="mt-2 flex flex-wrap gap-3 text-xs font-medium">
+              <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptAddressReview}>Same property — apply</button>
+              <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeAddressReview}>Remove document</button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="card">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
             <h3 className="font-semibold text-gray-900 dark:text-white">By year</h3>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Years without entered expenses show a dash and aren't counted as $0.</p>
           </div>
         </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf,.xlsx,.xls"
-          className="sr-only"
-          onChange={(event) => handleDocumentUpload(event.target.files?.[0])}
-        />
 
         <DataTable
           rows={data?.rows || []}
@@ -2148,12 +2222,9 @@ function ExpensesTab({ propId }) {
             { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.isCurrent ? `${row.year} · current` : row.year },
             { id: 'property_tax', header: 'Prop. tax', align: 'right', render: (row) => renderExpenseValue(row.propertyTax) },
             { id: 'insurance', header: 'Insurance', align: 'right', render: (row) => renderExpenseValue(row.insurance) },
-            { id: 'repairs', header: 'Repairs', align: 'right', render: (row) => renderExpenseValue(row.repairs) },
-            { id: 'management', header: 'Mgmt', align: 'right', render: (row) => renderExpenseValue(row.management) },
-            { id: 'utilities', header: 'Utilities', align: 'right', render: (row) => renderExpenseValue(row.utilities) },
-            { id: 'vacancy', header: 'Vacancy', align: 'right', render: (row) => renderExpenseValue(row.vacancy) },
-            { id: 'capex', header: 'CapEx', align: 'right', render: (row) => renderExpenseValue(row.capex) },
-            { id: 'other', header: 'Other', align: 'right', render: (row) => renderExpenseValue(row.other) },
+            { id: 'hoa', header: 'HOA', align: 'right', render: (row) => renderExpenseValue(row.hoa) },
+            { id: 'repairs', header: 'Repairs & maintenance', align: 'right', render: (row) => renderExpenseValue(row.repairs) },
+            { id: 'otherOperating', header: 'Other operating', align: 'right', render: (row) => renderExpenseValue(row.otherOperatingExpenses) },
             { id: 'total', header: 'Total', align: 'right', accessor: 'total', cellClassName: 'font-semibold text-gray-900 dark:text-white', render: (row) => row.total == null ? <span className="text-gray-400 dark:text-gray-500">—</span> : row.totalDisplay },
             {
               id: 'status',
@@ -2172,6 +2243,20 @@ function ExpensesTab({ propId }) {
                   {row.status}
                 </button>
               ),
+            },
+            {
+              id: 'source',
+              header: 'Source',
+              render: (row) => row.source?.metrics?.length ? (
+                <button
+                  type="button"
+                  className="inline-flex max-w-44 items-center gap-1.5 rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+                  onClick={(event) => { event.stopPropagation(); setSourceRow(row) }}
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{row.source.label}</span>
+                </button>
+              ) : <span className="text-xs text-gray-400">Manual</span>,
             },
             {
               id: 'actions',
@@ -2213,6 +2298,7 @@ function ExpensesTab({ propId }) {
           emptyMessage="No expense years available."
         />
       </section>
+      <ExpenseSourceDialog row={sourceRow} onClose={() => setSourceRow(null)} />
     </div>
   )
 }
@@ -3184,16 +3270,19 @@ function ScenarioRow({ label, value }) {
 // ── Unified taxes tab (deductions / Schedule E) ────────────────────────────────
 function UnifiedTaxPage({ propId, property }) {
   const [data, setData] = useState(null)
+  const [scheduleE, setScheduleE] = useState(null)
   const [comparison, setComparison] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showCompare, setShowCompare] = useState(false)
+  const [expandedRows, setExpandedRows] = useState({})
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([propAPI.lifetime(propId), propAPI.taxComparison()])
-      .then(([lifetimeRes, comparisonRes]) => {
+    Promise.all([propAPI.lifetime(propId), propAPI.taxComparison(), propAPI.scheduleE(propId)])
+      .then(([lifetimeRes, comparisonRes, scheduleRes]) => {
         setData(lifetimeRes.data)
         setComparison(comparisonRes.data)
+        setScheduleE(scheduleRes.data)
       })
       .catch(() => toast.error('Failed to load tax figures'))
       .finally(() => setLoading(false))
@@ -3213,9 +3302,14 @@ function UnifiedTaxPage({ propId, property }) {
   const lifetime = data.lifetime || {}
   const taxSummary = data.tax_summary || {}
   const currentYear = new Date().getFullYear()
+  const scheduleHistory = scheduleE?.history || []
+  const selectedYear = scheduleE?.selectedYear || taxSummary.current_year
+  const selectedScheduleRow = scheduleHistory.find((row) => row.year === selectedYear && row.kind !== 'total')
+  const projectedScheduleRow = scheduleHistory.find((row) => row.kind === 'projected_current_year')
+  const totalScheduleRow = scheduleHistory.find((row) => row.kind === 'total')
   const completeRows = yearly.filter((row) => !row.is_partial && row.year < currentYear)
   const headlineRow = completeRows.at(-1) || yearly.filter((row) => !row.is_partial).at(-1) || yearly.at(-1) || {}
-  const headlineYear = taxSummary.current_year || headlineRow.year || currentYear - 1
+  const headlineYear = selectedYear || headlineRow.year || currentYear - 1
   const rentalCurrent = taxSummary.current || {}
   const rentalLifetime = taxSummary.lifetime || {}
   const standardDeduction = 29200
@@ -3247,15 +3341,15 @@ hero: { label: 'Estimated itemizable deduction', value: fmtKMB(primaryDeduction,
     : {
         header: 'Schedule E',
         subtitle: 'Rental taxable P&L from income, expenses, mortgage interest, and depreciation.',
-hero: { label: 'Net Sch E', value: fmtKMB(rentalCurrent.net_schedule_e, { threshold: 1000 }), note: 'Flows to 1040', tone: (rentalCurrent.net_schedule_e || 0) < 0 ? 'red' : 'green' },
+hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display || fmtKMB(rentalCurrent.net_schedule_e, { threshold: 1000 }), note: 'Flows to 1040', tone: (selectedScheduleRow?.netScheduleE?.value ?? rentalCurrent.net_schedule_e ?? 0) < 0 ? 'red' : 'green' },
         components: [
-{ label: 'Rental income', value: fmtKMB(rentalCurrent.rental_income, { threshold: 1000 }) },
-{ label: 'Mortgage interest', value: fmtKMB(rentalCurrent.mortgage_interest, { threshold: 1000 }), note: 'Fully deductible - rental' },
-{ label: 'Depreciation', value: rentalCurrent.depreciation == null ? 'N/A' : fmtKMB(rentalCurrent.depreciation, { threshold: 1000 }), note: 'Non-cash' },
+{ label: 'Rental income', value: selectedScheduleRow?.rentalIncome?.display || fmtKMB(rentalCurrent.rental_income, { threshold: 1000 }) },
+{ label: 'Mortgage interest', value: selectedScheduleRow?.mortgageInterest?.display || fmtKMB(rentalCurrent.mortgage_interest, { threshold: 1000 }), note: 'Fully deductible - rental' },
+{ label: 'Depreciation', value: selectedScheduleRow?.depreciation?.display || (rentalCurrent.depreciation == null ? 'N/A' : fmtKMB(rentalCurrent.depreciation, { threshold: 1000 })), note: 'Non-cash' },
         ],
         lifetime: [
- { label: 'Lifetime net Sch E', value: fmtKMB(rentalLifetime.net_schedule_e, { threshold: 1000 }) },
- { label: 'Accumulated depreciation', value: fmtKMB(rentalLifetime.accumulated_depreciation, { threshold: 1000 }) },
+ { label: 'Accumulated net Sch E', value: totalScheduleRow?.netScheduleE?.display || fmtKMB(rentalLifetime.net_schedule_e, { threshold: 1000 }) },
+ { label: 'Accumulated depreciation', value: totalScheduleRow?.depreciation?.display || fmtKMB(rentalLifetime.accumulated_depreciation, { threshold: 1000 }) },
  { label: 'Suspended losses', value: fmtKMB(rentalLifetime.suspended_losses, { threshold: 1000 }) },
         ],
         banner: 'Passive-loss rules may limit Schedule E losses. If MAGI is above the phaseout range, review Form 8582 carryforwards.',
@@ -3263,10 +3357,19 @@ hero: { label: 'Net Sch E', value: fmtKMB(rentalCurrent.net_schedule_e, { thresh
       }
 
   const exportCSV = () => {
-    const rows = yearly.map((row) => type === 'PRIMARY'
-      ? [row.year, row.taxes_paid || row.property_tax || 0, row.interest_paid || 0, row.interest_paid || 0, row.loan_balance || row.balance || 0]
-      : [row.year, row.rental_income || 0, row.operating_expenses || 0, row.interest_paid || 0, row.depreciation || 0, row.taxable_income ?? row.net_schedule_e ?? 0])
-    const lines = [config.columns.join(','), ...rows.map((row) => row.join(','))]
+    const sourceRows = type === 'PRIMARY' || !scheduleHistory.length
+      ? yearly.map((row) => [row.year, row.taxes_paid || row.property_tax || 0, row.interest_paid || 0, row.interest_paid || 0, row.loan_balance || row.balance || 0])
+      : scheduleHistory.map((row) => [
+          row.label || row.year,
+          row.sourceLabel || '',
+          row.rentalIncome?.value ?? 0,
+          row.operatingExpenses?.value ?? 0,
+          row.mortgageInterest?.value ?? 0,
+          row.depreciation?.value ?? 0,
+          row.netScheduleE?.value ?? 0,
+        ])
+    const headers = type === 'PRIMARY' || !scheduleHistory.length ? config.columns : ['Year', 'Source', 'Rental income', 'Operating expenses', 'Mortgage interest', 'Depreciation', 'Net Sch E']
+    const lines = [headers.join(','), ...sourceRows.map((row) => row.join(','))]
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -3276,12 +3379,32 @@ hero: { label: 'Net Sch E', value: fmtKMB(rentalCurrent.net_schedule_e, { thresh
     URL.revokeObjectURL(url)
   }
 
+  const toggleExpanded = (rowKey) => setExpandedRows((current) => ({ ...current, [rowKey]: !current[rowKey] }))
+  const rentalHistoryRows = scheduleHistory.length ? scheduleHistory : yearly.map((row) => ({
+    year: row.year,
+    label: row.is_partial ? `${row.year} partial` : String(row.year),
+    kind: row.is_partial ? 'partial' : 'year',
+    sourceLabel: row.is_partial ? 'Partial' : 'Computed',
+    rentalIncome: { value: row.rental_income || 0, display: fmt(row.rental_income || 0) },
+    operatingExpenses: { value: row.operating_expenses || 0, display: fmt(row.operating_expenses || 0) },
+    mortgageInterest: { value: row.interest_paid || 0, display: fmt(row.interest_paid || 0) },
+    depreciation: { value: row.depreciation || 0, display: fmt(row.depreciation || 0) },
+    netScheduleE: { value: row.taxable_income ?? row.net_schedule_e ?? 0, display: fmt(row.taxable_income ?? row.net_schedule_e ?? 0) },
+  }))
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{config.header} — {headlineYear}</h3>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Taxes</p>
+          <h3 className="mt-1 text-xl font-semibold text-gray-900 dark:text-white">{config.header} - {headlineYear}</h3>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{config.subtitle}</p>
+          {projectedScheduleRow ? (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+              {projectedScheduleRow.label} is a full-year estimate. Expand it in History to see now vs projected remainder.
+            </p>
+          ) : null}
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={exportCSV} className="btn-secondary flex items-center gap-1.5 text-sm">
@@ -3291,6 +3414,7 @@ hero: { label: 'Net Sch E', value: fmtKMB(rentalCurrent.net_schedule_e, { thresh
             {showCompare ? 'Hide comparison' : 'Compare'}
           </button>
         </div>
+      </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-4">
@@ -3310,26 +3434,99 @@ hero: { label: 'Net Sch E', value: fmtKMB(rentalCurrent.net_schedule_e, { thresh
       </div>
 
       <div className="card">
-        <h3 className="mb-3 font-semibold text-gray-900 dark:text-white">History</h3>
-<DataTable
-columns={type === 'PRIMARY' ? [
-{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year} partial` : row.year },
-{ id: 'property_tax', header: 'Property Tax', align: 'right', sortValue: (row) => row.taxes_paid || row.property_tax || 0, render: (row) => fmt(row.taxes_paid || row.property_tax || 0) },
-{ id: 'mortgage_interest', header: 'Mortgage Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
-{ id: 'deductible_interest', header: 'Deductible Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
-{ id: 'loan_balance', header: 'Loan Balance', align: 'right', sortValue: (row) => row.loan_balance || row.balance || 0, render: (row) => fmt(row.loan_balance || row.balance || 0) },
-] : [
-{ id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year} partial` : row.year },
-{ id: 'rental_income', header: 'Rental Income', align: 'right', accessor: 'rental_income', cellClassName: 'text-green-600', render: (row) => fmt(row.rental_income || 0) },
-{ id: 'operating_expenses', header: 'Operating Expenses', align: 'right', accessor: 'operating_expenses', render: (row) => fmt(row.operating_expenses || 0) },
-{ id: 'mortgage_interest', header: 'Mortgage Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
-{ id: 'depreciation', header: 'Depreciation', align: 'right', accessor: 'depreciation', cellClassName: 'text-purple-600', render: (row) => fmt(row.depreciation || 0) },
-{ id: 'taxable_income', header: 'Taxable Income', align: 'right', accessor: 'taxable_income', render: (row) => <span className={(row.taxable_income || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>{fmt(row.taxable_income || 0)}</span> },
-]}
-rows={yearly}
-getRowKey={(row) => row.year}
-defaultSort={{ id: 'year', direction: 'asc' }}
-/>
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-gray-900 dark:text-white">Schedule E history</h3>
+            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">One backend-owned yearly view. Current year expands into now and projected remainder.</p>
+          </div>
+          {totalScheduleRow ? (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-right dark:border-gray-700 dark:bg-gray-800/70">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Accumulated net</p>
+              <p className={`text-base font-semibold ${(totalScheduleRow.netScheduleE?.value || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>{totalScheduleRow.netScheduleE?.display}</p>
+            </div>
+          ) : null}
+        </div>
+        {type === 'PRIMARY' ? (
+          <DataTable
+            columns={[
+              { id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year} partial` : row.year },
+              { id: 'property_tax', header: 'Property Tax', align: 'right', sortValue: (row) => row.taxes_paid || row.property_tax || 0, render: (row) => fmt(row.taxes_paid || row.property_tax || 0) },
+              { id: 'mortgage_interest', header: 'Mortgage Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
+              { id: 'deductible_interest', header: 'Deductible Interest', align: 'right', accessor: 'interest_paid', render: (row) => fmt(row.interest_paid || 0) },
+              { id: 'loan_balance', header: 'Loan Balance', align: 'right', sortValue: (row) => row.loan_balance || row.balance || 0, render: (row) => fmt(row.loan_balance || row.balance || 0) },
+            ]}
+            rows={yearly}
+            getRowKey={(row) => row.year}
+            defaultSort={{ id: 'year', direction: 'asc' }}
+          />
+        ) : (
+          <DataTable
+            columns={[
+              {
+                id: 'year',
+                header: 'Year',
+                align: 'center',
+                sortValue: (row) => row.year,
+                cellClassName: 'font-medium text-gray-900 dark:text-white',
+                render: (row) => (
+                  <button
+                    type="button"
+                    disabled={!row.detailRows?.length}
+                    onClick={() => row.detailRows?.length && toggleExpanded(row.year)}
+                    className={`inline-flex items-center justify-center gap-1.5 ${row.detailRows?.length ? 'text-blue-700 hover:text-blue-800 dark:text-blue-300' : ''}`}
+                  >
+                    {row.detailRows?.length ? (expandedRows[row.year] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />) : null}
+                    <span>{row.label || row.year}</span>
+                  </button>
+                ),
+              },
+              { id: 'source', header: 'Source', sortable: false, render: (row) => row.sourceLabel || '—' },
+              { id: 'rental_income', header: 'Rental Income', align: 'right', sortValue: (row) => row.rentalIncome?.value ?? 0, cellClassName: 'text-green-600', render: (row) => row.rentalIncome?.display ?? '—' },
+              { id: 'operating_expenses', header: 'Operating Expenses', align: 'right', sortValue: (row) => row.operatingExpenses?.value ?? 0, render: (row) => row.operatingExpenses?.display ?? '—' },
+              { id: 'mortgage_interest', header: 'Mortgage Interest', align: 'right', sortValue: (row) => row.mortgageInterest?.value ?? 0, render: (row) => row.mortgageInterest?.display ?? '—' },
+              { id: 'depreciation', header: 'Depreciation', align: 'right', sortValue: (row) => row.depreciation?.value ?? 0, cellClassName: 'text-purple-600', render: (row) => row.depreciation?.display ?? '—' },
+              { id: 'taxable_income', header: 'Taxable Income', align: 'right', sortValue: (row) => row.netScheduleE?.value ?? 0, render: (row) => <span className={(row.netScheduleE?.value || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>{row.netScheduleE?.display ?? '—'}</span> },
+            ]}
+            rows={rentalHistoryRows}
+            getRowKey={(row) => `${row.kind || 'year'}-${row.year}`}
+            getRowProps={(row) => row.kind === 'total'
+              ? { className: 'bg-gray-100 font-semibold dark:bg-gray-800/80' }
+              : row.kind === 'projected_current_year'
+                ? { className: 'bg-amber-50/70 dark:bg-amber-950/10' }
+                : {}}
+            renderExpandedRow={(row) => (row.detailRows?.length && expandedRows[row.year] ? (
+              <div className="overflow-auto rounded-lg border border-gray-100 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Line</th>
+                      <th className="px-3 py-2 text-left font-medium">Source</th>
+                      <th className="px-3 py-2 text-right font-medium">Rental income</th>
+                      <th className="px-3 py-2 text-right font-medium">Operating expenses</th>
+                      <th className="px-3 py-2 text-right font-medium">Mortgage interest</th>
+                      <th className="px-3 py-2 text-right font-medium">Depreciation</th>
+                      <th className="px-3 py-2 text-right font-medium">Taxable income</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {row.detailRows.map((detail) => (
+                      <tr key={detail.kind}>
+                        <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{detail.label}</td>
+                        <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{detail.sourceLabel || '—'}</td>
+                        <td className="px-3 py-2 text-right text-green-600">{detail.metrics?.rentsReceived?.display ?? '—'}</td>
+                        <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.operatingExpenses?.display ?? '—'}</td>
+                        <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.mortgageInterest?.display ?? '—'}</td>
+                        <td className="px-3 py-2 text-right text-purple-600">{detail.metrics?.depreciation?.display ?? '—'}</td>
+                        <td className={`px-3 py-2 text-right font-medium ${(detail.metrics?.netScheduleE?.value || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>{detail.metrics?.netScheduleE?.display ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null)}
+            defaultSort={{ id: 'year', direction: 'asc' }}
+          />
+        )}
       </div>
 
       {showCompare && comparison ? <TaxComparison comparison={comparison} currentPropId={Number(propId)} /> : null}
@@ -3371,6 +3568,7 @@ function TaxesTab({ propId }) {
   const [loading, setLoading] = useState(true)
   const [showCompare, setShowCompare] = useState(false)
   const [expandedCurrentYear, setExpandedCurrentYear] = useState(false)
+  const [expandedTaxHistoryRows, setExpandedTaxHistoryRows] = useState({})
 
   useEffect(() => {
     setLoading(true)
@@ -3566,7 +3764,25 @@ function TaxesTab({ propId }) {
         </div>
         <DataTable
           columns={[
-            { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white' },
+            {
+              id: 'year',
+              header: 'Year',
+              align: 'center',
+              sortValue: (row) => row.year,
+              cellClassName: 'font-medium text-gray-900 dark:text-white',
+              render: (row) => (
+                <button
+                  type="button"
+                  disabled={!row.detailRows?.length}
+                  onClick={() => row.detailRows?.length && setExpandedTaxHistoryRows((current) => ({ ...current, [row.year]: !current[row.year] }))}
+                  className={`inline-flex items-center justify-center gap-1.5 ${row.detailRows?.length ? 'text-blue-700 hover:text-blue-800 dark:text-blue-300' : ''}`}
+                >
+                  {row.detailRows?.length ? (expandedTaxHistoryRows[row.year] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />) : null}
+                  <span>{row.label || row.year}</span>
+                </button>
+              ),
+            },
+            { id: 'source', header: 'Source', sortable: false, render: (row) => row.sourceLabel || '—' },
             { id: 'deductibleInterest', header: 'Deductible interest', align: 'right', sortValue: (row) => row.deductibleInterest?.value ?? 0, render: (row) => row.deductibleInterest?.display ?? '—' },
             { id: 'propertyTax', header: 'Property tax', align: 'right', sortValue: (row) => row.propertyTax?.value ?? 0, render: (row) => row.propertyTax?.display ?? '—' },
             { id: 'depreciation', header: 'Depreciation', align: 'right', sortValue: (row) => row.depreciation?.value ?? 0, render: (row) => row.depreciation?.display ?? '—' },
@@ -3574,6 +3790,39 @@ function TaxesTab({ propId }) {
           ]}
           rows={historyRows}
           getRowKey={(row) => row.year}
+          getRowProps={(row) => row.kind === 'total'
+            ? { className: 'bg-gray-100 font-semibold dark:bg-gray-800/80' }
+            : row.kind === 'projected_current_year'
+              ? { className: 'bg-amber-50/70 dark:bg-amber-950/10' }
+              : {}}
+          renderExpandedRow={(row) => (row.detailRows?.length && expandedTaxHistoryRows[row.year] ? (
+            <div className="overflow-auto rounded-lg border border-gray-100 bg-white dark:border-gray-700 dark:bg-gray-900/40">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Line</th>
+                    <th className="px-3 py-2 text-left font-medium">Source</th>
+                    <th className="px-3 py-2 text-right font-medium">Deductible interest</th>
+                    <th className="px-3 py-2 text-right font-medium">Property tax</th>
+                    <th className="px-3 py-2 text-right font-medium">Depreciation</th>
+                    <th className="px-3 py-2 text-right font-medium">Net Sch E</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {row.detailRows.map((detail) => (
+                    <tr key={detail.kind}>
+                      <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{detail.label}</td>
+                      <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{detail.sourceLabel || '—'}</td>
+                      <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.mortgageInterest?.display ?? '—'}</td>
+                      <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.propertyTax?.display ?? '—'}</td>
+                      <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{detail.metrics?.depreciation?.display ?? '—'}</td>
+                      <td className="px-3 py-2 text-right font-medium text-gray-900 dark:text-white">{detail.metrics?.netScheduleE?.display ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null)}
           defaultSort={{ id: 'year', direction: 'asc' }}
         />
       </div>
@@ -3945,67 +4194,469 @@ function rawDataValueText(value) {
   }
 }
 
-function rawDataRows(payload) {
+function rawDataColumn(id, header, options = {}) {
+  return {
+    id,
+    header,
+    accessor: id,
+    render: (row, value) => <span className="break-words">{rawDataValueText(value)}</span>,
+    exportValue: (row) => rawDataValueText(row[id]),
+    searchValue: (row) => rawDataValueText(row[id]),
+    ...options,
+  }
+}
+
+function rawDataYearLabel(year) {
+  return year === null || year === undefined || year === '' ? 'Not annual' : String(year)
+}
+
+function rawDataRecordSearchText(row, columns) {
+  return columns.map((column) => rawDataValueText(row[column.id])).join(' ').toLowerCase()
+}
+
+function rawDataTypeLabel(row) {
+  return row.record_type || row.expense_type || row.source_type || row.loan_type || row.asset_type || row.usage_type || row.period_type || 'Other'
+}
+
+function rawDataGroup(id, title, description, columns, rows) {
+  const sortedRows = [...rows].sort((left, right) => {
+    const leftYear = Number(left.year || 99999)
+    const rightYear = Number(right.year || 99999)
+    if (leftYear !== rightYear) return leftYear - rightYear
+    return String(left.document || left.lender || left.date || '').localeCompare(String(right.document || right.lender || right.date || ''))
+  })
+  return {
+    id,
+    title,
+    description,
+    columns,
+    rows: sortedRows.map((row, index) => ({ ...row, id: row.id || `${id}-${index}` })),
+  }
+}
+
+function rawDataFieldRows(recordType, values, fields) {
+  return fields.map(([key, label]) => ({
+    id: `${recordType}-${key}`,
+    record_type: recordType,
+    field: label,
+    value: values?.[key],
+    data_key: key,
+    year: null,
+  }))
+}
+
+const RAW_FIELD_VALUE_COLUMNS = [
+  rawDataColumn('field', 'Field'),
+  rawDataColumn('value', 'Value'),
+  rawDataColumn('data_key', 'Data key'),
+]
+
+function rawDataRecordGroups(payload) {
   if (!payload) return []
-  const rows = []
-  const addRow = (source, year, field, value, detail = {}) => {
-    if (field === 'id' || field === 'record_uuid' || field === 'internal_source_key' || field === 'document_id') return
-    rows.push({
-      id: `${source}-${year || 'na'}-${field}-${rows.length}`,
-      source,
-      year: year || null,
-      field,
-      value,
-      valueDisplay: rawDataValueText(value),
-      document: detail.document || detail.document_name || detail.filename || '—',
-    })
+  const groups = []
+
+  if (payload.property_snapshot) {
+    const property = payload.property_snapshot
+    groups.push(rawDataGroup(
+      'property-details',
+      'Property details',
+      'Identity, address, property type, and current use shown in Property Setup.',
+      RAW_FIELD_VALUE_COLUMNS,
+      rawDataFieldRows('Property', property, [
+        ['id', 'Property ID'], ['property_uid', 'Property UID'], ['name', 'Property name'],
+        ['address', 'Street'], ['city', 'City'], ['state', 'State'], ['zip_code', 'ZIP code'],
+        ['property_type', 'Property type'], ['usage_type', 'Usage'],
+        ['original_residency_status', 'Original residency'], ['current_residency_status', 'Current residency'],
+        ['primary_start_date', 'Primary start'], ['primary_end_date', 'Primary end'],
+        ['rental_start_date', 'Rental start'], ['rental_end_date', 'Rental end'], ['notes', 'Notes'],
+      ]),
+    ))
+    groups.push(rawDataGroup(
+      'purchase-valuation',
+      'Purchase & valuation',
+      'Purchase, settlement, and current market-value fields shown for this property.',
+      RAW_FIELD_VALUE_COLUMNS,
+      rawDataFieldRows('Purchase and valuation', property, [
+        ['purchase_date', 'Purchase date'], ['purchase_price', 'Purchase price'],
+        ['down_payment', 'Down payment'], ['settlement_total_amount', 'Final settlement total'],
+        ['closing_costs', 'Closing costs'], ['market_value', 'Market price'],
+        ['market_value_source', 'Valuation source'], ['market_value_updated', 'Valuation date'],
+        ['land_value', 'Land value'], ['construction_price', 'Building basis'],
+        ['depreciable_basis', 'Depreciable basis'],
+      ]),
+    ))
+    groups.push(rawDataGroup(
+      'operating-setup',
+      'Operating setup',
+      'Current rental and recurring expense assumptions from Property Setup.',
+      RAW_FIELD_VALUE_COLUMNS,
+      rawDataFieldRows('Operating setup', property, [
+        ['monthly_rent', 'Monthly rent'], ['occupancy_rate', 'Occupancy rate'],
+        ['property_tax', 'Property tax'], ['insurance', 'Insurance'],
+        ['hoa_flag', 'Has HOA'], ['hoa_fee', 'HOA fee'], ['solar_ownership', 'Solar ownership'],
+        ['maintenance', 'Maintenance'], ['property_management_fee', 'Property management fee'],
+        ['utilities', 'Utilities'], ['vacancy_allowance', 'Vacancy allowance'],
+        ['capex_reserve', 'CapEx reserve'], ['other_expenses', 'Other expenses'],
+        ['depreciation_years', 'Depreciation years'], ['irs_annual_depreciation', 'Annual depreciation'],
+      ]),
+    ))
   }
 
-  ;(payload.tax_entries || []).forEach((entry) => {
-    Object.entries(entry).forEach(([field, value]) => {
-      addRow(entry.source_type || 'Tax Return / Schedule E', entry.tax_year, field, value, entry)
-    })
-  })
-
-  Object.entries(payload.docs_1098 || {}).forEach(([year, value]) => addRow('Form 1098', year, 'mortgage_interest', value))
-  ;(payload.docs_1098_detail || []).forEach((entry) => {
-    Object.entries(entry).forEach(([field, value]) => {
-      addRow('Form 1098 detail', entry.year, field, value, { document: entry.filename })
-    })
-  })
-  Object.entries(payload.docs_balance || {}).forEach(([year, value]) => addRow('Form 1098', year, 'box_2_balance', value))
-  Object.entries(payload.stmt_annual || {}).forEach(([year, values]) => {
-    Object.entries(values || {}).forEach(([field, value]) => addRow('Mortgage statements', year, field, value))
-  })
-  Object.entries(payload.tax_docs || {}).forEach(([year, value]) => addRow('Property tax documents', year, 'property_tax', value))
-  Object.entries(payload.lease_rent || {}).forEach(([year, values]) => {
-    Object.entries(values || {}).forEach(([field, value]) => addRow('Lease records', year, field, value))
-  })
-  ;(payload.snapshots || []).forEach((snapshot) => {
-    Object.entries(snapshot).forEach(([field, value]) => {
-      addRow('Mortgage statement snapshot', snapshot.year, field, value)
-    })
-  })
-  ;(payload.loans || []).forEach((loan) => {
-    Object.entries(loan).forEach(([field, value]) => {
-      addRow('Loan record', null, field, value, { document: loan.lender })
-    })
-  })
-  ;(payload.duplicate_validations || []).forEach((validation) => {
-    Object.entries(validation).forEach(([field, value]) => {
-      addRow('Duplicate validation', validation.tax_year, field, value)
-    })
-  })
-  if (payload.irs_annual_depreciation !== undefined) {
-    addRow('IRS depreciation model', null, 'irs_annual_depreciation', payload.irs_annual_depreciation)
+  const loanSnapshotRows = payload.loan_snapshot || []
+  if (loanSnapshotRows.length) {
+    groups.push(rawDataGroup(
+      'loan-snapshot',
+      'Loans',
+      'All debts and servicer records shown on the Loans tab, with active loans first.',
+      [
+        rawDataColumn('sequence', 'Order', { align: 'center' }),
+        rawDataColumn('status', 'Status'),
+        rawDataColumn('is_current_servicer', 'Current?', { align: 'center' }),
+        rawDataColumn('lender', 'Lender'),
+        rawDataColumn('account_number', 'Loan #'),
+        rawDataColumn('loan_type', 'Type'),
+        rawDataColumn('loan_group_id', 'Loan group'),
+        rawDataColumn('servicer_sequence', 'Servicer seq', { align: 'center' }),
+        rawDataColumn('servicer_start_date', 'Servicer start'),
+        rawDataColumn('servicer_end_date', 'Servicer end'),
+        rawDataColumn('transfer_reason', 'Transfer reason'),
+        rawDataColumn('closed_date', 'Closed date'),
+        rawDataColumn('closure_reason', 'Closure reason'),
+        rawDataColumn('original_amount', 'Original amount', { align: 'right' }),
+        rawDataColumn('current_balance', 'Current balance', { align: 'right' }),
+        rawDataColumn('stored_current_balance', 'Stored balance', { align: 'right' }),
+        rawDataColumn('current_balance_source', 'Balance source'),
+        rawDataColumn('current_balance_as_of', 'Balance as of'),
+        rawDataColumn('interest_rate', 'Rate', { align: 'right' }),
+        rawDataColumn('monthly_payment', 'P&I / mo', { align: 'right' }),
+        rawDataColumn('estimated_total_monthly_payment', 'Total payment / mo', { align: 'right' }),
+        rawDataColumn('escrow_amount', 'Escrow / mo', { align: 'right' }),
+        rawDataColumn('loan_term_years', 'Term', { align: 'right' }),
+        rawDataColumn('origination_date', 'Origination'),
+        rawDataColumn('maturity_date', 'Maturity'),
+        rawDataColumn('statement_date', 'Statement date'),
+        rawDataColumn('principal_due', 'Principal due', { align: 'right' }),
+        rawDataColumn('interest_due', 'Interest due', { align: 'right' }),
+        rawDataColumn('interest_paid_ytd', 'Interest YTD', { align: 'right' }),
+        rawDataColumn('principal_paid_ytd', 'Principal YTD', { align: 'right' }),
+        rawDataColumn('source_type', 'Source'),
+      ],
+      loanSnapshotRows.map((row) => ({ ...row, year: rawDataYearLabel(row.statement_date || row.origination_date).match(/(?:19|20)\d{2}/)?.[0] || null })),
+    ))
   }
-  return rows
+
+  const loanYearRows = payload.loan_yearly_history || []
+  if (loanYearRows.length) {
+    groups.push(rawDataGroup(
+      'loan-yearly-history',
+      'Loan by year',
+      'The same backend-calculated annual balance chain shown on the Loans tab.',
+      [
+        rawDataColumn('year_label', 'Year'),
+        rawDataColumn('loan_order', 'Loan order', { align: 'center' }),
+        rawDataColumn('lender', 'Lender'),
+        rawDataColumn('account_number', 'Loan #'),
+        rawDataColumn('loan_status', 'Loan status'),
+        rawDataColumn('start_balance', 'Start balance', { align: 'right' }),
+        rawDataColumn('principal_paid', 'Principal', { align: 'right' }),
+        rawDataColumn('scheduled_principal', 'Scheduled principal', { align: 'right' }),
+        rawDataColumn('top_up', 'Top-up', { align: 'right' }),
+        rawDataColumn('interest_paid', 'Interest', { align: 'right' }),
+        rawDataColumn('end_balance', 'End balance', { align: 'right' }),
+        rawDataColumn('source', 'Source'),
+        rawDataColumn('issue_count', 'Issues', { align: 'center' }),
+        rawDataColumn('comments', 'Notes'),
+      ],
+      loanYearRows.map((row) => ({ ...row, record_type: row.is_projection ? 'Projected' : 'Annual' })),
+    ))
+  }
+
+  const usageRows = payload.usage_timeline || []
+  if (usageRows.length) {
+    groups.push(rawDataGroup(
+      'usage-timeline',
+      'Usage timeline',
+      'Primary/rental usage periods that drive tax and rental calculations.',
+      [
+        rawDataColumn('usage_type', 'Usage'),
+        rawDataColumn('start_date', 'Start date'),
+        rawDataColumn('end_date', 'End date'),
+        rawDataColumn('fmv_at_start', 'FMV at start', { align: 'right' }),
+        rawDataColumn('monthly_rent', 'Monthly rent', { align: 'right' }),
+        rawDataColumn('vacancy_allowance', 'Vacancy', { align: 'right' }),
+        rawDataColumn('property_management_fee', 'Mgmt fee', { align: 'right' }),
+        rawDataColumn('accumulated_depreciation_at_start', 'Accum depreciation', { align: 'right' }),
+        rawDataColumn('suspended_losses_at_start', 'Suspended losses', { align: 'right' }),
+        rawDataColumn('notes', 'Notes'),
+      ],
+      usageRows.map((row) => ({ ...row, year: String(row.start_date || '').match(/(?:19|20)\d{2}/)?.[0] || null })),
+    ))
+  }
+
+  const rentalPeriodRows = payload.rental_periods || []
+  if (rentalPeriodRows.length) {
+    groups.push(rawDataGroup(
+      'rental-periods',
+      'Rental periods',
+      'Lease/rental periods used to derive yearly rent and occupancy.',
+      [
+        rawDataColumn('tenant_name', 'Tenant / label'),
+        rawDataColumn('start_year', 'Start year', { align: 'center' }),
+        rawDataColumn('start_month', 'Start month', { align: 'center' }),
+        rawDataColumn('end_year', 'End year', { align: 'center' }),
+        rawDataColumn('end_month', 'End month', { align: 'center' }),
+        rawDataColumn('monthly_rent', 'Monthly rent', { align: 'right' }),
+        rawDataColumn('notes', 'Notes'),
+      ],
+      rentalPeriodRows.map((row) => ({ ...row, year: row.start_year })),
+    ))
+  }
+
+  const annualExpenseRows = payload.annual_expenses || []
+  if (annualExpenseRows.length) {
+    groups.push(rawDataGroup(
+      'annual-expenses',
+      'Annual expenses',
+      'Yearly operating expense rows from setup, documents, or projections.',
+      [
+        rawDataColumn('year', 'Year', { align: 'center' }),
+        rawDataColumn('property_tax', 'Property tax', { align: 'right' }),
+        rawDataColumn('insurance', 'Insurance', { align: 'right' }),
+        rawDataColumn('hoa', 'HOA', { align: 'right' }),
+        rawDataColumn('repairs_maintenance', 'Repairs', { align: 'right' }),
+        rawDataColumn('property_management', 'Mgmt', { align: 'right' }),
+        rawDataColumn('utilities', 'Utilities', { align: 'right' }),
+        rawDataColumn('vacancy_allowance', 'Vacancy', { align: 'right' }),
+        rawDataColumn('capex_reserve', 'CapEx', { align: 'right' }),
+        rawDataColumn('other', 'Other', { align: 'right' }),
+        rawDataColumn('total', 'Total expenses', { align: 'right' }),
+        rawDataColumn('property_tax_source', 'Tax source'),
+        rawDataColumn('property_tax_source_label', 'Tax source label'),
+        rawDataColumn('insurance_source', 'Insurance source'),
+        rawDataColumn('insurance_source_label', 'Insurance source label'),
+        rawDataColumn('source_status', 'Status'),
+        rawDataColumn('notes', 'Notes'),
+      ],
+      annualExpenseRows,
+    ))
+  }
+
+  const depreciationAssetRows = payload.depreciation_assets || []
+  if (depreciationAssetRows.length) {
+    groups.push(rawDataGroup(
+      'depreciation-assets',
+      'Depreciation assets',
+      'Asset-level depreciation and amortization setup rows.',
+      [
+        rawDataColumn('asset_type', 'Type'),
+        rawDataColumn('description', 'Description'),
+        rawDataColumn('placed_in_service_date', 'Placed in service'),
+        rawDataColumn('cost_basis', 'Cost basis', { align: 'right' }),
+        rawDataColumn('land_portion', 'Land portion', { align: 'right' }),
+        rawDataColumn('method', 'Method'),
+        rawDataColumn('recovery_period', 'Recovery period', { align: 'right' }),
+        rawDataColumn('prior_depreciation', 'Prior depreciation', { align: 'right' }),
+        rawDataColumn('notes', 'Notes'),
+      ],
+      depreciationAssetRows.map((row) => ({ ...row, year: String(row.placed_in_service_date || '').match(/(?:19|20)\d{2}/)?.[0] || null })),
+    ))
+  }
+
+  const taxRows = (payload.tax_entries || []).map((entry, index) => ({
+    id: `schedule-e-${entry.id || index}`,
+    year: entry.tax_year,
+    document: entry.document_name,
+    rents_received: entry.rents_received,
+    mortgage_interest: entry.mortgage_interest,
+    property_taxes: entry.property_taxes,
+    depreciation: entry.depreciation,
+    total_expenses: entry.total_expenses,
+    net_income: entry.net_income,
+    days_rented: entry.days_rented,
+    personal_use_days: entry.personal_use_days,
+    confidence: entry.confidence,
+    import_date: entry.import_date,
+  }))
+  if (taxRows.length) {
+    groups.push(rawDataGroup(
+      'tax-history',
+      'Tax history',
+      'Annual rental-tax values displayed in the Taxes area, with source provenance.',
+      [
+        rawDataColumn('year', 'Year', { align: 'center' }),
+        rawDataColumn('document', 'Source'),
+        rawDataColumn('rents_received', 'Rents', { align: 'right' }),
+        rawDataColumn('mortgage_interest', 'Mortgage interest', { align: 'right' }),
+        rawDataColumn('property_taxes', 'Property taxes', { align: 'right' }),
+        rawDataColumn('depreciation', 'Depreciation', { align: 'right' }),
+        rawDataColumn('total_expenses', 'Total expenses', { align: 'right' }),
+        rawDataColumn('net_income', 'Net income', { align: 'right' }),
+        rawDataColumn('days_rented', 'Days rented', { align: 'center' }),
+        rawDataColumn('personal_use_days', 'Personal days', { align: 'center' }),
+        rawDataColumn('confidence', 'Confidence', { align: 'right' }),
+        rawDataColumn('import_date', 'Source date'),
+      ],
+      taxRows,
+    ))
+  }
+
+  const leaseRows = Object.entries(payload.lease_rent || {}).map(([year, values]) => ({
+    id: `lease-${year}`,
+    year,
+    income: values?.income,
+    occupied_months: values?.occupied_months,
+    occupancy: values?.occupancy,
+    lease_days: values?.lease_days,
+  }))
+  if (leaseRows.length) {
+    groups.push(rawDataGroup(
+      'annual-rental-income',
+      'Annual rental income',
+      'Yearly rental income and occupancy displayed across Rental, Expenses, and Taxes.',
+      [
+        rawDataColumn('year', 'Year', { align: 'center' }),
+        rawDataColumn('income', 'Income', { align: 'right' }),
+        rawDataColumn('occupied_months', 'Occupied months', { align: 'right' }),
+        rawDataColumn('occupancy', 'Occupancy', { align: 'right' }),
+        rawDataColumn('lease_days', 'Lease days', { align: 'right' }),
+      ],
+      leaseRows,
+    ))
+  }
+
+  const validationRows = (payload.duplicate_validations || []).map((validation, index) => ({
+    id: `duplicate-validation-${index}`,
+    year: validation.tax_year,
+    document_type: validation.document_type,
+    source_identity: validation.source_identity,
+    count: validation.count,
+    status: validation.status,
+    message: validation.message,
+  }))
+  if (validationRows.length || payload.irs_annual_depreciation !== undefined) {
+    groups.push(rawDataGroup(
+      'data-validation',
+      'Data validation',
+      'Backend checks and derived values that help explain discrepancies in the property tables.',
+      [
+        rawDataColumn('year', 'Year', { align: 'center' }),
+        rawDataColumn('document_type', 'Type'),
+        rawDataColumn('source_identity', 'Source identity'),
+        rawDataColumn('count', 'Count', { align: 'right' }),
+        rawDataColumn('status', 'Status'),
+        rawDataColumn('message', 'Message'),
+        rawDataColumn('irs_annual_depreciation', 'IRS annual depreciation', { align: 'right' }),
+      ],
+      [
+        ...validationRows,
+        ...(payload.irs_annual_depreciation !== undefined ? [{
+          id: 'irs-annual-depreciation',
+          year: null,
+          document_type: 'IRS depreciation model',
+          irs_annual_depreciation: payload.irs_annual_depreciation,
+        }] : []),
+      ],
+    ))
+  }
+
+  return groups
+}
+
+function rawDataSheetName(name, usedNames) {
+  const base = String(name || 'Raw data').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31).trim() || 'Raw data'
+  let candidate = base
+  let index = 2
+  while (usedNames.has(candidate)) {
+    const suffix = ` ${index}`
+    candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`
+    index += 1
+  }
+  usedNames.add(candidate)
+  return candidate
+}
+
+function exportRawDataWorkbook(groups, propId, query) {
+  const wb = utils.book_new()
+  const usedNames = new Set()
+  groups.forEach((group) => {
+    const rows = query
+      ? group.rows.filter((row) => rawDataRecordSearchText(row, group.columns).includes(query))
+      : group.rows
+    if (!rows.length) return
+    const headers = group.columns.map((column) => column.header)
+    const body = rows.map((row) => group.columns.map((column) => rawDataValueText(row[column.id])))
+    const ws = utils.aoa_to_sheet([headers, ...body])
+    utils.book_append_sheet(wb, ws, rawDataSheetName(group.title, usedNames))
+  })
+  if (!wb.SheetNames.length) {
+    const ws = utils.aoa_to_sheet([['No raw data records']])
+    utils.book_append_sheet(wb, ws, 'Raw data')
+  }
+  writeFile(wb, `property-${propId}-data-workbook.xlsx`)
+}
+
+function rawDataMobileRecordLabel(row, index) {
+  return row.year_label || row.year || row.field || row.name || row.lender || row.description || row.tenant_name || row.usage_type || `Record ${index + 1}`
+}
+
+function RawDataMobileRecords({ group, rows }) {
+  if (!rows.length) {
+    return <div className="p-6 text-center text-sm text-gray-400">No records match the current filters.</div>
+  }
+  const isFieldValueTable = group.columns.some((column) => column.id === 'field') && group.columns.some((column) => column.id === 'value')
+  if (isFieldValueTable) {
+    return (
+      <dl className="divide-y divide-gray-100 px-4 dark:divide-gray-800 md:hidden">
+        {rows.map((row) => (
+          <div key={row.id} className="grid grid-cols-[minmax(7rem,42%)_1fr] gap-3 py-3">
+            <dt className="min-w-0">
+              <span className="block text-xs font-medium text-gray-500 dark:text-gray-400">{row.field}</span>
+              <span className="mt-0.5 block break-all text-[10px] text-gray-400 dark:text-gray-500">{row.data_key}</span>
+            </dt>
+            <dd className="min-w-0 break-words text-right text-sm font-medium text-gray-900 dark:text-gray-100">{rawDataValueText(row.value)}</dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+  return (
+    <div className="divide-y divide-gray-100 dark:divide-gray-800 md:hidden">
+      {rows.map((row, index) => (
+        <details key={row.id} className="group px-4 py-1" open={rows.length === 1}>
+          <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-3 marker:content-none">
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-gray-900 dark:text-white">{rawDataMobileRecordLabel(row, index)}</span>
+              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{rawDataTypeLabel(row)}</span>
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180" aria-hidden="true" />
+          </summary>
+          <dl className="grid grid-cols-1 gap-x-4 border-t border-gray-100 py-2 dark:border-gray-800 sm:grid-cols-2">
+            {group.columns.map((column) => {
+              const value = row[column.id]
+              return (
+                <div key={column.id} className="grid grid-cols-[minmax(7rem,42%)_1fr] gap-3 border-b border-gray-50 py-2.5 last:border-0 dark:border-gray-800/70 sm:block">
+                  <dt className="text-xs font-medium text-gray-500 dark:text-gray-400">{column.header}</dt>
+                  <dd className="min-w-0 break-words text-right text-sm text-gray-900 dark:text-gray-100 sm:mt-1 sm:text-left">
+                    {column.render ? column.render(row, value) : rawDataValueText(value)}
+                  </dd>
+                </div>
+              )
+            })}
+          </dl>
+        </details>
+      ))}
+    </div>
+  )
 }
 
 function ExtractedRawDataTab({ propId }) {
   const [payload, setPayload] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [activeGroupId, setActiveGroupId] = useState('')
+  const [yearFilter, setYearFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
 
   useEffect(() => {
     let active = true
@@ -4048,33 +4699,151 @@ function ExtractedRawDataTab({ propId }) {
     )
   }
 
-  const rows = rawDataRows(payload)
+  const groups = rawDataRecordGroups(payload)
+  const activeGroup = groups.find((group) => group.id === activeGroupId) || groups[0]
+  const normalizedQuery = query.trim().toLowerCase()
+  const recordCount = groups.reduce((sum, group) => sum + group.rows.length, 0)
+  const activeRows = activeGroup?.rows || []
+  const yearOptions = [...new Set(activeRows.map((row) => rawDataYearLabel(row.year)))].sort((left, right) => {
+    if (left === 'Not annual') return 1
+    if (right === 'Not annual') return -1
+    return Number(left) - Number(right)
+  })
+  const typeOptions = [...new Set(activeRows.map((row) => rawDataTypeLabel(row)).filter(Boolean))].sort((left, right) => String(left).localeCompare(String(right)))
+  const visibleRows = activeRows.filter((row) => {
+    const matchesSearch = !normalizedQuery || rawDataRecordSearchText(row, activeGroup.columns).includes(normalizedQuery)
+    const matchesYear = yearFilter === 'all' || rawDataYearLabel(row.year) === yearFilter
+    const matchesType = typeFilter === 'all' || rawDataTypeLabel(row) === typeFilter
+    return matchesSearch && matchesYear && matchesType
+  })
+
   return (
-    <section className="card">
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+    <section className="min-w-0 space-y-4">
+      <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 sm:p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Raw data</p>
-          <h2 className="mt-1 text-xl font-semibold text-gray-900 dark:text-white">Source records</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Backend-provided document, loan, tax, and lease source values.</p>
+          <h2 className="mt-1 text-xl font-semibold text-gray-900 dark:text-white">Property data workbook</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Application data shown across this property: setup fields, loans, rental activity, expenses, taxes, and depreciation. Uploaded-document inventory remains in Documents.</p>
         </div>
-        <span className="text-sm text-gray-500 dark:text-gray-400">{rows.length} values</span>
+        <div className="grid grid-cols-3 gap-2 text-center sm:min-w-[24rem] sm:text-right">
+          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/70">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Tables</p>
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">{groups.length}</p>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/70">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Records</p>
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">{recordCount}</p>
+          </div>
+          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/70">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Visible</p>
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">{visibleRows.length}</p>
+          </div>
+        </div>
       </div>
-      <DataTable
-        rows={rows}
-        columns={[
-          { id: 'source', header: 'Source', accessor: 'source', cellClassName: 'font-medium text-gray-900 dark:text-white' },
-          { id: 'year', header: 'Year', align: 'center', accessor: 'year', render: (row) => row.year || '—' },
-          { id: 'field', header: 'Field', accessor: 'field' },
-          { id: 'value', header: 'Value', accessor: 'valueDisplay', render: (row) => <span className="break-all">{row.valueDisplay}</span> },
-          { id: 'document', header: 'Document', accessor: 'document' },
-        ]}
-        getRowKey={(row) => row.id}
-        defaultSort={{ id: 'year', direction: 'asc' }}
-        searchable
-        searchPlaceholder="Search raw data"
-        exportFilename={`property-${propId}-raw-data.csv`}
-        emptyMessage="No raw source records available."
-      />
+
+      <div className="mt-4 sm:hidden">
+        <label htmlFor="raw-data-table" className="mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400">Data table</label>
+        <select
+          id="raw-data-table"
+          value={activeGroup?.id || ''}
+          onChange={(event) => {
+            setActiveGroupId(event.target.value)
+            setYearFilter('all')
+            setTypeFilter('all')
+          }}
+          className="h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-medium text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+        >
+          {groups.map((group) => <option key={group.id} value={group.id}>{group.title} ({group.rows.length})</option>)}
+        </select>
+      </div>
+      <div className="mt-5 hidden gap-2 overflow-x-auto pb-1 sm:flex">
+        {groups.map((group) => (
+          <button
+            key={group.id}
+            type="button"
+            onClick={() => {
+              setActiveGroupId(group.id)
+              setYearFilter('all')
+              setTypeFilter('all')
+            }}
+            className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-medium transition ${activeGroup?.id === group.id ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:text-white'}`}
+          >
+            {group.title}
+            <span className="ml-2 rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">{group.rows.length}</span>
+          </button>
+        ))}
+      </div>
+      </div>
+
+      {activeGroup ? (
+        <div className="min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          <div className="border-b border-gray-100 p-4 dark:border-gray-800">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">{activeGroup.title}</h3>
+                <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{activeGroup.description}</p>
+              </div>
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search table"
+                  className="col-span-2 h-9 min-w-0 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 sm:min-w-56 sm:w-auto"
+                />
+                <select
+                  value={yearFilter}
+                  onChange={(event) => setYearFilter(event.target.value)}
+                  className="h-9 min-w-0 rounded-lg border border-gray-200 bg-white px-2 text-sm text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 sm:px-3"
+                >
+                  <option value="all">All years</option>
+                  {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+                </select>
+                <select
+                  value={typeFilter}
+                  onChange={(event) => setTypeFilter(event.target.value)}
+                  className="h-9 min-w-0 rounded-lg border border-gray-200 bg-white px-2 text-sm text-gray-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 sm:px-3"
+                >
+                  <option value="all">All record types</option>
+                  {typeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => exportRawDataWorkbook([{ ...activeGroup, rows: visibleRows }], propId, '')}
+                  className="h-9 rounded-lg border border-gray-200 px-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 sm:px-3"
+                >
+                  Export sheet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportRawDataWorkbook(groups, propId, normalizedQuery)}
+                  className="h-9 rounded-lg border border-gray-200 px-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800 sm:px-3"
+                >
+                  Export workbook
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <RawDataMobileRecords group={activeGroup} rows={visibleRows} />
+          <div className="hidden min-w-0 md:block">
+            <DataTable
+              rows={visibleRows}
+              columns={activeGroup.columns}
+              getRowKey={(row) => row.id}
+              defaultSort={activeGroup.columns.some((column) => column.id === 'year') ? { id: 'year', direction: 'asc' } : null}
+              tableWrapperClassName="max-w-full overflow-auto rounded-none border-0"
+              className="min-w-0 p-0"
+              emptyMessage="No records match the current filters."
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-400 dark:border-gray-700 dark:bg-gray-900">
+          No property data records are available.
+        </div>
+      )}
     </section>
   )
 }
@@ -4371,12 +5140,42 @@ const equityStoryTone = {
 }
 
 function EquityStoryCharts({ story, onJump }) {
+const nodes = story?.waterfall?.series || []
+const acquisitionCash = nodes.find((node) => node.key === 'acquisitionCashContribution')
+const principalReduction = nodes.find((node) => node.key === 'principalReductionSinceAcquisition')
+const appreciation = nodes.find((node) => node.key === 'appreciation')
+const securedDebt = nodes.find((node) => node.key === 'currentPropertyDebt')
+const assetRows = [acquisitionCash, principalReduction, appreciation?.value >= 0 ? appreciation : null].filter(Boolean)
+const liabilityRows = [securedDebt, appreciation?.value < 0 ? { ...appreciation, label: 'Market value loss' } : null].filter(Boolean)
 return (
-<div className="grid items-start gap-4 lg:grid-cols-[minmax(300px,0.36fr)_minmax(620px,0.64fr)]">
-<OwnershipStoryChart ownership={story?.ownership} onJump={onJump} />
-<ValueWaterfallStoryChart waterfall={story?.waterfall} onJump={onJump} />
+<div className="grid items-stretch gap-5 lg:grid-cols-[minmax(180px,0.7fr)_minmax(0,2.4fr)_minmax(180px,0.7fr)]">
+<EquityStorySidePanel title="Assets" rows={assetRows} icon={Home} tone="asset" emptyLabel="No asset values available" />
+<div className="min-w-0 lg:order-none"><ValueWaterfallStoryChart waterfall={story?.waterfall} onJump={onJump} /></div>
+<EquityStorySidePanel title="Liabilities & losses" rows={liabilityRows} icon={TrendingDown} tone="liability" emptyLabel="No liabilities or losses" />
 </div>
 )
+}
+
+function EquityStorySidePanel({ title, rows, icon: Icon, tone, emptyLabel }) {
+  const accent = tone === 'asset'
+    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300'
+    : 'bg-rose-50 text-rose-700 dark:bg-rose-900/20 dark:text-rose-300'
+  return (
+    <aside className="border-y border-gray-200 py-4 dark:border-gray-700 lg:self-center">
+      <div className="flex items-center gap-2">
+        <span className={`grid h-8 w-8 place-items-center rounded-lg ${accent}`}><Icon className="h-4 w-4" aria-hidden="true" /></span>
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
+      </div>
+      <div className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
+        {rows.length ? rows.map((row) => (
+          <div key={row.key} className="py-3 first:pt-0 last:pb-0">
+            <p className="text-xs text-gray-500 dark:text-gray-400">{row.label}</p>
+            <p className="mt-1 text-base font-semibold text-gray-900 dark:text-white">{row.fullDisplay || row.display}</p>
+          </div>
+        )) : <p className="text-sm text-gray-500 dark:text-gray-400">{emptyLabel}</p>}
+      </div>
+    </aside>
+  )
 }
 
 function EquityStorySection({ story, onJump }) {
@@ -4458,7 +5257,7 @@ function wrapWaterfallLabel(label) {
 
 function ValueWaterfallStoryChart({ waterfall, onJump }) {
   if (waterfall?.status !== 'available') {
-    return <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700"><h4 className="text-sm font-semibold text-gray-900 dark:text-white">{waterfall?.title || 'Purchase price plus appreciation = today’s value'}</h4><p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{waterfall?.subtitle}</p><StoryUnavailable reason={waterfall?.unavailableReason} action={waterfall?.recommendedAction} onJump={onJump} /></div>
+    return <div className="min-w-0 py-1"><ChartInfoTitle title={waterfall?.title || 'Purchase Price to Current Market Value'} details={waterfall?.subtitle} /><StoryUnavailable reason={waterfall?.unavailableReason} action={waterfall?.recommendedAction} onJump={onJump} /></div>
   }
   const nodes = waterfall.series || []
   const chartHeight = 400
@@ -4470,21 +5269,24 @@ function ValueWaterfallStoryChart({ waterfall, onJump }) {
   const plotHeight = chartHeight - top - bottom
   const barWidth = 48
   const gap = 56
-  const maxValue = Math.max(...nodes.map((node) => Math.max(node.startValue ?? node.start ?? 0, node.endValue ?? node.end ?? 0)), 1)
+  const nodeValues = nodes.flatMap((node) => [node.startValue ?? node.start ?? 0, node.endValue ?? node.end ?? 0])
+  const minValue = Math.min(0, ...nodeValues)
+  const maxValue = Math.max(1, ...nodeValues)
+  const axisMin = minValue < 0 ? minValue * 1.08 : 0
   const axisMax = maxValue * 1.08
-  const y = (value) => top + plotHeight - ((value || 0) / axisMax) * plotHeight
-  const ticks = [0, axisMax / 2, maxValue]
+  const axisRange = Math.max(axisMax - axisMin, 1)
+  const y = (value) => top + ((axisMax - (value || 0)) / axisRange) * plotHeight
+  const ticks = [axisMin, axisMin + axisRange / 2, axisMax]
   const barCenter = (index) => left + index * (barWidth + gap) + barWidth / 2
   const barX = (index) => left + index * (barWidth + gap)
   const nodeById = Object.fromEntries(nodes.map((node, index) => [node.id || node.key, { node, index }]))
   const srSummary = waterfall.screenReaderSummary || `${waterfall.title}. ${nodes.map((node) => `${node.label}: ${node.fullDisplay || node.display}`).join(', ')}.`
   return (
-    <div className="rounded-lg border border-gray-100 p-4 dark:border-gray-700">
-      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{waterfall.title}</h4>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{waterfall.subtitle}</p>
+    <div className="min-w-0 py-1">
+      <ChartInfoTitle title={waterfall.title || 'Purchase Price to Current Market Value'} details={waterfall.subtitle} />
       <p className="sr-only">{srSummary}</p>
-      <div className="mt-4 overflow-x-auto">
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-[680px]" role="img" aria-label={waterfall.title}>
+      <div className="mx-auto mt-4 max-w-[760px] overflow-x-auto">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="mx-auto min-w-[680px]" role="img" aria-label={waterfall.title}>
           {ticks.map((tick) => <g key={tick}><line x1={left - 6} x2={chartWidth - right} y1={y(tick)} y2={y(tick)} stroke="currentColor" className="text-gray-100 dark:text-gray-800" /><text x={0} y={y(tick) + 4} className="fill-gray-500 text-[11px] dark:fill-gray-400">{fmtKMB(tick)}</text></g>)}
           {nodes.map((node, index) => {
             const startValue = node.startValue ?? node.start ?? 0
@@ -4506,11 +5308,33 @@ function ValueWaterfallStoryChart({ waterfall, onJump }) {
             const x1 = barCenter(start.index)
             const x2 = barCenter(end.index)
             const yBase = chartHeight - 30
-            const colorClass = annotation.semanticType === 'appreciation' ? 'fill-amber-600 text-amber-500' : 'fill-gray-500 text-gray-400'
-            return <g key={`${annotation.startBarId}-${annotation.endBarId}`}><path d={`M ${x1} ${yBase - 14} V ${yBase - 4} H ${x2} V ${yBase - 14}`} fill="none" stroke="currentColor" className={annotation.semanticType === 'appreciation' ? 'text-amber-500' : 'text-gray-400'} strokeWidth="1" /><text x={(x1 + x2) / 2} y={yBase + 12} textAnchor="middle" className={`${colorClass} text-[11px]`}>{annotation.label}</text></g>
+            const colorClass = annotation.semanticType === 'appreciation' ? 'fill-emerald-600 text-emerald-500' : 'fill-gray-500 text-gray-400'
+            return <g key={`${annotation.startBarId}-${annotation.endBarId}`}><path d={`M ${x1} ${yBase - 14} V ${yBase - 4} H ${x2} V ${yBase - 14}`} fill="none" stroke="currentColor" className={annotation.semanticType === 'appreciation' ? 'text-emerald-500' : 'text-gray-400'} strokeWidth="1" /><text x={(x1 + x2) / 2} y={yBase + 12} textAnchor="middle" className={`${colorClass} text-[11px]`}>{annotation.label}</text></g>
           })}
         </svg>
       </div>
+    </div>
+  )
+}
+
+function ChartInfoTitle({ title, details }) {
+  return (
+    <div className="flex items-center justify-center gap-2 text-center">
+      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h4>
+      {details ? (
+        <span className="group relative inline-flex">
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition hover:border-blue-300 hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-500 dark:hover:text-blue-300"
+            aria-label={`${title} details`}
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+          <span className="pointer-events-none absolute left-1/2 top-7 z-20 w-72 -translate-x-1/2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-xs font-medium leading-5 text-gray-600 opacity-0 shadow-lg transition group-hover:opacity-100 group-focus-within:opacity-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">
+            {details}
+          </span>
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -4734,7 +5558,7 @@ function SummaryTab({ propId, prop, metrics }) {
   if (!data) return null
 
 const { lifetime, yearly = [], summary_metrics: summaryMetrics = {} } = data
-  const isPrimaryOnly = (prop.usage_type || '').toLowerCase() === 'primary' && !prop.has_rental_history && !prop.currently_rental
+  const isPrimaryOnly = (prop.usage_type || '').toLowerCase() === 'primary' && !prop.currently_rental
   const showDepreciation = !isPrimaryOnly
   const marketValue = lifetime.market_value || prop.market_value || 0
   const loanBalance = lifetime.current_loan_balance || 0

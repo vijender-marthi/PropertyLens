@@ -4,19 +4,19 @@
 
 @layer base {
   :root {
-    --chart-equity-cash: theme('colors.blue.600');
-    --chart-equity-owner: theme('colors.teal.600');
-    --chart-equity-debt: theme('colors.gray.400');
-    --chart-equity-appreciation: theme('colors.amber.500');
-    --chart-equity-total: theme('colors.violet.800');
+    --chart-equity-cash: theme('colors.blue.400');
+    --chart-equity-owner: theme('colors.teal.500');
+    --chart-equity-debt: theme('colors.slate.300');
+    --chart-equity-appreciation: theme('colors.emerald.500');
+    --chart-equity-total: theme('colors.indigo.500');
   }
 
   html.dark {
     --chart-equity-cash: theme('colors.blue.400');
     --chart-equity-owner: theme('colors.teal.400');
-    --chart-equity-debt: theme('colors.gray.500');
-    --chart-equity-appreciation: theme('colors.amber.400');
-    --chart-equity-total: theme('colors.violet.400');
+    --chart-equity-debt: theme('colors.slate.500');
+    --chart-equity-appreciation: theme('colors.emerald.400');
+    --chart-equity-total: theme('colors.indigo.400');
   }
 
   html.dark,

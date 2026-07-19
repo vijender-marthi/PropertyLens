@@ -56,7 +56,9 @@ class TestRawDataStructure:
                           headers=auth_headers(user.email))
         assert resp.status_code == 200
         data = resp.json()
-        for key in ("duplicate_validations", "tax_entries", "docs_1098", "docs_1098_detail",
+        for key in ("property_snapshot", "loan_snapshot", "loan_yearly_history", "usage_timeline", "rental_periods",
+                    "annual_expenses", "depreciation_assets", "all_documents",
+                    "duplicate_validations", "tax_entries", "docs_1098", "docs_1098_detail",
                     "docs_balance", "stmt_annual", "tax_docs",
                     "lease_rent", "irs_annual_depreciation",
                     "snapshots", "loans"):
@@ -84,6 +86,73 @@ class TestRawDataStructure:
         loan = data["loans"][0]
         assert loan["current_balance"] == pytest.approx(current_loan_balance(prop.loans[0]))
         assert loan["interest_rate"] == 6.5
+
+    def test_property_snapshot_and_ordered_loans_included(self, client, user, prop):
+        from routers.properties import current_loan_balance
+
+        resp = client.get(f"/api/properties/{prop.id}/rawdata",
+                          headers=auth_headers(user.email))
+        data = resp.json()
+
+        snapshot = data["property_snapshot"]
+        assert snapshot["id"] == prop.id
+        assert snapshot["address"] == prop.address
+        assert snapshot["purchase_price"] == pytest.approx(prop.purchase_price)
+        assert snapshot["market_value"] == pytest.approx(prop.market_value)
+        assert snapshot["depreciable_basis"] > 0
+
+        loans = data["loan_snapshot"]
+        assert len(loans) == 1
+        assert loans[0]["sequence"] == 1
+        assert loans[0]["lender"] == prop.loans[0].lender_name
+        assert loans[0]["current_balance"] == pytest.approx(current_loan_balance(prop.loans[0]))
+        assert data["loan_yearly_history"]
+        assert data["loan_yearly_history"][0]["loan_id"] == prop.loans[0].id
+
+    def test_setup_collections_included(self, client, db, user, prop):
+        _lease(db, prop.id, 2024, 2024, 3200)
+        expense = models.AnnualExpense(
+            property_id=prop.id,
+            owner_id=user.id,
+            year=2024,
+            property_tax=5000,
+            insurance=1200,
+            repairs_maintenance=300,
+        )
+        asset = models.DepreciationAsset(
+            property_id=prop.id,
+            owner_id=user.id,
+            description="Rental building",
+            placed_in_service_date="2024-01-01",
+            cost_basis=300000,
+        )
+        db.add_all([expense, asset])
+        db.commit()
+
+        resp = client.get(f"/api/properties/{prop.id}/rawdata",
+                          headers=auth_headers(user.email))
+        data = resp.json()
+
+        assert data["rental_periods"][0]["monthly_rent"] == pytest.approx(3200)
+        assert data["annual_expenses"][0]["year"] == 2024
+        assert data["annual_expenses"][0]["property_tax"] == pytest.approx(5000)
+        assert data["depreciation_assets"][0]["description"] == "Rental building"
+
+    def test_all_documents_inventory_included(self, client, db, user, prop):
+        doc = _1098_doc(db, prop, user.id, 2022, 19_800, balance=386_000, account="ACCT-001")
+
+        resp = client.get(f"/api/properties/{prop.id}/rawdata",
+                          headers=auth_headers(user.email))
+        data = resp.json()
+
+        assert len(data["all_documents"]) == 1
+        row = data["all_documents"][0]
+        assert row["id"] == doc.id
+        assert row["category"] == "1098"
+        assert row["original_filename"] == "1098_2022_ACCT-001.pdf"
+        assert row["statement_year"] == 2022
+        assert row["loan_account_number"] == "ACCT-001"
+        assert row["extracted_field_count"] >= 4
 
 
 class TestRawDataTaxEntries:

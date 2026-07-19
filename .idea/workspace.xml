@@ -5,38 +5,46 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="87a89b4e-a93c-4bdb-b093-b530634c91bc" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.github/workflows/deploy-propertylens.yml" beforeDir="false" afterPath="$PROJECT_DIR$/.github/workflows/deploy-propertylens.yml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/ui-reference/portfolio-dashboard.png" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/ui-reference/primary-property-summary.png" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/ui-reference/rental-property-summary.png" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/ui-reference/ui-dashboard-rules.png" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/reprocess_all_docs.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/reprocess_all_docs.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/routers/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/auth.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/routers/documents.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/documents.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/routers/properties.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/routers/properties.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/services/document_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/document_config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/services/document_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/document_parser.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/services/loan_calculator.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/loan_calculator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/services/metric_vault.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/metric_vault.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/services/property_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/property_engine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/tests/test_calculations.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_calculations.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/services/property_valuation.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/services/property_valuation.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_closing_setup_import.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_closing_setup_import.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/tests/test_debt_endpoint.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_debt_endpoint.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/tests/test_depreciation_assets.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_depreciation_assets.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/tests/test_document_parser.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_document_parser.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_golden_rental_engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_golden_rental_engine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_property_setup.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_property_setup.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/tests/test_rawdata.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_rawdata.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/tests/test_schedule_e.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_schedule_e.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/test_verification.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/test_verification.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/AmortizationModal.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/AmortizationModal.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/DocumentUpload.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/DocumentUpload.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/Layout.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/Layout.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/components/LoanCard.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/LoanCard.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/components/LoanModal.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/LoanModal.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/PageContainer.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/PageContainer.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/metrics/MetricKPI.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/components/metrics/MetricKPI.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/config/propertyDetailsSchema.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/config/propertyDetailsSchema.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/config/propertySetupPresentation.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/config/propertySetupPresentation.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/config/propertySetupPresentation.test.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/config/propertySetupPresentation.test.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/hooks/useAuth.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/hooks/useAuth.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/index.css" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/index.css" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/AdminPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/AdminPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/DashboardPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/DashboardPage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/HelpPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/HelpPage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/LandingPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/LandingPage.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/LoginPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/LoginPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/PropertiesPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/PropertiesPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/PropertyDetailPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/PropertyDetailPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/PropertyFormPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/PropertyFormPage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/ReportsPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/ReportsPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/pages/UploadsPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/UploadsPage.jsx" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/services/api.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/services/api.js" afterDir="false" />
     </list>
@@ -140,37 +148,37 @@
       <breakpoints>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>2561</line>
+          <line>3276</line>
           <option name="timeStamp" value="2" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>2550</line>
+          <line>3265</line>
           <option name="timeStamp" value="3" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>2556</line>
+          <line>3271</line>
           <option name="timeStamp" value="4" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>3514</line>
+          <line>4237</line>
           <option name="timeStamp" value="5" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>3515</line>
+          <line>4238</line>
           <option name="timeStamp" value="6" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>1830</line>
+          <line>2501</line>
           <option name="timeStamp" value="7" />
         </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/backend/routers/properties.py</url>
-          <line>3513</line>
+          <line>4236</line>
           <option name="timeStamp" value="8" />
         </line-breakpoint>
       </breakpoints>

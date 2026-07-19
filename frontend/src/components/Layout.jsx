@@ -2,18 +2,22 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import {
-  Building2, Upload, Settings, LogOut,
- BarChart3, Menu, X, HelpCircle, Wrench, FileText, Users,
+  Building2, Upload, Settings, LogOut, Home, Plus,
+  BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark,
   Sun, Moon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import BrandLogo from './BrandLogo'
+import { propAPI } from '../services/api'
 
 const MAIN_NAV = [
   { to: '/dashboard',  icon: BarChart3,  label: 'Dashboard' },
   { to: '/properties', icon: Building2,  label: 'Properties' },
+  { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
+  { to: '/loans',      icon: Landmark,   label: 'Loans' },
+  { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },
+  { to: '/tax-center', icon: ReceiptText, label: 'Tax Center' },
   { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
-  { to: '/reports',    icon: FileText,   label: 'Reports' },
 ]
 
 const TOOLS_NAV = [
@@ -34,6 +38,67 @@ function NavItem({ to, icon: Icon, label, active }) {
       <Icon className={`w-[15px] h-[15px] shrink-0 ${active ? 'text-gray-700 dark:text-gray-200' : 'text-gray-400 dark:text-gray-500'}`} />
       {label}
     </Link>
+  )
+}
+
+function SidebarPropertyList({ onClose }) {
+  const location = useLocation()
+  const [properties, setProperties] = useState([])
+
+  useEffect(() => {
+    let mounted = true
+    propAPI.list()
+      .then((response) => {
+        if (mounted) setProperties(response.data || [])
+      })
+      .catch(() => {
+        if (mounted) setProperties([])
+      })
+    return () => { mounted = false }
+  }, [])
+
+  if (!properties.length) return null
+  const sorted = [...properties].sort((left, right) => {
+    const leftPrimary = String(left.usage_type || '').toLowerCase() === 'primary'
+    const rightPrimary = String(right.usage_type || '').toLowerCase() === 'primary'
+    if (leftPrimary !== rightPrimary) return leftPrimary ? -1 : 1
+    return String(left.name || left.address || '').localeCompare(String(right.name || right.address || ''))
+  })
+
+  return (
+    <section className="mt-4 border-t border-gray-100 px-2 pt-3 dark:border-gray-700">
+      <div className="flex items-center justify-between px-2 pb-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-600">Properties</p>
+        <Link to="/properties/new" onClick={onClose} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-blue-600 dark:hover:bg-gray-700" aria-label="Add property" title="Add property">
+          <Plus className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {sorted.map((property) => {
+          const primary = String(property.usage_type || '').toLowerCase() === 'primary'
+          const active = location.pathname === `/properties/${property.id}` || location.pathname.startsWith(`/properties/${property.id}/`)
+          const label = property.name || property.address || `Property ${property.id}`
+          return (
+            <Link
+              key={property.id}
+              to={`/properties/${property.id}`}
+              onClick={onClose}
+              className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+                active
+                  ? 'bg-blue-50 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200'
+                  : primary
+                    ? 'text-amber-800 hover:bg-amber-50 dark:text-amber-200 dark:hover:bg-amber-950/30'
+                    : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700/60'
+              }`}
+            >
+              {primary ? <Home className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300" /> : <Building2 className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {primary ? <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">Home</span> : null}
+            </Link>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -66,6 +131,7 @@ const isAdmin = ['admin', 'superuser'].includes((user?.role || '').toLowerCase()
             <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
           ))}
         </div>
+        <SidebarPropertyList onClose={onClose} />
       </div>
 
       {/* Tools + Profile — pinned to bottom */}

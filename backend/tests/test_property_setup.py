@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 import json
 
 import models
@@ -28,6 +28,21 @@ def test_setup_status_excludes_hidden_financing_for_cash_property(client, db, us
     assert data["totalRequired"] == sum(
         section["totalRequired"] for section in data["sections"] if section["visible"]
     )
+
+
+def test_setup_status_shows_rental_for_original_rental_or_mixed_use(prop):
+    prop.usage_type = "Primary"
+
+    for original_status in ("Rental", "Mixed", "Mixed Use"):
+        prop.original_residency_status = original_status
+        status = _build_setup_status(prop)
+        rental = next(section for section in status["sections"] if section["id"] == "rental")
+        assert rental["visible"] is True
+
+    prop.original_residency_status = "Primary Residence"
+    status = _build_setup_status(prop)
+    rental = next(section for section in status["sections"] if section["id"] == "rental")
+    assert rental["visible"] is False
 
 
 def test_consolidated_property_setup_1098_links_source_document_to_loan(client, db, user, prop):
@@ -69,7 +84,14 @@ def test_consolidated_property_setup_1098_links_source_document_to_loan(client, 
     db.refresh(loan)
     assert loan.account_number == "1590237047"
     assert loan.source_document_id == document.id
-    assert loan.source_type == "consolidated_loan_documents"
+    assert loan.source_type == "1098"
+    snapshot = db.query(models.LoanBalanceSnapshot).filter_by(
+        loan_id=loan.id,
+        source_document_id=document.id,
+    ).one()
+    assert snapshot.as_of_date == "2025-01-01"
+    assert snapshot.balance == 444_949
+    assert snapshot.interest_paid_ytd == 16_337
 
 
 def test_setup_status_marks_existing_financing_partial(prop):
@@ -144,6 +166,95 @@ def test_primary_acquisition_does_not_default_rental_available_from(client, user
     data = response.json()
     assert data["status"] == "validation_failed"
     assert data["fieldErrors"]["property.rental_start_date"] == "Rental available from is required."
+
+
+def test_current_primary_residence_can_save_without_rental_start(client, db, user, prop):
+    prop.usage_periods.append(models.UsagePeriod(
+        property_id=prop.id,
+        usage_type="RENTAL",
+        start_date=date.today().isoformat(),
+    ))
+    db.commit()
+    payload = _finalize_payload(prop)
+    payload["property"]["usage_type"] = "Primary"
+    payload["property"]["current_residency_status"] = "Primary Residence"
+    payload["property"]["original_residency_status"] = "Primary Residence"
+    payload["property"]["rental_start_date"] = None
+    payload["property"]["rental_start_date_origin"] = None
+
+    response = client.post(
+        f"/api/properties/{prop.id}/setup-finalize",
+        json=payload,
+        headers=auth_headers(user.email),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "saved"
+    db.refresh(prop)
+    assert prop.usage_type == "Primary"
+    assert prop.current_residency_status == "Primary Residence"
+    assert prop.rental_start_date is None
+    assert len(prop.usage_periods) == 1
+    assert prop.usage_periods[0].usage_type == "PRIMARY"
+    assert prop.usage_periods[0].end_date is None
+
+
+def test_current_mixed_use_residency_persists_without_collapsing_to_rental(client, db, user, prop):
+    prop.usage_periods.append(models.UsagePeriod(
+        property_id=prop.id,
+        usage_type="RENTAL",
+        start_date=prop.purchase_date,
+    ))
+    db.commit()
+    payload = _finalize_payload(prop)
+    payload["property"]["usage_type"] = "Mixed"
+    payload["property"]["current_residency_status"] = "Mixed Use"
+
+    response = client.post(
+        f"/api/properties/{prop.id}/setup-finalize",
+        json=payload,
+        headers=auth_headers(user.email),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "saved"
+    db.refresh(prop)
+    assert prop.usage_type == "Mixed"
+    assert prop.current_residency_status == "Mixed Use"
+    assert [(row.usage_type, row.end_date) for row in prop.usage_periods] == [("RENTAL", None)]
+
+    detail = client.get(f"/api/properties/{prop.id}", headers=auth_headers(user.email))
+    assert detail.status_code == 200
+    assert detail.json()["usage_type"] == "Mixed"
+    assert detail.json()["current_residency_status"] == "Mixed Use"
+
+
+def test_current_residency_change_preserves_older_usage_history(client, db, user, prop):
+    prop.usage_periods.append(models.UsagePeriod(
+        property_id=prop.id,
+        usage_type="RENTAL",
+        start_date="2024-01-01",
+    ))
+    db.commit()
+    payload = _finalize_payload(prop)
+    payload["property"]["usage_type"] = "Primary"
+    payload["property"]["current_residency_status"] = "Primary Residence"
+    payload["property"]["rental_start_date"] = None
+
+    response = client.post(
+        f"/api/properties/{prop.id}/setup-finalize",
+        json=payload,
+        headers=auth_headers(user.email),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "saved"
+    db.refresh(prop)
+    periods = sorted(prop.usage_periods, key=lambda row: row.start_date)
+    assert [(row.usage_type, row.start_date, row.end_date) for row in periods] == [
+        ("RENTAL", "2024-01-01", (date.today() - timedelta(days=1)).isoformat()),
+        ("PRIMARY", date.today().isoformat(), None),
+    ]
 
 
 def test_rental_available_from_origin_preserves_manual_and_updates_auto():
@@ -655,3 +766,25 @@ def test_empty_and_prior_year_expenses_do_not_block_setup_save(client, user, pro
     )
     assert empty_final.status_code == 200
     assert empty_final.json()["status"] == "saved"
+
+
+def test_repeated_setup_finalize_reuses_idless_canonical_loan(client, db, user, prop):
+    payload = _finalize_payload(prop, annual_expenses=[])
+    payload["loans"][0]["id"] = None
+
+    first = client.post(
+        f"/api/properties/{prop.id}/setup-finalize",
+        json=payload,
+        headers=auth_headers(user.email),
+    )
+    second = client.post(
+        f"/api/properties/{prop.id}/setup-finalize",
+        json=payload,
+        headers=auth_headers(user.email),
+    )
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "saved"
+    assert second.status_code == 200
+    assert second.json()["status"] == "saved"
+    assert db.query(models.Loan).filter_by(property_id=prop.id).count() == 1

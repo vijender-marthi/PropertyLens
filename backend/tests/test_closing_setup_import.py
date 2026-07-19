@@ -6,6 +6,7 @@ import models
 import pytest
 from jose import jwt
 from routers.documents import (
+    _account_numbers_match,
     _address_validation,
     _apply_loan_document_overrides,
     _closing_setup_review_payload,
@@ -19,6 +20,12 @@ from services.document_parser import parse_closing_statement, parse_mortgage_sta
 
 SECRET_KEY = "propertylens-secret-key-change-in-production"
 ALGORITHM = "HS256"
+
+
+def test_extended_disclosure_account_matches_statement_base_account():
+    assert _account_numbers_match("1368496008-5678387", "1368496008")
+    assert _account_numbers_match("1368496008", "1368496008-5678387")
+    assert not _account_numbers_match("1368496008", "1392931056")
 
 
 def auth_headers(email: str) -> dict:
@@ -57,6 +64,33 @@ Estimated Escrow + 775.04
     assert data["estimated_total_monthly_payment"] == 3014.25
 
 
+def test_settlement_last_totals_line_is_final_settlement_total():
+    text = """Final Settlement Statement
+Sale Price $625,000.00
+Closing Costs $14,491.23
+Totals $625,000.00 $639,491.23
+"""
+
+    data = parse_closing_statement(text)
+
+    assert data["purchase_price"] == 625000
+    assert data["settlement_total_amount"] == 639491.23
+    assert data["settlement_total_source"] == "settlement_credit_total"
+    assert data["closing_costs"] == 14491.23
+
+
+def test_settlement_total_is_not_fabricated_from_purchase_price_plus_closing_costs():
+    text = """Settlement Statement
+Sale Price $625,000.00
+Borrower-Paid Closing Costs $14,491.23
+"""
+
+    data = parse_closing_statement(text)
+
+    assert "settlement_total_amount" not in data
+    assert data["closing_costs"] == 14491.23
+
+
 def test_setup_import_review_uses_stored_document_data():
     document = SimpleNamespace(
         id=7,
@@ -88,8 +122,30 @@ def test_setup_import_review_uses_stored_document_data():
     assert review["loanDrafts"][0]["original_amount"] == 491000
     assert review["loanDrafts"][0]["current_balance_source_label"] == "Initial balance from closing document"
     assert any(field["targetKey"] == "purchase_price" for field in review["propertyFields"])
-    assert any(field["targetKey"] == "market_value" for field in review["propertyFields"])
+    assert not any(field["targetKey"] == "market_value" for field in review["propertyFields"])
     assert any(field["targetKey"] == "escrow_amount" for field in review["loanFields"])
+
+
+def test_setup_review_derives_missing_final_settlement_total_for_existing_document():
+    document = SimpleNamespace(
+        id=8,
+        property_id=3,
+        display_name="Settlement Statement.pdf",
+        original_filename="Settlement Statement.pdf",
+        doc_category="closing_statement",
+        upload_date="2026-07-12T00:00:00",
+        markdown_file="settlement.md",
+        extracted_data=json.dumps({
+            "setup_import_role": "settlement_document",
+            "purchase_price": 625000,
+            "closing_costs": 14491.23,
+        }),
+    )
+
+    review = _closing_setup_review_payload(document, "Settlement Statement")
+
+    assert not any(field["targetKey"] == "settlement_total_amount" for field in review["propertyFields"])
+    assert not any(row["key"] == "settlement_total_amount" for row in review["settlementCalculations"])
 
 
 def test_setup_import_review_exposes_purchase_price_components():
@@ -121,17 +177,19 @@ def test_setup_import_review_exposes_purchase_price_components():
     review = _closing_setup_review_payload(document, "ALTA Settlement Statement markdown")
 
     selection = review["purchasePriceSelection"]
-    assert selection["settlementTotal"] == 639491.23
+    assert "settlementTotal" not in selection
     assert selection["selectedTotal"] == 625000
-    assert [component["id"] for component in selection["components"]] == ["sale_price", "settlement_adjustment"]
-    assert selection["components"][1]["selected"] is False
+    assert [component["id"] for component in selection["components"]] == ["sale_price"]
     purchase_field = next(field for field in review["propertyFields"] if field["targetKey"] == "purchase_price")
-    current_value = next(field for field in review["propertyFields"] if field["targetKey"] == "market_value")
-    closing_costs = next(field for field in review["propertyFields"] if field["targetKey"] == "closing_costs")
     assert purchase_field["value"] == 625000
-    assert current_value["value"] == 639491.23
-    assert closing_costs["value"] == 14491.23
-    assert any(row["key"] == "settlement_total_amount" for row in review["settlementCalculations"])
+    accounting_field = next(field for field in review["propertyFields"] if field["targetKey"] == "settlement_total_amount")
+    assert accounting_field["label"] == "Settlement accounting total"
+    assert accounting_field["value"] == 639491.23
+    assert not any(field["targetKey"] == "market_value" for field in review["propertyFields"])
+    assert not any(field["targetKey"] == "cash_to_close" for field in review["propertyFields"])
+    accounting_total = next(row for row in review["settlementCalculations"] if row["key"] == "settlement_total_amount")
+    assert accounting_total["label"] == "Settlement accounting total"
+    assert accounting_total["amount"] == 639491.23
 
 
 def test_settlement_document_review_uses_final_total_without_loan_details():
@@ -165,12 +223,11 @@ def test_settlement_document_review_uses_final_total_without_loan_details():
     assert selection["components"][0]["id"] == "sale_price"
     assert selection["selectedTotal"] == 625000
     purchase_field = next(field for field in review["propertyFields"] if field["targetKey"] == "purchase_price")
-    current_value = next(field for field in review["propertyFields"] if field["targetKey"] == "market_value")
-    closing_costs = next(field for field in review["propertyFields"] if field["targetKey"] == "closing_costs")
     assert purchase_field["value"] == 625000
-    assert current_value["value"] == 639491.23
-    assert closing_costs["value"] == 14491.23
-    assert any("Settlement document has closing costs" in warning for warning in review["warnings"])
+    assert not any(field["targetKey"] == "settlement_total_amount" for field in review["propertyFields"])
+    assert not any(field["targetKey"] == "market_value" for field in review["propertyFields"])
+    assert not any(field["targetKey"] == "settlement_debit_total" for field in review["propertyFields"])
+    assert any(row["key"] == "settlement_total_amount" for row in review["settlementCalculations"])
 
 
 def test_duplicate_payload_is_json_serializable():
@@ -309,6 +366,68 @@ def test_address_validation_rejects_different_street_number():
     assert result["status"] == "mismatch"
 
 
+def test_apply_setup_import_allows_audited_override_when_document_address_is_missing(client, db, user):
+    prop = models.Property(
+        owner_id=user.id,
+        property_uid="palermo-address-override",
+        name="Palermo",
+        address="3619 Palermo Way",
+        city="Dublin",
+        state="CA",
+        zip_code="94568",
+        property_type="single_family",
+        usage_type="Primary",
+        purchase_price=0,
+        market_value=0,
+    )
+    db.add(prop)
+    db.flush()
+    document = models.Document(
+        property_id=prop.id,
+        owner_id=user.id,
+        filename="palermo-settlement.pdf",
+        original_filename="Palermo Settlement Statement.pdf",
+        display_name="Palermo Settlement Statement.pdf",
+        file_type="pdf",
+        doc_category="closing_statement",
+        file_size=100,
+        extracted_data=json.dumps({"purchase_price": 1210000, "purchase_date": "2019-04-12"}),
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+
+    blocked = client.post(
+        f"/api/documents/{document.id}/apply-setup-import",
+        json={
+            "property_id": prop.id,
+            "selected_property_fields": ["purchase_price", "purchase_date"],
+            "selected_loan_fields": [],
+            "address_override": False,
+        },
+        headers=auth_headers(user.email),
+    )
+    assert blocked.status_code == 422
+
+    response = client.post(
+        f"/api/documents/{document.id}/apply-setup-import",
+        json={
+            "property_id": prop.id,
+            "selected_property_fields": ["purchase_price", "purchase_date"],
+            "selected_loan_fields": [],
+            "address_override": True,
+        },
+        headers=auth_headers(user.email),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["addressValidation"]["status"] == "manual_override"
+    db.refresh(document)
+    override = json.loads(document.extracted_data)["_address_override"]
+    assert override["propertyId"] == prop.id
+    assert override["normalizedPropertyAddress"] == "3619 PALERMO WAY, DUBLIN, CA 94568"
+
+
 def test_apply_setup_import_persists_imported_loan(client, db, user):
     prop = models.Property(
         owner_id=user.id,
@@ -381,6 +500,57 @@ def test_apply_setup_import_persists_imported_loan(client, db, user):
     assert payload["draft"]["loans"][0]["current_balance_source"] == "closing_document_initial_balance"
     assert payload["draft"]["loans"][0]["current_balance_verified"] is False
 
+    repeat_response = client.post(
+        f"/api/documents/{document.id}/apply-setup-import",
+        json={
+            "property_id": prop.id,
+            "selected_property_fields": ["purchase_date", "purchase_price", "down_payment", "closing_costs"],
+            "selected_loan_fields": [],
+            "confirm_address_match": False,
+        },
+        headers=auth_headers(user.email),
+    )
+
+    assert repeat_response.status_code == 200
+    assert db.query(models.Loan).filter(models.Loan.property_id == prop.id).count() == 1
+
+    duplicate_document = models.Document(
+        property_id=prop.id,
+        owner_id=user.id,
+        filename="closing-copy.pdf",
+        original_filename="Closing Disclosure Copy.pdf",
+        display_name="Closing Disclosure Copy.pdf",
+        file_type="pdf",
+        doc_category="closing_statement",
+        file_size=100,
+        extracted_data=document.extracted_data,
+    )
+    db.add(duplicate_document)
+    db.commit()
+    db.refresh(duplicate_document)
+
+    duplicate_response = client.post(
+        f"/api/documents/{duplicate_document.id}/apply-setup-import",
+        json={
+            "property_id": prop.id,
+            "selected_property_fields": ["purchase_date", "purchase_price", "down_payment", "closing_costs"],
+            "selected_loan_fields": [],
+            "confirm_address_match": False,
+        },
+        headers=auth_headers(user.email),
+    )
+
+    assert duplicate_response.status_code == 200
+    assert db.query(models.Loan).filter(models.Loan.property_id == prop.id).count() == 1
+    loan = db.query(models.Loan).filter(models.Loan.property_id == prop.id).one()
+    assert loan.source_document_id == document.id
+    assert loan.original_amount == 491000
+    linked_document_ids = {
+        link.document_id
+        for link in db.query(models.LoanDocumentLink).filter(models.LoanDocumentLink.loan_id == loan.id).all()
+    }
+    assert linked_document_ids == {document.id, duplicate_document.id}
+
 
 def test_apply_setup_import_uses_selected_purchase_price_components(client, db, user):
     prop = models.Property(
@@ -417,6 +587,7 @@ def test_apply_setup_import_uses_selected_purchase_price_components(client, db, 
             "sale_price": 625000,
             "settlement_total_amount": 639491.23,
             "settlement_purchase_price_adjustment": 14491.23,
+            "purchase_date": "2023-05-24",
         }),
     )
     db.add(document)
@@ -427,7 +598,7 @@ def test_apply_setup_import_uses_selected_purchase_price_components(client, db, 
         f"/api/documents/{document.id}/apply-setup-import",
         json={
             "property_id": prop.id,
-            "selected_property_fields": ["purchase_price", "market_value", "closing_costs"],
+            "selected_property_fields": ["purchase_date", "purchase_price", "settlement_total_amount", "closing_costs"],
             "selected_purchase_price_components": ["sale_price", "settlement_adjustment"],
             "selected_loan_fields": [],
             "confirm_address_match": False,
@@ -438,9 +609,10 @@ def test_apply_setup_import_uses_selected_purchase_price_components(client, db, 
     assert response.status_code == 200
     db.refresh(prop)
     assert prop.purchase_price == 625000
-    assert prop.market_value == 639491.23
-    assert prop.market_value_source == "imported"
-    assert prop.closing_costs == 14491.23
+    assert prop.settlement_total_amount == 0
+    assert prop.market_value == 744385.0
+    assert prop.market_value_source == "estimated_6pct"
+    assert prop.closing_costs == 0
 
 
 def test_apply_setup_import_populates_empty_property_address(client, db, user):
@@ -538,10 +710,11 @@ def test_statement_setup_review_returns_reported_fields():
         markdown_file="statement.md",
         extracted_data=json.dumps({
             "current_balance": 482123.45,
+            "monthly_payment": 2239.21,
             "monthly_property_tax_escrow": 510,
             "monthly_insurance_escrow": 125.5,
-            "monthly_mortgage_insurance": 0,
-            "monthly_other_escrow": 64.5,
+            "monthly_mortgage_insurance": 50,
+            "monthly_other_escrow": 14.5,
             "escrow_amount": 700,
             "statement_date": "2026-06-30",
         }),
@@ -552,6 +725,8 @@ def test_statement_setup_review_returns_reported_fields():
     assert review["document"]["id"] == 8
     assert review["statementDraft"]["current_balance_source"] == "mortgage_statement_reported_balance"
     assert review["statementDraft"]["current_balance_source_label"] == "Reported from mortgage statement"
+    assert review["statementDraft"]["escrow_amount"] == 700
+    assert review["statementDraft"]["estimated_total_monthly_payment"] == 2939.21
     assert any(field["targetKey"] == "current_balance" for field in review["loanFields"])
     assert any(field["targetKey"] == "monthly_property_tax_escrow" for field in review["loanFields"])
 
@@ -597,8 +772,8 @@ def test_apply_loan_statement_updates_reported_balance_and_clears_initial_warnin
             "current_balance": 482123.45,
             "monthly_property_tax_escrow": 510,
             "monthly_insurance_escrow": 125.5,
-            "monthly_mortgage_insurance": 0,
-            "monthly_other_escrow": 64.5,
+            "monthly_mortgage_insurance": 50,
+            "monthly_other_escrow": 14.5,
             "escrow_amount": 700,
             "statement_date": "2026-06-30",
         }),
@@ -635,8 +810,10 @@ def test_apply_loan_statement_updates_reported_balance_and_clears_initial_warnin
     assert updated["current_balance_verified"] is True
     assert updated["monthly_property_tax_escrow"] == 510
     assert updated["monthly_insurance_escrow"] == 125.5
-    assert updated["monthly_other_escrow"] == 64.5
+    assert updated["monthly_mortgage_insurance"] == 50
+    assert updated["monthly_other_escrow"] == 14.5
     assert updated["escrow_amount"] == 700
+    assert updated["estimated_total_monthly_payment"] == 2939.21
     estimates = payload["expenseEstimates"]
     assert estimates["year"] == 2026
     assert estimates["propertyTax"]["value"] == 6120
@@ -757,7 +934,7 @@ def test_apply_latest_statement_updates_matching_current_servicer_escrow(client,
     assert rocket.estimated_total_monthly_payment == 6188.46
 
 
-def test_apply_loan_statement_creates_new_loan_when_account_differs(client, db, user):
+def test_apply_loan_statement_adds_servicer_segment_without_creating_debt(client, db, user):
     prop = models.Property(
         owner_id=user.id,
         property_uid="osprey-transfer",
@@ -841,20 +1018,186 @@ def test_apply_loan_statement_creates_new_loan_when_account_differs(client, db, 
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["loanId"] != old_loan.id
-    assert payload["loanMapping"]["created"] is True
+    assert payload["loanId"] == old_loan.id
+    assert payload["loanMapping"]["created"] is False
     db.refresh(old_loan)
-    assert old_loan.account_number == "OLD-LOAN-1"
-    new_loan = db.query(models.Loan).filter(
-        models.Loan.property_id == prop.id,
-        models.Loan.account_number == "3550379001",
-    ).one()
-    assert new_loan.current_balance == 438502.37
-    assert new_loan.source_document_id == document.id
-    assert new_loan.current_balance_source == "mortgage_statement_reported_balance"
+    assert old_loan.account_number == "3550379001"
+    assert old_loan.status == "OPEN"
+    assert old_loan.current_balance == 438502.37
+    assert old_loan.source_document_id == document.id
+    assert old_loan.current_balance_source == "mortgage_statement_reported_balance"
+    assert db.query(models.Loan).filter(models.Loan.property_id == prop.id).count() == 1
+    assert db.query(models.LoanBalanceSnapshot).filter_by(
+        loan_id=old_loan.id,
+        source_document_id=document.id,
+    ).count() == 1
 
 
-def test_apply_1098_acquisition_date_starts_new_servicer_and_closes_previous(client, db, user):
+def test_apply_refinance_disclosure_creates_distinct_opening_loan(client, db, user):
+    prop = models.Property(
+        owner_id=user.id,
+        property_uid="palermo-refinance-disclosure",
+        name="Palermo",
+        address="3619 Palermo Way",
+        city="Dublin",
+        state="CA",
+        zip_code="94568",
+        property_type="single_family",
+        usage_type="Primary Residence",
+    )
+    db.add(prop)
+    db.flush()
+    purchase_loan = models.Loan(
+        property_id=prop.id,
+        lender_name="Bank of America",
+        loan_type="FIXED",
+        status="OPEN",
+        original_amount=968000,
+        current_balance=940000,
+        interest_rate=4.125,
+        monthly_payment=4690,
+        loan_term_years=30,
+        origination_date="2019-04-12",
+        account_number="289608533",
+    )
+    db.add(purchase_loan)
+    db.flush()
+    document = models.Document(
+        property_id=prop.id,
+        owner_id=user.id,
+        filename="palermo-2021-refinance-disclosure.pdf",
+        original_filename="3619 Palermo Way - 2021 Refinance - Loan Disclosure Document.pdf",
+        display_name="2021 Refinance Loan Disclosure.pdf",
+        file_type="pdf",
+        doc_category="loan_disclosure",
+        file_size=100,
+        loan_account_number="1368496008-5678387",
+        extracted_data=json.dumps({
+            "property_address": "3619 Palermo Way",
+            "property_city": "Dublin",
+            "property_state": "CA",
+            "property_zip": "94568",
+            "lender_name": "JPMorgan Chase Bank, N.A",
+            "account_number": "1368496008-5678387",
+            "loan_purpose": "Refinance",
+            "loan_product": "Conventional",
+            "loan_type": "FIXED",
+            "original_amount": 933904,
+            "current_balance": 933904,
+            "interest_rate": 2.875,
+            "loan_term_years": 30,
+            "monthly_payment": 3874.70,
+            "origination_date": "2021-07-30",
+            "current_balance_source": "loan_disclosure_initial_balance",
+            "current_balance_verified": False,
+        }),
+    )
+    db.add(document)
+    db.commit()
+
+    review_response = client.get(
+        f"/api/documents/{document.id}/loan-statement-review",
+        headers=auth_headers(user.email),
+    )
+    assert review_response.status_code == 200
+    review = review_response.json()
+    assert review["document"]["type"] == "loan_disclosure"
+    assert review["statementDraft"]["account_number"] == "1368496008-5678387"
+    assert review["statementDraft"]["current_balance_verification_status"] == "Needs latest mortgage statement"
+    assert {field["targetKey"] for field in review["loanFields"]} >= {
+        "lender_name",
+        "account_number",
+        "original_amount",
+        "current_balance",
+        "interest_rate",
+        "loan_product",
+        "loan_term_years",
+        "monthly_payment",
+        "origination_date",
+    }
+
+    apply_response = client.post(
+        f"/api/documents/{document.id}/apply-loan-statement",
+        json={
+            "property_id": prop.id,
+            "selected_loan_fields": [field["targetKey"] for field in review["loanFields"]],
+            "address_override": False,
+        },
+        headers=auth_headers(user.email),
+    )
+
+    assert apply_response.status_code == 200
+    db.refresh(purchase_loan)
+    assert purchase_loan.account_number == "289608533"
+    assert purchase_loan.current_balance == 940000
+    loans = db.query(models.Loan).filter(models.Loan.property_id == prop.id).all()
+    assert len(loans) == 2
+    refinance = next(loan for loan in loans if loan.account_number == "1368496008-5678387")
+    assert refinance.lender_name == "JPMorgan Chase Bank, N.A"
+    assert refinance.loan_product == "Conventional"
+    assert refinance.original_amount == 933904
+    assert refinance.current_balance == 933904
+    assert refinance.interest_rate == 2.875
+    assert refinance.monthly_payment == 3874.70
+    assert refinance.origination_date == "2021-07-30"
+    assert refinance.source_document_id == document.id
+    assert refinance.source_type == "resolved_transaction"
+    db.refresh(purchase_loan)
+    assert purchase_loan.status == "CLOSED"
+    assert purchase_loan.closed_date == "2021-07-30"
+    assert purchase_loan.refinanced_into_loan_id == refinance.id
+    assert refinance.refinanced_from_loan_id == purchase_loan.id
+    assert refinance.current_balance_source == "loan_disclosure_initial_balance"
+    assert refinance.current_balance_verified is False
+
+
+def test_purchase_closing_disclosure_with_loan_terms_is_accepted_in_loan_review(client, db, user, prop):
+    document = models.Document(
+        property_id=prop.id,
+        owner_id=user.id,
+        filename="palermo-2019-purchase-closing-disclosure.pdf",
+        original_filename="3619 Palermo Way - 2019 Purchase - Original Loan disclosure - BOA.pdf",
+        display_name="2019 Purchase Closing Disclosure.pdf",
+        file_type="pdf",
+        doc_category="closing_statement",
+        file_size=100,
+        extracted_data=json.dumps({
+            "property_address": "3619 Palermo Way",
+            "property_city": "Dublin",
+            "property_state": "CA",
+            "property_zip": "94568",
+            "lender_name": "BANK OF AMERICA, N.A",
+            "loan_id": "289608533",
+            "original_amount": 968000,
+            "interest_rate": 4.125,
+            "loan_term_years": 30,
+            "monthly_payment": 4691.41,
+            "loan_type": "FIXED",
+            "origination_date": "2019-04-11",
+        }),
+    )
+    db.add(document)
+    db.commit()
+
+    response = client.get(
+        f"/api/documents/{document.id}/loan-statement-review",
+        headers=auth_headers(user.email),
+    )
+
+    assert response.status_code == 200
+    review = response.json()
+    assert review["document"]["type"] == "closing_statement"
+    assert review["statementDraft"]["account_number"] == "289608533"
+    fields = {field["targetKey"]: field["value"] for field in review["loanFields"]}
+    assert fields["lender_name"] == "BANK OF AMERICA, N.A"
+    assert fields["original_amount"] == 968000
+    assert fields["current_balance"] == 968000
+    assert fields["interest_rate"] == 4.125
+    assert fields["loan_term_years"] == 30
+    assert fields["monthly_payment"] == 4691.41
+
+
+def test_apply_1098_updates_matched_existing_account_without_closing_other_debt(client, db, user):
     prop = models.Property(
         owner_id=user.id,
         property_uid="osprey-1098-transfer",
@@ -951,16 +1294,19 @@ def test_apply_1098_acquisition_date_starts_new_servicer_and_closes_previous(cli
     assert response.status_code == 200
     payload = response.json()
     assert payload["loanId"] == new_loan.id
-    suggestion = payload["servicingTransfer"]["suggestions"][0]
-    assert suggestion["previousLoanId"] == old_loan.id
-    assert suggestion["currentLoanId"] == new_loan.id
-    assert suggestion["proposedClosedDate"] == "2023-12-15"
+    assert payload["servicingTransfer"]["suggestions"] == []
     db.refresh(old_loan)
     db.refresh(new_loan)
     assert old_loan.status == "OPEN"
     assert old_loan.closed_date is None
     assert new_loan.servicer_start_date == "2024-01-15"
     assert new_loan.is_current_servicer is True
+    snapshot = db.query(models.LoanBalanceSnapshot).filter_by(
+        loan_id=new_loan.id,
+        source_document_id=document.id,
+    ).one()
+    assert snapshot.as_of_date == "2024-01-01"
+    assert snapshot.interest_paid_ytd == 12000
 
 
 def test_apply_1098_account_number_consolidates_original_closing_loan(client, db, user):
@@ -1005,6 +1351,7 @@ def test_apply_1098_account_number_consolidates_original_closing_loan(client, db
         statement_year=2024,
         extracted_data=json.dumps({
             "account_number": "0064944077",
+            "lender_name": "LoanCare",
             "tax_year": "2024",
             "statement_year": 2024,
             "statement_date": "12/31/2024",
@@ -1042,7 +1389,7 @@ def test_apply_1098_account_number_consolidates_original_closing_loan(client, db
     assert old_loan.source_type == "1098"
 
 
-def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db, user):
+def test_osprey_1098_sequence_updates_one_canonical_loan_with_servicer_segments(client, db, user):
     prop = models.Property(
         owner_id=user.id,
         property_uid="osprey-two-loan-chain",
@@ -1106,6 +1453,7 @@ def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db
         statement_year=2024,
         extracted_data=json.dumps({
             "account_number": "3550379001",
+            "lender_name": "Rocket",
             "tax_year": "2024",
             "statement_year": 2024,
             "statement_date": "12/31/2024",
@@ -1128,6 +1476,7 @@ def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db
         statement_year=2025,
         extracted_data=json.dumps({
             "account_number": "3550379001",
+            "lender_name": "Rocket",
             "tax_year": "2025",
             "statement_year": 2025,
             "statement_date": "12/31/2025",
@@ -1169,46 +1518,40 @@ def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db
     )
     assert rocket_response.status_code == 200
 
-    loans = db.query(models.Loan).filter(models.Loan.property_id == prop.id).order_by(models.Loan.account_number).all()
-    assert [loan.account_number for loan in loans] == ["0064944077", "3550379001"]
-    original = next(loan for loan in loans if loan.account_number == "0064944077")
-    rocket = next(loan for loan in loans if loan.account_number == "3550379001")
-    assert original.status == "OPEN"
-    assert original.closed_date is None
-    assert rocket.status == "OPEN"
-    assert rocket.servicer_start_date == "2024-10-01"
-    assert rocket.closed_date is None
-
-    suggestions = client.get(
-        f"/api/properties/{prop.id}/loans/servicing-transfer-suggestions",
-        headers=auth_headers(user.email),
-    )
-    assert suggestions.status_code == 200
-    suggestion = suggestions.json()["suggestions"][0]
-    assert suggestion["previousLoanId"] == original.id
-    assert suggestion["currentLoanId"] == rocket.id
-    assert suggestion["proposedClosedDate"] == "2024-09-01"
-
-    group_response = client.post(
-        f"/api/properties/{prop.id}/loans/group-servicing-transfer",
+    rocket_2025_response = client.post(
+        f"/api/documents/{rocket_2025_doc.id}/apply-loan-statement",
         json={
-            "previous_loan_id": original.id,
-            "current_loan_id": rocket.id,
-            "closed_date": suggestion["proposedClosedDate"],
+            "property_id": prop.id,
+            "selected_loan_fields": [
+                "account_number",
+                "current_balance",
+                "statement_date",
+                "origination_date",
+                "servicer_start_date",
+            ],
+            "address_override": True,
         },
         headers=auth_headers(user.email),
     )
-    assert group_response.status_code == 200
-    db.refresh(original)
-    db.refresh(rocket)
-    assert original.status == "CLOSED"
-    assert original.closed_date == "2024-09-01"
-    assert original.servicer_end_date == "2024-09-01"
-    assert rocket.status == "OPEN"
-    assert rocket.servicer_start_date == "2024-10-01"
-    assert rocket.closed_date is None
-    assert original.replacement_loan_id == rocket.id
-    assert original.loan_group_id == rocket.loan_group_id
+    assert rocket_2025_response.status_code == 200
+
+    loans = db.query(models.Loan).filter(models.Loan.property_id == prop.id).order_by(models.Loan.account_number).all()
+    assert len(loans) == 1
+    loan = loans[0]
+    assert loan.account_number == "3550379001"
+    assert loan.status == "OPEN"
+    assert loan.closed_date is None
+    assert loan.current_balance == 462302.0
+    assert loan.current_balance_as_of == "2025-01-01"
+    assert db.query(models.LoanBalanceSnapshot).filter_by(loan_id=loan.id).count() == 3
+    segments = db.query(models.LoanServicerSegment).filter_by(loan_id=loan.id).order_by(
+        models.LoanServicerSegment.from_date,
+    ).all()
+    assert [segment.account_number for segment in segments] == [
+        "230577464",
+        "0064944077",
+        "3550379001",
+    ]
 
     debt_response = client.get(
         f"/api/properties/{prop.id}/debt",
@@ -1223,10 +1566,12 @@ def test_osprey_1098_sequence_consolidates_to_two_valid_loan_accounts(client, db
     assert rows[2024]["endingBalance"] == pytest.approx(rows[2025]["startingBalance"])
     assert rows[2024]["endingBalance"] == pytest.approx(462302.0)
     assert rows[2024]["principalPaid"] == pytest.approx(466681.81 - 462302.0)
-    assert len([doc for doc in rows[2024]["documents"] if doc["docType"] == "1098"]) == 2
+    combined_1098 = [doc for doc in rows[2024]["documents"] if doc["docType"] == "1098"]
+    assert len(combined_1098) == 1
+    assert combined_1098[0]["combinedDocumentIds"] == [loancare_doc.id, rocket_doc.id]
 
 
-def test_apply_new_account_document_infers_refinance_replacement(client, db, user):
+def test_periodic_statement_cannot_establish_materially_different_refinance(client, db, user):
     prop = models.Property(
         owner_id=user.id,
         property_uid="osprey-refinance-inference",
@@ -1297,37 +1642,13 @@ def test_apply_new_account_document_infers_refinance_replacement(client, db, use
         headers=auth_headers(user.email),
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    new_loan = db.query(models.Loan).filter(
-        models.Loan.property_id == prop.id,
-        models.Loan.account_number == "NEW-LOAN-9",
-    ).one()
-    suggestion = payload["servicingTransfer"]["suggestions"][0]
-    assert suggestion["type"] == "refinance"
-    assert suggestion["proposedClosedDate"] == "2024-09-15"
-    assert payload["loanId"] == new_loan.id
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CANONICAL_LOAN_REQUIRED"
     db.refresh(old_loan)
-    db.refresh(new_loan)
     assert old_loan.status == "OPEN"
     assert old_loan.closed_date is None
-    group_response = client.post(
-        f"/api/properties/{prop.id}/loans/group-servicing-transfer",
-        json={
-            "previous_loan_id": old_loan.id,
-            "current_loan_id": new_loan.id,
-            "closed_date": suggestion["proposedClosedDate"],
-        },
-        headers=auth_headers(user.email),
-    )
-    assert group_response.status_code == 200
-    db.refresh(old_loan)
-    db.refresh(new_loan)
-    assert old_loan.status == "REFINANCED"
-    assert old_loan.closed_date == "2024-09-15"
-    assert old_loan.replacement_loan_id == new_loan.id
-    assert new_loan.status == "OPEN"
-    assert old_loan.loan_group_id == new_loan.loan_group_id
+    assert db.query(models.Loan).filter(models.Loan.property_id == prop.id).count() == 1
+    assert db.query(models.LoanDocumentLink).filter_by(document_id=document.id).count() == 0
 
 
 def test_apply_1098_requires_confirmation_when_selected_loan_account_differs(client, db, user):
@@ -1412,7 +1733,12 @@ def test_apply_1098_requires_confirmation_when_selected_loan_account_differs(cli
     )
 
     assert confirmed.status_code == 200
-    assert confirmed.json()["loanId"] != selected_loan.id
+    assert confirmed.json()["loanId"] == selected_loan.id
+    assert db.query(models.Loan).filter_by(property_id=prop.id).count() == 1
+    assert db.query(models.LoanBalanceSnapshot).filter_by(
+        loan_id=selected_loan.id,
+        source_document_id=document.id,
+    ).count() == 1
 
 
 def test_apply_loan_statement_does_not_overwrite_manual_expenses(client, db, user):

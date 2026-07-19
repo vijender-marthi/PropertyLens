@@ -238,13 +238,14 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
     acquisition_cash = float(getattr(prop, "down_payment", 0) or 0)
     current_market_value = float(market_value or 0)
     current_debt = float(current_property_debt or 0)
-    loans = [loan for loan in getattr(prop, "loans", []) or [] if _loan_is_secured_debt(loan)]
-    acquisition_debt = round(sum(float(getattr(loan, "original_amount", 0) or 0) for loan in loans), 2)
+    # Acquisition debt is the financed portion of the purchase, not the sum of
+    # every note that has ever existed. Summing a closed purchase mortgage and
+    # its refinance double-counts the same debt and incorrectly hides the chart.
+    acquisition_debt = round(max(purchase_price - acquisition_cash, 0.0), 2)
     current_equity = round(current_market_value - current_debt, 2) if current_market_value else None
     ownership_percent = (current_equity / current_market_value * 100) if current_market_value and current_equity is not None else None
     appreciation = round(current_market_value - purchase_price, 2) if current_market_value and purchase_price else None
     principal_reduction = round(acquisition_debt - current_debt, 2) if acquisition_debt or current_debt else None
-    has_refinance = len(loans) > 1 or any(_loan_is_refinance_or_secondary(loan) for loan in loans)
 
     hero_value = current_equity if current_equity is not None else None
     hero = {
@@ -311,10 +312,6 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
     elif not acquisition_cash:
         waterfall_unavailable_reason = "Add acquisition financing details to complete the value breakdown."
         waterfall_action = _action("Edit Property Details", "details")
-    elif has_refinance:
-        waterfall_unavailable_reason = "Loan history includes refinancing that needs review before this breakdown can be shown."
-        waterfall_action = _action("Review Loans", "loans")
-
     validation_checks = []
     if not waterfall_unavailable_reason:
         validation_checks = [
@@ -333,7 +330,7 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
     if waterfall_unavailable_reason:
         waterfall = {
             "status": "unavailable",
-            "title": "Purchase price plus appreciation = today’s value",
+            "title": "Purchase Price to Current Market Value",
  "subtitle": f"The first three components make up the original purchase price of {format_metric_currency(purchase_price)}; appreciation adds {_compact_money(appreciation or 0, signed=True)} to reach {format_metric_currency(current_market_value)}.",
             "series": [],
             "annotations": [],
@@ -345,24 +342,24 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
         cumulative = 0.0
         series = []
         for key, label, value, tone in [
-            ("acquisition_cash", "Acquisition cash", acquisition_cash, "acquisition_cash"),
-            ("principal_reduction", "Principal reduction", principal_reduction or 0, "principal_reduction"),
-            ("remaining_secured_debt", "Remaining secured debt", current_debt, "remaining_secured_debt"),
+            ("acquisitionCashContribution", "Acquisition cash", acquisition_cash, "acquisition_cash"),
+            ("principalReductionSinceAcquisition", "Principal reduction", principal_reduction or 0, "principal_reduction"),
+            ("currentPropertyDebt", "Remaining secured debt", current_debt, "remaining_secured_debt"),
             ("appreciation", "Appreciation", appreciation or 0, "appreciation"),
         ]:
             start = cumulative
             end = cumulative + value
-            series.append(_story_node(key, label, value, start, end, tone, signed=key != "acquisition_cash"))
+            series.append(_story_node(key, label, value, start, end, tone, signed=key != "acquisitionCashContribution"))
             cumulative = end
-        series.append(_story_node("current_market_value", "Current market value", current_market_value, 0, current_market_value, "total", total=True, signed=False))
+        series.append(_story_node("currentMarketValue", "Current market value", current_market_value, 0, current_market_value, "total", total=True, signed=False))
         waterfall = {
             "status": "available",
-            "title": "Purchase price plus appreciation = today’s value",
+            "title": "Purchase Price to Current Market Value",
  "subtitle": f"The first three components make up the original purchase price of {format_metric_currency(purchase_price)}; appreciation adds {_compact_money(appreciation or 0, signed=True)} to reach {format_metric_currency(current_market_value)}.",
  "screenReaderSummary": f"Current market value is {format_currency(current_market_value)}. It consists of {format_currency(acquisition_cash)} acquisition cash, {format_currency(principal_reduction or 0)} principal reduction, {format_currency(current_debt)} remaining secured debt, and {format_currency(appreciation or 0)} appreciation.",
             "series": series,
             "annotations": [
-                {"startBarId": "acquisition_cash", "endBarId": "remaining_secured_debt", "label": f"Purchase price · {format_metric_currency(purchase_price)}", "semanticType": "acquisition"},
+                {"startBarId": "acquisitionCashContribution", "endBarId": "currentPropertyDebt", "label": f"Purchase price · {format_metric_currency(purchase_price)}", "semanticType": "acquisition"},
                 {"startBarId": "appreciation", "endBarId": "appreciation", "label": f"Gain {_compact_money(appreciation or 0, signed=True)}", "semanticType": "appreciation"},
             ],
             "validation": {"status": "valid", "difference": 0, "tolerance": tolerance, "checks": validation_checks},

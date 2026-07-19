@@ -32,6 +32,27 @@ class DocumentTypeConfig:
 
 
 DOCUMENT_TYPE_CONFIG: dict[str, DocumentTypeConfig] = {
+    "escrow_analysis": DocumentTypeConfig(
+        category="escrow_analysis",
+        label="Annual Escrow Analysis",
+        scope="property",
+        verification="annual_escrow_tax_and_insurance",
+        notes="Stores current/new escrow payments and annual tax/insurance history. Empty annual expense fields may be filled from the effective-year projection.",
+        fields=(
+            FieldMapping("loan_number", "escrow_payments.loan_number", "Loan Number", "identity", "loan_match"),
+            FieldMapping("property_address", "escrow_payments.property_address", "Property Address", "match_only", "property_match"),
+            FieldMapping("statement_date", "escrow_payments.statement_date", "Statement Date", "identity"),
+            FieldMapping("effective_date", "escrow_payments.effective_date", "New Payment Effective Date", "identity"),
+            FieldMapping("current_escrow_payment", "escrow_payments.current_escrow_payment", "Current Escrow Payment", "snapshot"),
+            FieldMapping("new_escrow_payment", "escrow_payments.new_escrow_payment", "New Escrow Payment", "snapshot"),
+            FieldMapping("estimated_tax", "escrow_payments.estimated_tax", "Estimated Tax", "snapshot"),
+            FieldMapping("actual_tax", "escrow_payments.actual_tax", "Actual Tax", "snapshot"),
+            FieldMapping("estimated_insurance", "escrow_payments.estimated_insurance", "Estimated Insurance", "snapshot"),
+            FieldMapping("actual_insurance", "escrow_payments.actual_insurance", "Actual Insurance", "snapshot"),
+            FieldMapping("projected_tax", "annual_expenses.property_tax", "Projected Annual Tax", "fill_empty", "tax_expense"),
+            FieldMapping("projected_insurance", "annual_expenses.insurance", "Projected Annual Insurance", "fill_empty", "insurance"),
+        ),
+    ),
     "mortgage_statement": DocumentTypeConfig(
         category="mortgage_statement",
         label="Mortgage Statement",

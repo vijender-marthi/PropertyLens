@@ -5,6 +5,7 @@ not move unless the product definition changes.
 """
 
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -182,3 +183,26 @@ def test_golden_rental_negative_edges():
     annualized_debt_service = partial_row["mortgage_paid"] / partial_row["months"] * 12
     assert partial_row["months"] == 6
     assert annualized_debt_service == pytest.approx(28_778.35, abs=2)
+
+
+def test_balance_today_prefers_latest_single_loan_statement_balance():
+    prop = _property()
+    loan = prop.loans[0]
+    loan.current_balance = loan.original_amount
+    loan.account_number = "SETUP-ACCOUNT"
+    prop.documents = [SimpleNamespace(
+        id=91,
+        doc_category="mortgage_statement",
+        loan_account_number="STATEMENT-ACCOUNT",
+        period_start=None,
+        period_end=None,
+        extracted_data=json.dumps({
+            "statement_date": "2026-06-15",
+            "current_balance": 351_234.56,
+            "account_number": "STATEMENT-ACCOUNT",
+        }),
+    )]
+
+    engine = build_property_engine(prop, as_of=__import__("datetime").date(2026, 7, 19))
+
+    assert engine.balance_today(loan) == pytest.approx(351_234.56, abs=0.01)

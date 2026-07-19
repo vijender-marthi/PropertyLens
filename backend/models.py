@@ -1,10 +1,12 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum
+    Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, Enum,
+    UniqueConstraint, Numeric,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 import enum
+import uuid
 
 
 class LoanType(str, enum.Enum):
@@ -73,6 +75,15 @@ class Property(Base):
     down_payment = Column(Float, default=0.0)
     settlement_total_amount = Column(Float, default=0.0)
     closing_costs = Column(Float, default=0.0)
+    cash_to_close = Column(Float, default=0.0)
+    deposit_paid_before_closing = Column(Float, default=0.0)
+    total_due_from_borrower = Column(Float, default=0.0)
+    total_paid_on_behalf_of_borrower = Column(Float, default=0.0)
+    settlement_debit_total = Column(Float, default=0.0)
+    settlement_credit_total = Column(Float, default=0.0)
+    seller_credits = Column(Float, default=0.0)
+    tax_prorations = Column(Float, default=0.0)
+    hoa_prorations = Column(Float, default=0.0)
 
     # Rental income
     monthly_rent = Column(Float, default=0.0)
@@ -104,7 +115,7 @@ class Property(Base):
 
     # Market value (from Zillow/Redfin or manual)
     market_value = Column(Float, default=0.0)
-    market_value_source = Column(String, default="manual")  # manual/zillow/redfin
+    market_value_source = Column(String, default="estimated_6pct")  # estimated_6pct/manual/appraisal/imported/zillow/redfin
     market_value_updated = Column(String)
 
     # Free-form note about this property (refinances, events, etc.)
@@ -139,6 +150,18 @@ class Property(Base):
     annual_expenses = relationship(
         "AnnualExpense", back_populates="property", cascade="all, delete-orphan",
         order_by="AnnualExpense.year")
+    escrow_payments = relationship(
+        "EscrowPayment", back_populates="property", cascade="all, delete-orphan",
+        order_by="EscrowPayment.statement_date")
+    escrow_activities = relationship(
+        "EscrowActivity", back_populates="property", cascade="all, delete-orphan")
+    annual_expense_metrics = relationship(
+        "AnnualExpenseMetric", back_populates="property", cascade="all, delete-orphan")
+    property_tax_records = relationship(
+        "PropertyTaxRecord", back_populates="property", cascade="all, delete-orphan",
+        foreign_keys="PropertyTaxRecord.property_id")
+    transactions = relationship(
+        "PropertyTransaction", back_populates="property", cascade="all, delete-orphan")
 
 
 class Loan(Base):
@@ -200,6 +223,14 @@ class Loan(Base):
     current_balance_source = Column(String)
     current_balance_as_of = Column(String)
     current_balance_verified = Column(Boolean, default=True)
+    purpose = Column(String)
+    disbursement_date = Column(String)
+    balance_as_of = Column(String)
+    lender_at_origination = Column(String)
+    current_servicer = Column(String)
+    refinanced_into_loan_id = Column(Integer)
+    refinanced_from_loan_id = Column(Integer)
+    resolution_confidence = Column(Float, default=0.0)
 
     # ARM specific
     arm_initial_period = Column(Integer)  # years before first adjustment
@@ -211,6 +242,16 @@ class Loan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     property = relationship("Property", back_populates="loans")
+    document_links = relationship(
+        "LoanDocumentLink", back_populates="loan", cascade="all, delete-orphan")
+    balance_snapshots = relationship(
+        "LoanBalanceSnapshot", back_populates="loan", cascade="all, delete-orphan",
+        order_by="LoanBalanceSnapshot.as_of_date")
+    servicer_segments = relationship(
+        "LoanServicerSegment", back_populates="loan", cascade="all, delete-orphan",
+        order_by="LoanServicerSegment.from_date, LoanServicerSegment.id")
+    transaction_links = relationship(
+        "TransactionLoanLink", back_populates="loan", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -226,9 +267,18 @@ class Document(Base):
     display_name = Column(String)  # human-readable name derived from extracted content, not the uploaded filename
     file_type = Column(String)  # pdf, xlsx, etc.
     doc_category = Column(String)  # mortgage_statement, tax_return, 1099, loan_disclosure, other
+    module_tags = Column(String, default="")  # comma-separated module associations, e.g. EXPENSES
+    document_type = Column(String)
+    transaction_purpose = Column(String)
+    transaction_role = Column(String)
+    classification_confidence = Column(Float, default=0.0)
     file_size = Column(Integer)
     extracted_data = Column(Text)  # JSON string of parsed data
     markdown_file = Column(String)  # structured markdown generated at parse time
+    normalized_text = Column(Text)
+    parser_version = Column(String)
+    pipeline_status = Column(String)
+    conversion_metadata = Column(Text, default="{}")
     content_hash = Column(String, index=True)  # sha256 of raw file bytes; flags exact-content duplicates regardless of filename
     content_fingerprint = Column(String, index=True)  # sha256 of normalized extracted fields; flags near-duplicates (re-scan/re-export of the same statement)
 
@@ -242,6 +292,242 @@ class Document(Base):
     upload_date = Column(DateTime(timezone=True), server_default=func.now())
 
     property = relationship("Property", back_populates="documents", foreign_keys=[property_id])
+
+
+class PropertyTaxRecord(Base):
+    """A tax bill as issued. Supplemental bills are intentionally not annual expenses."""
+    __tablename__ = "property_tax_records"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "identity_key", name="uq_property_tax_record_identity"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=True, index=True)
+    candidate_property_id = Column(Integer, ForeignKey("properties.id"), nullable=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, unique=True, index=True)
+    document_type = Column(String, nullable=False, index=True)
+    tax_type = Column(String, nullable=False, index=True)
+    issuer = Column(String)
+    property_address = Column(String)
+    parcel_number = Column(String, index=True)
+    tracer_number = Column(String, index=True)
+    tax_rate_area = Column(String)
+    fiscal_year_label = Column(String, index=True)
+    fiscal_period_start = Column(String, index=True)
+    fiscal_period_end = Column(String, index=True)
+    event_type = Column(String)
+    event_date = Column(String)
+    supplemental_assessment = Column(Numeric(18, 2))
+    total_tax_rate_percent = Column(Numeric(12, 6))
+    proration_percent = Column(Numeric(12, 6))
+    tax_before_proration = Column(Numeric(18, 2))
+    total_amount_billed = Column(Numeric(18, 2))
+    payment_status = Column(String)
+    identity_key = Column(String, nullable=False, index=True)
+    related_event_key = Column(String, index=True)
+    structured_json = Column(Text, nullable=False, default="{}")
+    validation_json = Column(Text, nullable=False, default="{}")
+    parser_name = Column(String)
+    parser_version = Column(String)
+    classification_confidence = Column(Float, default=0.0)
+    property_match_confidence = Column(Float, default=0.0)
+    property_match_status = Column(String, default="MATCHED")
+    status = Column(String, default="READY")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship(
+        "Property", back_populates="property_tax_records", foreign_keys=[property_id])
+    document = relationship("Document")
+    corrections = relationship(
+        "PropertyTaxCorrection", back_populates="record", cascade="all, delete-orphan")
+
+
+class PropertyTaxCorrection(Base):
+    __tablename__ = "property_tax_corrections"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_tax_record_id = Column(
+        String, ForeignKey("property_tax_records.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    field_path = Column(String, nullable=False)
+    original_value_json = Column(Text)
+    corrected_value_json = Column(Text)
+    reason = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    record = relationship("PropertyTaxRecord", back_populates="corrections")
+
+
+class PropertyTransaction(Base):
+    """Resolved property event supported by one or more source documents."""
+    __tablename__ = "property_transactions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    resolution_key = Column(String, index=True)
+    transaction_type = Column(String, nullable=False, index=True)
+    purpose = Column(String, nullable=False, index=True)
+    closing_date = Column(String, index=True)
+    disbursement_date = Column(String, index=True)
+    purchase_price = Column(Float)
+    appraised_value = Column(Float)
+    borrower_paid_closing_costs = Column(Float)
+    down_payment = Column(Float)
+    cash_to_close = Column(Float)
+    deposit_paid_before_closing = Column(Float)
+    total_due_from_borrower = Column(Float)
+    total_paid_on_behalf_of_borrower = Column(Float)
+    settlement_debit_total = Column(Float)
+    settlement_credit_total = Column(Float)
+    seller_credits = Column(Float)
+    tax_prorations = Column(Float)
+    hoa_prorations = Column(Float)
+    confidence = Column(Float, default=0.0)
+    status = Column(String, default="RESOLVED")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship("Property", back_populates="transactions")
+    document_links = relationship(
+        "TransactionDocumentLink", back_populates="transaction", cascade="all, delete-orphan")
+    loan_links = relationship(
+        "TransactionLoanLink", back_populates="transaction", cascade="all, delete-orphan")
+
+
+class TransactionLoanLink(Base):
+    """Durable association between an economic transaction and canonical debt."""
+    __tablename__ = "transaction_loan_links"
+    __table_args__ = (
+        UniqueConstraint("transaction_id", "loan_id", name="uq_transaction_loan_link"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    transaction_id = Column(String, ForeignKey("property_transactions.id"), nullable=False, index=True)
+    loan_id = Column(Integer, ForeignKey("loans.id"), nullable=False, index=True)
+    role = Column(String, default="ORIGINATED_DEBT")
+    lien_position = Column(Integer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    transaction = relationship("PropertyTransaction", back_populates="loan_links")
+    loan = relationship("Loan", back_populates="transaction_links")
+
+
+class LoanServicerSegment(Base):
+    """A servicing account period belonging to one canonical loan."""
+    __tablename__ = "loan_servicer_segments"
+    __table_args__ = (
+        UniqueConstraint(
+            "loan_id", "normalized_account_number", "from_date",
+            name="uq_loan_servicer_segment_identity",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    loan_id = Column(Integer, ForeignKey("loans.id"), nullable=False, index=True)
+    servicer = Column(String)
+    account_number = Column(String)
+    normalized_account_number = Column(String, nullable=False, default="", index=True)
+    from_date = Column(String, nullable=False, default="")
+    to_date = Column(String)
+    is_current = Column(Boolean, default=True)
+    source_document_id = Column(Integer, ForeignKey("documents.id"), index=True)
+    confidence = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    loan = relationship("Loan", back_populates="servicer_segments")
+    source_document = relationship("Document")
+
+
+class TransactionDocumentLink(Base):
+    __tablename__ = "transaction_document_links"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    transaction_id = Column(String, ForeignKey("property_transactions.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    source_role = Column(String)
+    source_priority = Column(Integer, default=99)
+    fields_used = Column(Text, default="[]")
+    match_confidence = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    transaction = relationship("PropertyTransaction", back_populates="document_links")
+    document = relationship("Document")
+
+
+class LoanDocumentLink(Base):
+    __tablename__ = "loan_document_links"
+    __table_args__ = (
+        UniqueConstraint("loan_id", "document_id", name="uq_loan_document_link"),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    loan_id = Column(Integer, ForeignKey("loans.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    source_role = Column(String)
+    fields_used = Column(Text, default="[]")
+    priority = Column(Integer, default=99)
+    confidence = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    loan = relationship("Loan", back_populates="document_links")
+    document = relationship("Document")
+
+
+class LoanBalanceSnapshot(Base):
+    __tablename__ = "loan_balance_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "loan_id", "source_document_id", "as_of_date",
+            name="uq_loan_balance_snapshot_source",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    loan_id = Column(Integer, ForeignKey("loans.id"), nullable=False, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    as_of_date = Column(String, nullable=False, index=True)
+    balance = Column(Float)
+    principal_paid_ytd = Column(Float)
+    interest_paid_ytd = Column(Float)
+    payment = Column(Float)
+    source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    loan = relationship("Loan", back_populates="balance_snapshots")
+    document = relationship("Document")
+
+
+class LoanResolutionDiscrepancy(Base):
+    __tablename__ = "loan_resolution_discrepancies"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    loan_id = Column(Integer, ForeignKey("loans.id"), index=True)
+    transaction_id = Column(String, ForeignKey("property_transactions.id"), index=True)
+    field_name = Column(String, nullable=False)
+    selected_value = Column(Text)
+    conflicting_value = Column(Text)
+    selected_document_id = Column(Integer, ForeignKey("documents.id"))
+    conflicting_document_id = Column(Integer, ForeignKey("documents.id"))
+    difference = Column(Float)
+    status = Column(String, default="OPEN")
+    reason = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LoanResolutionAlias(Base):
+    __tablename__ = "loan_resolution_aliases"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    old_loan_id = Column(Integer, nullable=False, index=True)
+    canonical_loan_id = Column(Integer, ForeignKey("loans.id"), nullable=False, index=True)
+    reason = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class RentalPeriod(Base):
@@ -314,6 +600,116 @@ class AnnualExpense(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     property = relationship("Property", back_populates="annual_expenses")
+
+
+class EscrowPayment(Base):
+    """One annual escrow-analysis snapshot and its tax/insurance projections."""
+    __tablename__ = "escrow_payments"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    loan_id = Column(Integer, ForeignKey("loans.id"), nullable=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, unique=True, index=True)
+    loan_number = Column(String, index=True)
+    property_address = Column(String)
+    statement_date = Column(String, index=True)
+    effective_date = Column(String)
+    history_period_start = Column(String)
+    history_period_end = Column(String)
+    projection_period_start = Column(String)
+    projection_period_end = Column(String)
+    expense_year = Column(Integer, index=True)
+    current_escrow_payment = Column(Float)
+    new_escrow_payment = Column(Float)
+    servicer = Column(String)
+    principal_interest_payment = Column(Float)
+    current_total_payment = Column(Float)
+    new_total_payment = Column(Float)
+    estimated_tax = Column(Float)
+    actual_tax = Column(Float)
+    estimated_insurance = Column(Float)
+    actual_insurance = Column(Float)
+    projected_tax = Column(Float)
+    projected_insurance = Column(Float)
+    projected_total = Column(Float)
+    projected_monthly_escrow = Column(Float)
+    shortage_amount = Column(Float)
+    overage_amount = Column(Float)
+    refund_amount = Column(Float)
+    projected_minimum_balance = Column(Float)
+    required_minimum_balance = Column(Float)
+    escrow_cushion = Column(Float)
+    selected_payment_option = Column(String)
+    estimated_total_disbursement = Column(Float)
+    actual_total_disbursement = Column(Float)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship("Property", back_populates="escrow_payments")
+    loan = relationship("Loan")
+    document = relationship("Document")
+    activities = relationship(
+        "EscrowActivity", back_populates="escrow_payment", cascade="all, delete-orphan",
+        order_by="EscrowActivity.activity_date, EscrowActivity.id")
+
+
+class EscrowActivity(Base):
+    """Normalized escrow ledger row retained for audit and annual allocation."""
+    __tablename__ = "escrow_activities"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    escrow_payment_id = Column(String, ForeignKey("escrow_payments.id"), nullable=False, index=True)
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    activity_date = Column(String, index=True)
+    activity_type = Column(String, index=True)
+    source_description = Column(String)
+    phase = Column(String, index=True)  # HISTORICAL | PROJECTED | PARTIALLY_PROJECTED
+    value_status = Column(String)
+    estimated_deposit = Column(Float)
+    actual_deposit = Column(Float)
+    estimated_disbursement = Column(Float)
+    actual_disbursement = Column(Float)
+    estimated_balance = Column(Float)
+    actual_balance = Column(Float)
+    required_balance = Column(Float)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    property = relationship("Property", back_populates="escrow_activities")
+    escrow_payment = relationship("EscrowPayment", back_populates="activities")
+    document = relationship("Document")
+
+
+class AnnualExpenseMetric(Base):
+    """Backend-selected annual value and its complete source/calculation audit."""
+    __tablename__ = "annual_expense_metrics"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    property_id = Column(Integer, ForeignKey("properties.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    year = Column(Integer, nullable=False, index=True)
+    expense_type = Column(String, nullable=False, index=True)
+    value = Column(Float)
+    status = Column(String)
+    completeness = Column(String)
+    source_type = Column(String)
+    source_label = Column(String)
+    allocation_method = Column(String)
+    coverage_json = Column(Text, default="{}")
+    formula = Column(Text)
+    inputs_json = Column(Text, default="[]")
+    computation = Column(Text)
+    document_ids_json = Column(Text, default="[]")
+    supporting_document_ids_json = Column(Text, default="[]")
+    discrepancies_json = Column(Text, default="[]")
+    excluded_rows_json = Column(Text, default="[]")
+    confidence = Column(Float)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    property = relationship("Property", back_populates="annual_expense_metrics")
 
 
 class DepreciationAsset(Base):

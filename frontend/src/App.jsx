@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { ThemeProvider } from './hooks/useTheme'
@@ -14,11 +14,24 @@ import UploadsPage from './pages/UploadsPage'
 import SettingsPage from './pages/SettingsPage'
 import HelpPage from './pages/HelpPage'
 import ReportsPage from './pages/ReportsPage'
+import AnalyticsPage from './pages/AnalyticsPage'
+import TaxCenterPage from './pages/TaxCenterPage'
+import LoansPage from './pages/LoansPage'
+import IncomeExpensesPage from './pages/IncomeExpensesPage'
 import AdminPage from './pages/AdminPage'
 
 function PrivateRoute({ children }) {
-  const { user } = useAuth()
-  return user ? children : <Navigate to="/login" replace />
+  const { user, authReady } = useAuth()
+  const location = useLocation()
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+      </div>
+    )
+  }
+  const next = encodeURIComponent(`${location.pathname}${location.search}`)
+  return user ? children : <Navigate to={`/login?next=${next}`} replace />
 }
 
 function AppRoutes() {
@@ -39,7 +52,11 @@ function AppRoutes() {
                 <Route path="/properties/:id" element={<PropertyDetailPage />} />
                 <Route path="/properties/:id/:tab" element={<PropertyDetailPage />} />
                 <Route path="/properties/:id/edit" element={<PropertyFormPage />} />
+                <Route path="/income-expenses" element={<IncomeExpensesPage />} />
                 <Route path="/uploads" element={<UploadsPage />} />
+                <Route path="/loans" element={<LoansPage />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/tax-center" element={<TaxCenterPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/reports" element={<ReportsPage />} />

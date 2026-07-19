@@ -12,7 +12,7 @@ from database import get_db
 
 SECRET_KEY = os.getenv("PROPERTYLENS_SECRET_KEY", "propertylens-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("PROPERTYLENS_ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 30)))  # 30 days
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
@@ -39,6 +39,7 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     user: UserOut
+    expires_in_minutes: int
 
 
 class UserRoleUpdate(BaseModel):
@@ -170,6 +171,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         access_token=access_token,
         token_type="bearer",
         user=serialize_user(user),
+        expires_in_minutes=ACCESS_TOKEN_EXPIRE_MINUTES,
     )
 
 
@@ -190,6 +192,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         access_token=access_token,
         token_type="bearer",
         user=serialize_user(user),
+        expires_in_minutes=ACCESS_TOKEN_EXPIRE_MINUTES,
     )
 
 
@@ -197,7 +200,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == payload.email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="No account found for that email")
+        return {
+            "message": "If the account exists, recovery instructions were sent.",
+            "expires_minutes": PASSWORD_RESET_EXPIRE_MINUTES,
+        }
     reset_token = create_access_token(
         data={"sub": user.email, "purpose": "password_reset"},
         expires_delta=timedelta(minutes=PASSWORD_RESET_EXPIRE_MINUTES),
@@ -210,8 +216,8 @@ def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(
 
 @router.post("/password-reset/confirm", response_model=Token)
 def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(get_db)):
-    if len(payload.new_password or "") < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(payload.new_password or "") < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     try:
         token_data = jwt.decode(payload.token, SECRET_KEY, algorithms=[ALGORITHM])
         email = token_data.get("sub")
@@ -233,6 +239,7 @@ def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(
         access_token=access_token,
         token_type="bearer",
         user=serialize_user(user),
+        expires_in_minutes=ACCESS_TOKEN_EXPIRE_MINUTES,
     )
 
 

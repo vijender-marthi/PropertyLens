@@ -24,18 +24,19 @@ import LoanJourney from '../components/LoanJourney'
 import { docAPI, propAPI } from '../services/api'
 import {
   HOME_TYPE_OPTIONS,
+  acquisitionFieldSources,
   homeTypeLabel,
   normalizeHomeType,
   propertySetupFlagRows,
   propertySetupSections,
+  selectBackendAcquisitionDocument,
 } from '../config/propertySetupPresentation'
-import { formatCurrency, formatDate, formatInterestRate } from '../utils/formatters'
+import { formatCurrency, formatDate, formatInterestRate, formatPercent } from '../utils/formatters'
 
 const LOAN_TYPES = ['FIXED', 'ARM', 'HELOC']
 const LOAN_STATUS_OPTIONS = [
   { value: 'OPEN', label: 'Open' },
   { value: 'CLOSED', label: 'Closed' },
-  { value: 'REFINANCED', label: 'Refinanced' },
   { value: 'PAID_OFF', label: 'Paid Off' },
 ]
 const CLOSED_LOAN_STATUSES = new Set(['CLOSED', 'REFINANCED', 'PAID_OFF'])
@@ -43,22 +44,14 @@ const LOAN_CLOSURE_REASONS = ['Refinance', 'Paid off', 'Sold property', 'Loan mo
 const CURRENT_YEAR = new Date().getFullYear()
 const REQUIRED_FIELDS = new Set(['name', 'property_type', 'original_residency_status', 'usage_type', 'purchase_price', 'purchase_date', 'market_value'])
 const HOME_TYPE_VALUES = new Set(HOME_TYPE_OPTIONS.map((option) => option.value))
-const SETTLEMENT_FIELD_DEFS = [
-  { sourceKey: 'purchase_date', targetKey: 'purchase_date', label: 'Purchase date' },
-  { sourceKey: 'settlement_total_amount', targetKey: 'market_value', label: 'Settlement total' },
-  { sourceKey: 'purchase_price', targetKey: 'market_value', label: 'Purchase price' },
-  { sourceKey: 'settlement_total_amount', targetKey: 'purchase_price', label: 'Settlement total' },
-  { sourceKey: 'purchase_price', targetKey: 'purchase_price', label: 'Purchase price' },
-  { sourceKey: 'purchase_date', targetKey: 'market_value_updated', label: 'Settlement date' },
-  { sourceKey: 'closing_costs', targetKey: 'closing_costs', label: 'Closing costs' },
-  { sourceKey: 'down_payment', targetKey: 'down_payment', label: 'Down payment' },
-  { sourceKey: 'valuation_date', targetKey: 'market_value_updated', label: 'Valuation date' },
-  { sourceKey: 'appraisal_date', targetKey: 'market_value_updated', label: 'Valuation date' },
-]
-const RESIDENCY_OPTIONS = [
+const ORIGINAL_RESIDENCY_OPTIONS = [
   { value: 'Primary', label: 'Primary Residence', originalValue: 'Primary Residence' },
   { value: 'Rental', label: 'Rental', originalValue: 'Rental' },
   { value: 'Mixed', label: 'Mixed Use', originalValue: 'Mixed Use' },
+]
+const CURRENT_RESIDENCY_OPTIONS = [
+  { value: 'Primary', label: 'Primary Residence' },
+  { value: 'Rental', label: 'Rental' },
 ]
 
 const SETUP_SECTIONS = propertySetupSections
@@ -89,8 +82,10 @@ const DEFAULT_PROPERTY = {
   purchase_price: '',
   down_payment: '',
   closing_costs: '',
+  settlement_total_amount: '',
+  cash_to_close: '',
   market_value: '',
-  market_value_source: 'manual',
+  market_value_source: 'estimated_6pct',
   market_value_updated: '',
   monthly_rent: '',
   occupancy_rate: 100,
@@ -315,6 +310,10 @@ function originalResidencyFromUsage(value) {
   return 'Rental'
 }
 
+function currentResidencyFromUsage(value) {
+  return originalResidencyFromUsage(value)
+}
+
 function setupImportRole(document) {
   const role = document?.setupImportRole || document?.extracted_data?.setup_import_role || document?.extracted_data?._setup_import_role
   if (role === 'settlement_document' || role === 'closing_document') return role
@@ -329,31 +328,6 @@ function settlementDocumentsFromDocuments(documents) {
   return [...documents]
     .filter((doc) => doc.doc_category === 'closing_statement')
     .sort((left, right) => new Date(right.upload_date || 0) - new Date(left.upload_date || 0))
-}
-
-function latestSettlementDocument(documents) {
-  return settlementDocumentsFromDocuments(documents)[0] || null
-}
-
-function settlementSourcesFromDocument(document, property) {
-  if (!document?.extracted_data || !property) return {}
-  return SETTLEMENT_FIELD_DEFS.reduce((sources, { sourceKey, targetKey }) => {
-    if (sources[targetKey]) return sources
-    const extractedValue = document.extracted_data[sourceKey]
-    if (extractedValue == null || extractedValue === '') return sources
-    const propertyValue = property[targetKey]
-    const matches = targetKey === 'purchase_date'
-      ? normalizeDateInput(propertyValue) === normalizeDateInput(extractedValue)
-      : toNumber(propertyValue) === toNumber(extractedValue)
-    if (matches) {
-      sources[targetKey] = {
-        documentId: document.id,
-        documentName: document.display_name || document.original_filename,
-        sourceField: sourceKey,
-      }
-    }
-    return sources
-  }, {})
 }
 
 function selectedPurchasePriceComponentIds(selection) {
@@ -389,6 +363,10 @@ function initialValuationDateOrigin(prop) {
 
 function isOriginalResidencyRental(value) {
   return String(value || '').trim().toLowerCase() === 'rental'
+}
+
+function originalResidencyShowsRental(value) {
+  return ['rental', 'mixed', 'mixed use'].includes(String(value || '').trim().toLowerCase())
 }
 
 function documentDisplayDate(value) {
@@ -443,7 +421,7 @@ function Field({ label, children, error, helper, emphasis = false, required = fa
         : 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'
   return (
     <div className={emphasis ? 'md:col-span-1' : undefined} data-field-key={fieldKey || undefined}>
-      <label className={`mb-1.5 flex items-center gap-1.5 text-sm font-medium ${emphasis ? 'text-gray-950 dark:text-white' : 'text-gray-600 dark:text-gray-300'}`}>
+      <label className={`mb-1 flex items-center gap-1.5 text-xs font-semibold ${emphasis ? 'text-gray-950 dark:text-white' : 'text-gray-600 dark:text-gray-300'}`}>
         <span>{label}{required ? <span className="ml-0.5 text-red-600" aria-label="required">*</span> : null}</span>
         {helper ? (
           <HelpCircle
@@ -453,17 +431,97 @@ function Field({ label, children, error, helper, emphasis = false, required = fa
             <title>{helper}</title>
           </HelpCircle>
         ) : null}
-        {source ? (
-          <span
-            className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${sourceToneClass}`}
-            title={source.documentName ? `Imported from ${source.documentName}` : source.title || 'Imported from source document'}
-          >
-            {source.label || 'from settlement'}
-          </span>
-        ) : null}
+        {source ? <FieldSourceDetails source={source} toneClass={sourceToneClass} /> : null}
       </label>
       {children}
       {error ? <p className="mt-1 text-xs text-red-600" role="alert">{error}</p> : null}
+    </div>
+  )
+}
+
+function FieldSourceDetails({ source, toneClass }) {
+  return (
+    <details className="relative">
+      <summary className={`cursor-pointer list-none rounded-full px-1.5 py-0.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 ${toneClass}`}>
+        {source.label || 'from source'}
+      </summary>
+      <div className="absolute left-0 top-full z-30 mt-2 w-72 rounded-lg border border-gray-200 bg-white p-3 text-left shadow-lg dark:border-gray-700 dark:bg-gray-900">
+        <p className="text-sm font-semibold text-gray-950 dark:text-white">{source.documentName || source.title || 'Source document'}</p>
+        <dl className="mt-2 space-y-1.5 text-xs text-gray-600 dark:text-gray-300">
+          <div className="flex justify-between gap-3"><dt>Source</dt><dd className="text-right font-medium text-gray-900 dark:text-white">{source.label?.replace(/^from\s+/i, '') || 'Document'}</dd></div>
+          {source.page ? <div className="flex justify-between gap-3"><dt>Page</dt><dd className="font-medium text-gray-900 dark:text-white">{source.page}</dd></div> : null}
+          {source.selectionType ? <div className="flex justify-between gap-3"><dt>Selection</dt><dd className="font-medium capitalize text-gray-900 dark:text-white">{String(source.selectionType).replaceAll('_', ' ').toLowerCase()}</dd></div> : null}
+          {source.confidence != null ? <div className="flex justify-between gap-3"><dt>Confidence</dt><dd className="font-medium text-gray-900 dark:text-white">{formatPercent(source.confidence)}</dd></div> : null}
+        </dl>
+      </div>
+    </details>
+  )
+}
+
+function LoanSourceDetailsDialog({ loan, onClose }) {
+  const closeRef = useRef(null)
+  useEffect(() => {
+    closeRef.current?.focus()
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
+  const details = loan.sourceDetails
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-900/40 px-4 py-6 sm:items-center" role="presentation" onMouseDown={onClose}>
+      <div
+        className="max-h-[82vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="loan-source-title"
+        aria-describedby="loan-source-description"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="sticky top-0 flex items-start justify-between border-b border-gray-100 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+          <div>
+            <h2 id="loan-source-title" className="text-lg font-semibold text-gray-950 dark:text-white">{details?.title || 'Loan source details'}</h2>
+            <p id="loan-source-description" className="mt-1 text-sm text-gray-500 dark:text-gray-400">{details?.description || 'Source details unavailable.'}</p>
+          </div>
+          <button ref={closeRef} type="button" className="icon-btn" title="Close" aria-label="Close loan source details" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+        <div className="space-y-5 p-5">
+          {(details?.sections || []).length ? details.sections.map((section) => (
+            <section key={section.key} aria-labelledby={`loan-source-${section.key}`}>
+              <h3 id={`loan-source-${section.key}`} className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">{section.label}</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(section.fields || []).map((field, index) => (
+                  <div key={`${field.key}-${field.sourceDocumentId}-${index}`} className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{field.fieldName}</p>
+                    <p className="mt-1 font-semibold text-gray-950 dark:text-white">{field.display}</p>
+                    <dl className="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+                      <div className="flex justify-between gap-3"><dt>Source</dt><dd className="text-right">{field.sourceLabel}{field.page ? ` · Page ${field.page}` : ''}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>Selection</dt><dd className="text-right capitalize">{String(field.selectionType || 'exact').replaceAll('_', ' ').toLowerCase()}</dd></div>
+                      <div className="flex justify-between gap-3"><dt>Confidence</dt><dd className="text-right">{field.confidence == null ? 'Unavailable' : formatPercent(field.confidence)}</dd></div>
+                    </dl>
+                    <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400" title={field.sourceDocument}>{field.sourceDocument}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )) : <p className="text-sm text-gray-500 dark:text-gray-400">Source details unavailable.</p>}
+          {(details?.documents || []).length ? (
+            <section aria-labelledby="loan-source-documents">
+              <h3 id="loan-source-documents" className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">Documents</h3>
+              <div className="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+                {details.documents.map((document) => (
+                  <div key={document.documentId} className="px-3 py-2.5 text-sm">
+                    <p className="truncate font-medium text-gray-900 dark:text-white">{document.name}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{document.documentType.replaceAll('_', ' ')}{document.statementDate ? ` · ${formatDate(document.statementDate)}` : ''}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </div>
     </div>
   )
 }
@@ -472,7 +530,7 @@ function TextInput({ label, value, onChange, type = 'text', error, helper, place
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
       <input
-        className={`h-11 w-full rounded-lg border bg-gray-100 px-3 text-sm text-gray-950 outline-none transition-colors duration-150 placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-950 dark:text-white dark:placeholder:text-gray-600 ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}
+        className={`h-10 w-full rounded-lg border bg-gray-100 px-3 text-sm text-gray-950 outline-none transition-colors duration-150 placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-950 dark:text-white dark:placeholder:text-gray-600 ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}
         type={type}
         value={value ?? ''}
         placeholder={placeholder}
@@ -488,7 +546,7 @@ function MoneyInput({ label, value, onChange, error, helper, emphasis = false, r
   const displayValue = focused || value === '' || value == null ? (value ?? '') : formatCurrency(toNumber(value))
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
-      <div className={`flex h-11 items-center rounded-lg border bg-gray-100 transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:bg-gray-950 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}>
+      <div className={`flex h-10 items-center rounded-lg border bg-gray-100 transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:bg-gray-950 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}>
         <input
           className={`w-full rounded-lg border-0 bg-transparent px-3 text-sm text-gray-950 outline-none dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'}`}
           type="text"
@@ -507,10 +565,20 @@ function MoneyInput({ label, value, onChange, error, helper, emphasis = false, r
   )
 }
 
+function ReadOnlyMoneyField({ label, display, helper, source, fieldKey }) {
+  return (
+    <Field label={label} helper={helper} source={source} fieldKey={fieldKey}>
+      <div className="flex h-10 items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-900 dark:border-gray-800 dark:bg-gray-950 dark:text-white">
+        {display || '—'}
+      </div>
+    </Field>
+  )
+}
+
 function PercentInput({ label, value, onChange, error, helper, emphasis = false, required = false, source, fieldKey }) {
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
-      <div className={`flex h-11 items-center rounded-lg border bg-gray-100 transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:bg-gray-950 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}>
+      <div className={`flex h-10 items-center rounded-lg border bg-gray-100 transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:bg-gray-950 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}>
         <input
           className={`w-full rounded-l-lg border-0 bg-transparent px-3 text-sm text-gray-950 outline-none dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'}`}
           type="text"
@@ -531,7 +599,7 @@ function PercentInput({ label, value, onChange, error, helper, emphasis = false,
 function SelectInput({ label, value, onChange, children, error, helper, emphasis = false, required = false, source, fieldKey }) {
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
-      <select className={`h-11 w-full rounded-lg border bg-gray-100 px-3 text-sm text-gray-950 outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-950 dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`} value={value ?? ''} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)}>
+      <select className={`h-10 w-full rounded-lg border bg-gray-100 px-3 text-sm text-gray-950 outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-950 dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`} value={value ?? ''} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)}>
         {children}
       </select>
     </Field>
@@ -603,7 +671,7 @@ function SetupSubsection({ title, children }) {
 
 function PropertySetupFooter({ isFinalSection, nextSection, saving, onCancel, onSaveDraft, onSaveProperty, onNext }) {
   return (
-    <div className="mt-6 flex flex-col-reverse gap-3 border-t border-gray-200 pt-4 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
       <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
       <div className="flex flex-col-reverse gap-3 sm:flex-row">
         {isFinalSection ? (
@@ -717,34 +785,35 @@ function PropertySetupSection({
   headingRef,
 }) {
   return (
-    <section aria-labelledby="active-section-heading" className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+    <section aria-labelledby="active-section-heading" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
       {tabs}
-      <div className="p-4 sm:p-5">
-      <div className="mb-6 flex flex-col gap-4 border-b border-gray-200 pb-4 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/60 dark:text-blue-300">
-            <SectionIcon icon={activePresentation.icon} className="h-4 w-4" />
-          </span>
-          <div>
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 id="active-section-heading" ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight text-gray-950 outline-none dark:text-white">
-                {activePresentation.title}
-              </h2>
-              <SaveStatusChip state={saveState} dirty={dirty} />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
+        <div className="mb-5 flex flex-col gap-3 border-b border-gray-200 pb-4 dark:border-gray-800 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/60 dark:text-blue-300">
+              <SectionIcon icon={activePresentation.icon} className="h-4 w-4" />
+            </span>
+            <div>
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 id="active-section-heading" ref={headingRef} tabIndex={-1} className="text-xl font-semibold tracking-tight text-gray-950 outline-none dark:text-white">
+                  {activePresentation.title}
+                </h2>
+                <SaveStatusChip state={saveState} dirty={dirty} />
+              </div>
+              <p className="mt-1 max-w-2xl text-sm leading-5 text-gray-500 dark:text-gray-400">{activePresentation.subtitle}</p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Fields marked <span className="font-semibold text-red-600">*</span> are required.</p>
             </div>
-            <p className="mt-1.5 max-w-2xl text-sm leading-6 text-gray-500 dark:text-gray-400">{activePresentation.subtitle}</p>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Fields marked <span className="font-semibold text-red-600">*</span> are required.</p>
           </div>
+          <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{statusLabel(status)}</span>
         </div>
-        <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{statusLabel(status)}</span>
-      </div>
 
-      <div className="space-y-5">
-        {records}
-        {editor}
+        <div className="space-y-4">
+          {records}
+          {editor}
+        </div>
       </div>
-
-      {footer}
+      <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-4 dark:border-gray-800 dark:bg-gray-900 sm:px-5">
+        {footer}
       </div>
     </section>
   )
@@ -761,11 +830,13 @@ function propertyPayload(form) {
     property_type_raw: normalizeHomeType(form.property_type) === 'other' ? form.property_type_raw || '' : '',
     usage_type: form.usage_type || 'Rental',
     original_residency_status: form.original_residency_status || null,
-    current_residency_status: form.current_residency_status || null,
+    current_residency_status: currentResidencyFromUsage(form.usage_type),
     purchase_date: normalizeDateInput(form.purchase_date),
     purchase_price: toNumber(form.purchase_price),
     down_payment: toNumber(form.down_payment),
     closing_costs: toNumber(form.closing_costs),
+    settlement_total_amount: toNumber(form.settlement_total_amount),
+    cash_to_close: toNumber(form.cash_to_close),
     market_value: toNumber(form.market_value),
     market_value_source: form.market_value_source || 'manual',
     market_value_updated: normalizeDateInput(form.market_value_updated),
@@ -800,7 +871,7 @@ function loanPayload(loan) {
     lender_name: loan.lender_name || '',
     loan_type: loan.loan_type || 'FIXED',
     account_number: String(loan.account_number || '').trim(),
-    status: loan.status || 'OPEN',
+    status: loan.status === 'REFINANCED' ? 'CLOSED' : loan.status || 'OPEN',
     closed_date: CLOSED_LOAN_STATUSES.has(loan.status) ? normalizeDateInput(loan.closed_date) : null,
     closure_reason: CLOSED_LOAN_STATUSES.has(loan.status) ? loan.closure_reason || '' : '',
     replacement_loan_id: CLOSED_LOAN_STATUSES.has(loan.status) && loan.replacement_loan_id ? Number(loan.replacement_loan_id) : null,
@@ -852,6 +923,8 @@ export default function PropertyFormPage() {
   const [rentalDeleteTarget, setRentalDeleteTarget] = useState(null)
   const [expenseRows, setExpenseRows] = useState([])
   const [expenseYear, setExpenseYear] = useState(CURRENT_YEAR)
+  const [escrowPayments, setEscrowPayments] = useState([])
+  const [escrowUploading, setEscrowUploading] = useState(false)
   const [setupStatus, setSetupStatus] = useState(null)
   const [flags, setFlags] = useState({ hasFinancing: false, hasHoa: false, hasSolar: false })
   const [dirtySection, setDirtySection] = useState(null)
@@ -866,25 +939,28 @@ export default function PropertyFormPage() {
   const [settlementReview, setSettlementReview] = useState(null)
   const [settlementDocuments, setSettlementDocuments] = useState([])
   const [settlementDocument, setSettlementDocument] = useState(null)
+  const [loanLifecycle, setLoanLifecycle] = useState(null)
+  const [loanSourceDetails, setLoanSourceDetails] = useState(null)
   const [loanStatementUploading, setLoanStatementUploading] = useState(false)
   const [loanStatementReview, setLoanStatementReview] = useState(null)
   const [loanConsolidatedReview, setLoanConsolidatedReview] = useState(null)
   const [loanStatementConflict, setLoanStatementConflict] = useState(null)
+  const [linkedLoanDocuments, setLinkedLoanDocuments] = useState({ status: 'idle', documents: [] })
   const [settlementAddressValidation, setSettlementAddressValidation] = useState(null)
   const [settlementAddressConfirmed, setSettlementAddressConfirmed] = useState(false)
+  const [settlementAddressOverride, setSettlementAddressOverride] = useState(false)
   const [settlementDelinkConfirm, setSettlementDelinkConfirm] = useState(false)
+  const [settlementDelinking, setSettlementDelinking] = useState(false)
   const [escrowDisableTarget, setEscrowDisableTarget] = useState(null)
-  const [expenseUploadTarget, setExpenseUploadTarget] = useState(null)
-  const [expenseUploading, setExpenseUploading] = useState(false)
   const [expenseAddressReview, setExpenseAddressReview] = useState(null)
   const [valuationDateOrigin, setValuationDateOrigin] = useState('auto_purchase_date')
   const [rentalAvailableFromOrigin, setRentalAvailableFromOrigin] = useState('backend_existing')
   const activeHeadingRef = useRef(null)
   const previewRequestRef = useRef(0)
+  const marketEstimateRequestRef = useRef(0)
   const settlementInputRef = useRef(null)
-  const settlementUploadRoleRef = useRef('closing_document')
   const loanStatementInputRef = useRef(null)
-  const expenseDocumentInputRef = useRef(null)
+  const escrowAnalysisInputRef = useRef(null)
   const unsavedPrimaryActionRef = useRef(null)
 
   const statusById = useMemo(() => {
@@ -899,10 +975,18 @@ export default function PropertyFormPage() {
 
   const visibleSections = useMemo(() => SETUP_SECTIONS.filter((section) => {
     if (section.id === 'financing') return flags.hasFinancing || loans.length > 0
-    if (section.id === 'rental') return String(form.usage_type || '').toLowerCase() !== 'primary'
+    if (section.id === 'rental') {
+      const backendRentalStatus = (setupStatus?.sections || []).find((item) => item.id === 'rental')
+      return backendRentalStatus?.visible === true
+        || String(form.usage_type || '').toLowerCase() !== 'primary'
+        || originalResidencyShowsRental(form.original_residency_status)
+    }
     return statusById.get(section.id)?.visible !== false
-  }), [flags.hasFinancing, form.usage_type, loans.length, statusById])
+  }), [flags.hasFinancing, form.original_residency_status, form.usage_type, loans.length, setupStatus?.sections, statusById])
   const setupErrorCounts = useMemo(() => tabErrorCounts(finalValidation), [finalValidation])
+  const resolvedLoanById = useMemo(() => new Map(
+    (loanLifecycle?.loans || []).map((loan) => [Number(loan.loanId), loan]),
+  ), [loanLifecycle])
 
   const activeVisibleSections = visibleSections.length ? visibleSections : [SETUP_SECTIONS[0]]
   const nextSection = activeVisibleSections.find((section) => activeVisibleSections.findIndex((item) => item.id === section.id) > activeVisibleSections.findIndex((item) => item.id === activeSection))
@@ -944,22 +1028,26 @@ export default function PropertyFormPage() {
       propAPI.rentalTimeline(id).catch(() => ({ data: null })),
       propAPI.annualExpenses(id).catch(() => ({ data: [] })),
       docAPI.list(id).catch(() => ({ data: [] })),
+      docAPI.escrowPayments(id).catch(() => ({ data: [] })),
+      docAPI.lifecycle(id).catch(() => ({ data: null })),
     ])
-      .then(([propertyResponse, statusResponse, rentalResponse, expenseResponse, documentResponse]) => {
+      .then(([propertyResponse, statusResponse, rentalResponse, expenseResponse, documentResponse, escrowResponse, lifecycleResponse]) => {
         hydrateProperty(propertyResponse.data)
         setSetupStatus(statusResponse.data)
         setRentalTimeline(rentalResponse.data)
         setExpenseRows((expenseResponse.data || []).map((row) => normalizeAnnualExpense(row)))
+        setEscrowPayments(escrowResponse.data || [])
+        applyLifecycleDraft(lifecycleResponse.data)
           const setupDocuments = settlementDocumentsFromDocuments(documentResponse.data || [])
-	        const settlement = setupDocuments[0] || null
+	        const settlement = selectBackendAcquisitionDocument(setupDocuments, lifecycleResponse.data)
           setSettlementDocuments(setupDocuments)
 	        setSettlementDocument(settlement)
-	        setSettlementSources(settlementSourcesFromDocument(settlement, propertyResponse.data))
 	        if (settlement?.id) {
 	          docAPI.setupImportReview(settlement.id)
 	            .then((reviewResponse) => {
 	              setSettlementAddressValidation(reviewResponse.data.addressValidation || null)
 	              setSettlementAddressConfirmed(reviewResponse.data.addressValidation?.status === 'match')
+	              setSettlementAddressOverride(reviewResponse.data.addressValidation?.status === 'manual_override')
 	            })
 	            .catch(() => {})
 	        }
@@ -973,6 +1061,50 @@ export default function PropertyFormPage() {
       .catch(() => toast.error('Failed to load property setup'))
       .finally(() => setLoading(false))
   }, [id])
+
+  useEffect(() => {
+    if (form.market_value_source !== 'estimated_6pct') return undefined
+    if (toNumber(form.purchase_price) <= 0 || !normalizeDateInput(form.purchase_date)) return undefined
+    const requestId = marketEstimateRequestRef.current + 1
+    marketEstimateRequestRef.current = requestId
+    const handle = setTimeout(() => {
+      propAPI.defaultMarketPrice({
+        purchase_price: toNumber(form.purchase_price),
+        purchase_date: normalizeDateInput(form.purchase_date),
+      }).then((response) => {
+        if (marketEstimateRequestRef.current !== requestId) return
+        setForm((current) => {
+          if (current.market_value_source !== 'estimated_6pct') return current
+          return {
+            ...current,
+            market_value: numberOrEmpty(response.data.value),
+            market_value_updated: normalizeDateInput(response.data.asOfDate),
+          }
+        })
+        setValuationDateOrigin('backend_estimate')
+        setErrors((current) => ({ ...current, market_value: undefined, market_value_updated: undefined }))
+      }).catch(() => {})
+    }, 250)
+    return () => clearTimeout(handle)
+  }, [form.market_value_source, form.purchase_date, form.purchase_price])
+
+  useEffect(() => {
+    const loan = loanEditorIndex != null ? loans[loanEditorIndex] : null
+    if (!propertyId || !loan?.id) {
+      setLinkedLoanDocuments({ status: 'idle', documents: [] })
+      return undefined
+    }
+    let active = true
+    setLinkedLoanDocuments({ status: 'loading', documents: [] })
+    propAPI.loanDocuments(propertyId, loan.id)
+      .then((response) => {
+        if (active) setLinkedLoanDocuments({ status: 'ready', documents: response.data.documents || [] })
+      })
+      .catch(() => {
+        if (active) setLinkedLoanDocuments({ status: 'failed', documents: [] })
+      })
+    return () => { active = false }
+  }, [loanEditorIndex, propertyId, loans[loanEditorIndex]?.id])
 
   useEffect(() => {
     if (!propertyId || !['property', 'rental', 'expenses'].includes(activeSection)) return undefined
@@ -1008,7 +1140,10 @@ export default function PropertyFormPage() {
       purchase_price: numberOrEmpty(prop.purchase_price),
       down_payment: numberOrEmpty(prop.down_payment),
       closing_costs: numberOrEmpty(prop.closing_costs),
+      settlement_total_amount: numberOrEmpty(prop.settlement_total_amount),
+      cash_to_close: numberOrEmpty(prop.cash_to_close),
       market_value: numberOrEmpty(prop.market_value),
+      market_value_source: prop.market_value_source || 'estimated_6pct',
       market_value_updated: normalizeDateInput(prop.market_value_updated),
       original_residency_status: prop.original_residency_status || originalResidencyFromUsage(prop.usage_type),
       monthly_rent: numberOrEmpty(prop.monthly_rent),
@@ -1037,11 +1172,12 @@ export default function PropertyFormPage() {
     const loadedLoans = (prop.loans || []).map((loan) => ({
       ...blankLoan(),
       ...loan,
+      status: loan.status === 'REFINANCED' ? 'CLOSED' : loan.status || 'OPEN',
       account_number: String(loan.account_number || '').trim(),
       original_amount: numberOrEmpty(loan.original_amount),
       current_balance: numberOrEmpty(loan.current_balance),
       closed_date: normalizeDateInput(loan.closed_date),
-      closure_reason: loan.closure_reason || '',
+      closure_reason: loan.closure_reason || (loan.status === 'REFINANCED' ? 'Refinanced' : ''),
       replacement_loan_id: loan.replacement_loan_id || '',
       loan_group_id: loan.loan_group_id || '',
       servicer_sequence: numberOrEmpty(loan.servicer_sequence),
@@ -1124,6 +1260,9 @@ export default function PropertyFormPage() {
       if (key === 'usage_type' && !current.original_residency_status) {
         next.original_residency_status = originalResidencyFromUsage(value)
       }
+      if (key === 'usage_type') {
+        next.current_residency_status = currentResidencyFromUsage(value)
+      }
       if (key === 'purchase_date') {
         const nextPurchaseDate = normalizeDateInput(value)
         const currentAutoDate = normalizeDateInput(current.purchase_date)
@@ -1165,6 +1304,10 @@ export default function PropertyFormPage() {
       }
       if (key === 'market_value_updated') {
         next.market_value_updated = normalizeDateInput(value)
+      }
+      if (key === 'market_value' && !options.fromAutomaticEstimate && !options.fromSettlement) {
+        next.market_value_source = 'manual'
+        next.market_value_updated = new Date().toISOString().slice(0, 10)
       }
       return next
     })
@@ -1217,7 +1360,7 @@ export default function PropertyFormPage() {
       if (!HOME_TYPE_VALUES.has(normalizedHomeType)) next.property_type = 'Select an approved home type.'
       if (normalizedHomeType === 'other' && !String(form.property_type_raw || '').trim()) next.property_type_raw = 'Describe the home type.'
       if (toNumber(form.purchase_price) < 0) next.purchase_price = 'Purchase price cannot be negative.'
-      if (toNumber(form.market_value) < 0) next.market_value = 'Current value cannot be negative.'
+      if (toNumber(form.market_value) < 0) next.market_value = 'Market Price cannot be negative.'
       if (form.purchase_date && Number.isNaN(Date.parse(form.purchase_date))) next.purchase_date = 'Enter a valid purchase date.'
       if (form.market_value_updated && Number.isNaN(Date.parse(form.market_value_updated))) next.market_value_updated = 'Enter a valid valuation date.'
       if (
@@ -1284,6 +1427,19 @@ export default function PropertyFormPage() {
     setSetupStatus(response.data)
   }
 
+  function applyLifecycleDraft(lifecycle) {
+    setLoanLifecycle(lifecycle)
+    setSettlementSources(acquisitionFieldSources(lifecycle))
+    const acquisitionCosts = lifecycle?.acquisition?.closingAndTitleCosts
+    const settlementTotal = lifecycle?.acquisition?.settlementAccountingTotal
+    if (acquisitionCosts?.value == null && settlementTotal?.value == null) return
+    setForm((current) => ({
+      ...current,
+      closing_costs: acquisitionCosts?.value != null ? numberOrEmpty(acquisitionCosts.value) : current.closing_costs,
+      settlement_total_amount: settlementTotal?.value != null ? numberOrEmpty(settlementTotal.value) : current.settlement_total_amount,
+    }))
+  }
+
   async function refreshLoanTransferSuggestions(targetId = propertyId) {
     if (!targetId) return null
     try {
@@ -1308,20 +1464,23 @@ export default function PropertyFormPage() {
 
   async function refreshPropertyDraft(targetId = propertyId, options = {}) {
     if (!targetId) return null
-    const [propertyResponse, statusResponse, expenseResponse, documentResponse] = await Promise.all([
+    const [propertyResponse, statusResponse, expenseResponse, documentResponse, escrowResponse, lifecycleResponse] = await Promise.all([
       propAPI.get(targetId),
       propAPI.setupStatus(targetId),
       propAPI.annualExpenses(targetId).catch(() => ({ data: [] })),
       docAPI.list(targetId).catch(() => ({ data: [] })),
+      docAPI.escrowPayments(targetId).catch(() => ({ data: [] })),
+      docAPI.lifecycle(targetId).catch(() => ({ data: null })),
     ])
     hydrateProperty(propertyResponse.data)
     setSetupStatus(statusResponse.data)
     setExpenseRows((expenseResponse.data || []).map((row) => normalizeAnnualExpense(row)))
+    setEscrowPayments(escrowResponse.data || [])
+    applyLifecycleDraft(lifecycleResponse.data)
     const setupDocuments = settlementDocumentsFromDocuments(documentResponse.data || [])
-    const settlement = setupDocuments[0] || null
+    const settlement = selectBackendAcquisitionDocument(setupDocuments, lifecycleResponse.data)
     setSettlementDocuments(setupDocuments)
     setSettlementDocument(settlement)
-    setSettlementSources(settlementSourcesFromDocument(settlement, propertyResponse.data))
     await refreshLoanTransferSuggestions(targetId)
     if (options.focusImportedLoanDocumentId) {
       const index = (propertyResponse.data.loans || []).findIndex((loan) => loan.source_document_id === options.focusImportedLoanDocumentId)
@@ -1446,6 +1605,18 @@ export default function PropertyFormPage() {
     }, 180)
   }
 
+  function focusSetupError(fieldKey, sectionId = null) {
+    if (!fieldKey) return
+    const loanFieldMatch = fieldKey.match(/^loan_(\d+)_/)
+    if (loanFieldMatch) setLoanEditorIndex(Number(loanFieldMatch[1]))
+    const targetSection = sectionId
+      || (loanFieldMatch ? 'financing' : null)
+      || (fieldKey.startsWith('rental_') ? 'rental' : null)
+      || (EXPENSE_FIELDS.some(({ key }) => key === fieldKey) ? 'expenses' : 'property')
+    if (targetSection !== activeSection) navigateToSection(targetSection, false)
+    focusFirstError(fieldKey)
+  }
+
   function firstErrorSection(payload) {
     const fieldErrors = payload?.fieldErrors || {}
     const sectionOrder = ['property', 'financing', 'rental', 'expenses']
@@ -1476,11 +1647,14 @@ export default function PropertyFormPage() {
         setErrors(mappedErrors)
         setFinalValidation(payload)
         const targetSection = firstErrorSection(payload)
+	      const firstFieldKey = firstErrorFieldKey(payload, targetSection)
+	      const loanFieldMatch = firstFieldKey?.match(/^loan_(\d+)_/)
+	      if (loanFieldMatch) setLoanEditorIndex(Number(loanFieldMatch[1]))
         setSectionState((current) => ({ ...current, [activeSection]: 'Validation warning', [targetSection]: 'Validation warning' }))
         const errorCount = payload.summary?.errorCount || Object.keys(payload.fieldErrors || {}).length || allSectionErrorItems(payload).length
         toast.error(`${errorCount || 'Some'} items need attention before this property can be saved.`)
         navigateToSection(targetSection, false)
-        focusFirstError(firstErrorFieldKey(payload, targetSection))
+	      focusFirstError(firstFieldKey)
         return null
       }
       setFinalValidation(null)
@@ -1565,36 +1739,54 @@ export default function PropertyFormPage() {
     })
   }
 
-  function openExpenseDocumentUpload(field) {
-    setExpenseUploadTarget(field)
-    expenseDocumentInputRef.current?.click()
-  }
-
-  async function handleExpenseDocumentUpload(file) {
-    if (!file || !expenseUploadTarget || !propertyId) return
-    const formData = new FormData()
-    formData.append('property_id', propertyId)
-    formData.append('year', String(expenseYear))
-    formData.append('field', expenseUploadTarget)
-    formData.append('file', file)
-    setExpenseUploading(true)
+  async function handleEscrowAnalysisUpload(fileList) {
+    const files = Array.from(fileList || [])
+    if (!files.length || !propertyId) return
+    setEscrowUploading(true)
+    let imported = 0
+    let preserved = 0
+    const failures = []
     try {
-      const response = await docAPI.uploadExpenseField(formData)
-      if (response.data?.status === 'address_review_required') {
-        setExpenseAddressReview({ ...response.data, field: expenseUploadTarget, year: expenseYear })
-        toast.error(response.data?.message || 'Address confirmation required')
-        return
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('property_id', propertyId)
+        formData.append('file', file)
+        try {
+          const response = await docAPI.uploadExpenseDocument(formData)
+          if (response.data?.status === 'address_review_required') {
+            setExpenseAddressReview({
+              ...response.data,
+              field: response.data.detectedField,
+              year: response.data.expenseYear,
+            })
+            continue
+          }
+          const appliedExpenseRows = response.data?.annualExpenses || []
+          if (appliedExpenseRows.length) {
+            appliedExpenseRows.forEach(replaceExpenseRow)
+          } else if (response.data?.annualExpense) {
+            replaceExpenseRow(response.data.annualExpense)
+          }
+          setEscrowPayments((current) => {
+            const payment = response.data?.escrowPayment
+            if (!payment) return current
+            return [payment, ...current.filter((item) => item.id !== payment.id)]
+              .sort((left, right) => String(right.statementDate || '').localeCompare(String(left.statementDate || '')))
+          })
+          imported += 1
+          preserved += response.data?.expenseApplication?.preserved?.length || 0
+        } catch (err) {
+          failures.push(`${file.name}: ${apiErrorMessage(err, 'Upload failed')}`)
+        }
       }
-      replaceExpenseRow(response.data.annualExpense)
-      const fieldLabel = expenseUploadTarget === 'property_tax' ? 'property tax' : 'insurance'
-      toast.success(`Reported ${fieldLabel} imported from document.`)
-      setDirtySection(null)
-    } catch (err) {
-      toast.error(apiErrorMessage(err, 'Expense document upload failed'))
+      if (imported) {
+        const preservedText = preserved ? ` ${preserved} existing expense value${preserved === 1 ? ' was' : 's were'} preserved.` : ''
+        toast.success(`${imported} expense document${imported === 1 ? '' : 's'} imported and assigned by document period.${preservedText}`)
+      }
+      if (failures.length) toast.error(failures.join(' '))
     } finally {
-      setExpenseUploading(false)
-      setExpenseUploadTarget(null)
-      if (expenseDocumentInputRef.current) expenseDocumentInputRef.current.value = ''
+      setEscrowUploading(false)
+      if (escrowAnalysisInputRef.current) escrowAnalysisInputRef.current.value = ''
     }
   }
 
@@ -1704,6 +1896,7 @@ export default function PropertyFormPage() {
 	    if (!settlementDocument || !settlementAddressValidation) return false
 	    const status = settlementAddressValidation.status
 	    if (status === 'match') return false
+	    if (status === 'manual_override') return false
 	    if (status === 'possible_match' && settlementAddressConfirmed) return false
 	    if (status === 'property_address_empty') {
 	      toast.error('Apply the document address to this property before continuing.')
@@ -1848,14 +2041,12 @@ export default function PropertyFormPage() {
     await refreshSetupStatus(propertyId)
   }
 
-  function openSettlementUpload(role) {
-    settlementUploadRoleRef.current = role
+  function openSettlementUpload() {
     settlementInputRef.current?.click()
   }
 
   async function handleSettlementUpload(file) {
     if (!file) return
-    const setupImportRole = settlementUploadRoleRef.current || 'closing_document'
     setSettlementUploading(true)
     try {
       const targetId = propertyId || await ensurePropertyRecord()
@@ -1875,15 +2066,17 @@ export default function PropertyFormPage() {
         toast.error('This document does not appear to be a closing or settlement statement.')
         return
       }
+      const setupImportRole = preview.extracted_data?.setup_import_role || 'closing_document'
       const acceptResponse = await docAPI.acceptUpload({
         pending_upload_id: preview.pending_upload_id,
         original_filename: preview.original_filename,
         property_id: targetId,
         category: preview.category,
         apply_extracted: false,
-        field_overrides: { setup_import_role: setupImportRole },
       })
       await loadSettlementReview(acceptResponse.data.id, { openReview: true })
+      const lifecycleResponse = await docAPI.lifecycle(targetId)
+      applyLifecycleDraft(lifecycleResponse.data)
       toast.success(`${setupImportRoleLabel({ extracted_data: { setup_import_role: setupImportRole } })} uploaded. Review extracted fields before applying.`)
     } catch (err) {
       const detail = err.response?.data?.detail
@@ -1896,8 +2089,37 @@ export default function PropertyFormPage() {
       }
     } finally {
       setSettlementUploading(false)
-      settlementUploadRoleRef.current = 'closing_document'
       if (settlementInputRef.current) settlementInputRef.current.value = ''
+    }
+  }
+
+  async function delinkSettlementDocument() {
+    const documentId = settlementDocument?.id || settlementDocument?.documentId
+    if (!documentId) return
+    setSettlementDelinking(true)
+    try {
+      const response = await docAPI.delinkSetup(documentId)
+      const lifecycle = response.data.draft
+      const selectedDocument = selectBackendAcquisitionDocument(settlementDocuments, lifecycle)
+      applyLifecycleDraft(lifecycle)
+      setSettlementDocument(selectedDocument)
+      setSettlementReview(null)
+      setSettlementAddressValidation(null)
+      setSettlementAddressConfirmed(false)
+      setSettlementAddressOverride(false)
+      setSettlementDelinkConfirm(false)
+      if (selectedDocument?.id) {
+        const reviewResponse = await docAPI.setupImportReview(selectedDocument.id)
+        const validation = reviewResponse.data.addressValidation || null
+        setSettlementAddressValidation(validation)
+        setSettlementAddressConfirmed(validation?.status === 'match')
+        setSettlementAddressOverride(validation?.status === 'manual_override')
+      }
+      toast.success('Document delinked. Accepted values were preserved.')
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not delink document'))
+    } finally {
+      setSettlementDelinking(false)
     }
   }
 
@@ -1915,6 +2137,7 @@ export default function PropertyFormPage() {
       setSettlementDocuments((current) => current.some((doc) => doc.id === document.id) ? current.map((doc) => doc.id === document.id ? { ...doc, ...document } : doc) : [document, ...current])
       setSettlementAddressValidation(review.addressValidation || null)
       setSettlementAddressConfirmed(review.addressValidation?.status === 'match')
+      setSettlementAddressOverride(review.addressValidation?.status === 'manual_override')
       const hasPurchasePriceSelection = Boolean(review.purchasePriceSelection?.components?.length)
       const reviewFields = (review.propertyFields || [])
         .filter((field) => !(hasPurchasePriceSelection && field.targetKey === 'purchase_price'))
@@ -1930,7 +2153,7 @@ export default function PropertyFormPage() {
       currentValue: form[field.targetKey],
       currentDisplay: ['purchase_date', 'market_value_updated'].includes(field.targetKey)
         ? (form[field.targetKey] ? formatDate(form[field.targetKey]) : '')
-        : ['purchase_price', 'market_value', 'down_payment', 'closing_costs'].includes(field.targetKey)
+        : ['purchase_price', 'market_value', 'down_payment', 'closing_costs', 'settlement_total_amount'].includes(field.targetKey)
           ? (toNumber(form[field.targetKey]) ? formatCurrency(toNumber(form[field.targetKey])) : '')
           : (form[field.targetKey] || ''),
       sourceLabel: field.sourceLabel || field.label,
@@ -2027,10 +2250,12 @@ export default function PropertyFormPage() {
           selected_purchase_price_components: settlementReview.purchasePriceSelection ? selectedPurchaseComponents : undefined,
 	        selected_loan_fields: [],
 	        confirm_address_match: settlementAddressConfirmed,
+	        address_override: settlementAddressOverride,
 	      })
 	      const nextAddressValidation = response.data.addressValidation || settlementReview.addressValidation || null
 	      setSettlementAddressValidation(nextAddressValidation)
 	      setSettlementAddressConfirmed(nextAddressValidation?.status === 'match')
+	      setSettlementAddressOverride(nextAddressValidation?.status === 'manual_override')
 	      await refreshPropertyDraft(targetId, { focusImportedLoanDocumentId: settlementReview.document.id })
 	      if (selectedFields.some((field) => ['market_value', 'market_value_updated'].includes(field.targetKey))) setValuationDateOrigin('imported_document')
 	      else if (selectedFields.some((field) => field.targetKey === 'purchase_date')) setValuationDateOrigin('auto_purchase_date')
@@ -2059,14 +2284,19 @@ export default function PropertyFormPage() {
     formData.append('file', file)
     const previewResponse = await docAPI.previewUpload(formData)
     const preview = previewResponse.data
-    if (!['mortgage_statement', '1098'].includes(preview.category)) {
+    const extracted = preview.extracted_data || {}
+    const isLoanBearingClosingDocument = preview.category === 'closing_statement'
+      && Number(extracted.original_amount || extracted.loan_amount || 0) > 0
+      && ['account_number', 'loan_id', 'interest_rate', 'monthly_payment', 'loan_term_years']
+        .some((key) => extracted[key] !== null && extracted[key] !== undefined && extracted[key] !== '')
+    if (!['mortgage_statement', '1098', 'loan_disclosure'].includes(preview.category) && !isLoanBearingClosingDocument) {
       await docAPI.cancelUpload({
         pending_upload_id: preview.pending_upload_id,
         original_filename: preview.original_filename,
         property_id: targetId,
         category: preview.category,
       }).catch(() => {})
-      throw new Error(`${preview.original_filename || file.name} is not a mortgage statement or 1098.`)
+      throw new Error(`${preview.original_filename || file.name} does not contain supported loan terms, a mortgage statement, or Form 1098 data.`)
     }
     try {
       const acceptResponse = await docAPI.acceptUpload({
@@ -2107,11 +2337,15 @@ export default function PropertyFormPage() {
         accepted.push(result)
       }
       const reusedCount = accepted.filter((item) => item.reusedExisting).length
-      if (accepted.length === 1) {
-        await loadLoanStatementReview(accepted[0].documentId, { openReview: true })
+      const disclosures = accepted.filter((item) => ['loan_disclosure', 'closing_statement'].includes(item.preview.category))
+      if (accepted.length === 1 || disclosures.length) {
+        const reviewDocument = disclosures[0] || accepted[0]
+        await loadLoanStatementReview(reviewDocument.documentId, { openReview: true })
         toast.success(reusedCount
           ? 'Existing loan document loaded. Review extracted fields before applying.'
-          : `${accepted[0].preview.category === '1098' ? '1098' : 'Mortgage statement'} uploaded. Review extracted fields before applying.`)
+          : disclosures.length && accepted.length > 1
+            ? 'Loan documents uploaded. Apply the loan disclosure first; the other documents remain available for account history.'
+            : `${reviewDocument.preview.category === '1098' ? '1098' : ['loan_disclosure', 'closing_statement'].includes(reviewDocument.preview.category) ? 'Loan disclosure' : 'Mortgage statement'} uploaded. Review extracted fields before applying.`)
         return
       }
       const documentIds = [...new Set(accepted.map((item) => item.documentId))]
@@ -2230,10 +2464,17 @@ export default function PropertyFormPage() {
       ].filter(Boolean)
       if (estimatedParts.length) {
         toast.success(`Estimated ${estimates.year} ${estimatedParts.join(' and ')} from escrow — upload your tax bill to confirm.`)
+      } else if (response.data.refinanceApplied) {
+        toast.success('Refinance applied. The replacement loan was added and the prior loan was closed on the refinance date.')
       } else if (response.data.servicingTransfer) {
         toast.success('Loan document applied. Review the old-loan close date prompt before grouping.')
       } else {
-        toast.success(`${loanStatementReview.document?.type === '1098' ? '1098' : 'Mortgage statement'} values applied.`)
+        const appliedType = loanStatementReview.document?.type === '1098'
+          ? '1098'
+          : ['loan_disclosure', 'closing_statement'].includes(loanStatementReview.document?.type)
+            ? 'Loan disclosure'
+            : 'Mortgage statement'
+        toast.success(`${appliedType} values applied.`)
       }
     } catch (err) {
       const detail = err.response?.data?.detail
@@ -2247,6 +2488,7 @@ export default function PropertyFormPage() {
   const activePresentation = sectionPresentation(activeSection)
   const progressPercent = setupProgress.percent
   const propertyHeaderName = form.name || 'New property'
+  const pageTitle = id ? 'Edit Property' : 'Property Setup'
   const isFinalSection = activeVisibleSections.findIndex((section) => section.id === activeSection) === activeVisibleSections.length - 1
   const activeDirty = dirtySection === activeSection
   const unsavedSectionTitle = SETUP_SECTIONS.find((section) => section.id === dirtySection)?.title || activePresentation.title
@@ -2265,18 +2507,18 @@ export default function PropertyFormPage() {
   }, [pendingSection])
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-950 dark:bg-gray-950 dark:text-white">
-      <div className="sticky top-0 z-30 bg-white/95 backdrop-blur dark:bg-gray-950/95">
-        <header className="border-b border-gray-200 px-5 py-4 dark:border-gray-800 sm:px-8">
-          <div className="mx-auto flex max-w-7xl flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex h-full min-h-0 max-h-full flex-col overflow-hidden bg-gray-50 text-gray-950 dark:bg-gray-950 dark:text-white">
+      <div className="shrink-0 bg-white dark:bg-gray-950">
+        <header className="border-b border-gray-200 py-3 dark:border-gray-800">
+          <div className="mx-auto flex max-w-[112rem] flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <button type="button" onClick={() => navigate('/properties')} className="mb-2 flex items-center gap-1 text-sm font-medium text-gray-500 transition-colors duration-150 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200">
+              <button type="button" onClick={() => navigate('/properties')} className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500 transition-colors duration-150 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200">
                 <ChevronLeft className="h-4 w-4" /> Properties
               </button>
-              <div className="flex flex-wrap items-end gap-3">
-                <h1 className="truncate text-3xl font-semibold tracking-tight text-gray-950 dark:text-white">Property Setup</h1>
-                <span className="pb-1 text-sm text-gray-500 dark:text-gray-400">{propertyHeaderName}</span>
-                <span className="pb-1 text-sm font-medium text-blue-700 dark:text-blue-300">Setup {progressPercent}% complete · {setupProgress.complete} of {setupProgress.total} sections complete</span>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <h1 className="truncate text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{pageTitle}</h1>
+                <span className="text-sm text-gray-500 dark:text-gray-400">{propertyHeaderName}</span>
+                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Setup {progressPercent}% complete · {setupProgress.complete} of {setupProgress.total} sections complete</span>
                 <span className="pb-0.5"><SaveStatusChip state={sectionState[activeSection]} dirty={activeDirty} /></span>
               </div>
             </div>
@@ -2285,9 +2527,9 @@ export default function PropertyFormPage() {
       </div>
 
       {loading ? (
-        <div className="mx-auto mt-8 max-w-7xl px-5 text-sm text-gray-500 dark:text-gray-400 sm:px-8">Loading property setup...</div>
+        <div className="mx-auto flex min-h-0 flex-1 w-full max-w-[112rem] items-center text-sm text-gray-500 dark:text-gray-400">Loading property setup...</div>
       ) : (
-        <main className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
+        <main className="mx-auto flex min-h-0 w-full max-w-[112rem] flex-1 py-3 sm:py-4">
           <PropertySetupSection
             tabs={(
               <PropertySetupTabs
@@ -2320,6 +2562,8 @@ export default function PropertyFormPage() {
           />
         </main>
       )}
+
+      {loanSourceDetails ? <LoanSourceDetailsDialog loan={loanSourceDetails} onClose={() => setLoanSourceDetails(null)} /> : null}
 
       {pendingSection ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-900/45 px-4 py-5 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="unsaved-setup-title" aria-describedby="unsaved-setup-description">
@@ -2385,9 +2629,17 @@ export default function PropertyFormPage() {
 	  )
 
   function validationSummary() {
-    return Object.keys(errors).length ? (
+    const activeErrors = Object.entries(errors).filter(([, message]) => Boolean(message))
+    return activeErrors.length ? (
       <div className="mb-4 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300" role="alert">
-        Review the highlighted fields before saving.
+	      <p className="font-semibold">Review the highlighted fields before saving.</p>
+	      <ul className="mt-2 space-y-1">
+	        {activeErrors.map(([fieldKey, message]) => (
+	          <li key={fieldKey}>
+	            <button type="button" className="text-left underline decoration-red-300 underline-offset-2" onClick={() => focusSetupError(fieldKey)}>{message}</button>
+	          </li>
+	        ))}
+	      </ul>
       </div>
     ) : null
   }
@@ -2421,8 +2673,7 @@ export default function PropertyFormPage() {
           </div>
           <button type="button" className="btn-secondary shrink-0 text-sm" onClick={() => {
             const targetSection = firstErrorSection(finalValidation)
-            navigateToSection(targetSection, false)
-            focusFirstError(firstErrorFieldKey(finalValidation, targetSection))
+            focusSetupError(firstErrorFieldKey(finalValidation, targetSection), targetSection)
           }}>
             Go to first error
           </button>
@@ -2442,7 +2693,7 @@ export default function PropertyFormPage() {
       if (sectionId === 'property') return renderPropertySection()
       if (sectionId === 'financing') return renderFinancingEditor()
       if (sectionId === 'rental') return renderRentalEditor()
-      if (sectionId === 'expenses') return <PropertySetupEditor title={`Edit ${expenseYear} Expenses`} description="Edit the selected annual expense row. Current-year expenses complete setup; prior years remain optional.">{renderExpensesSection()}</PropertySetupEditor>
+      if (sectionId === 'expenses') return <PropertySetupEditor title="Expenses" description="Upload documents for any year, then review or manually edit the selected annual expense row.">{renderExpensesSection()}</PropertySetupEditor>
       return null
     })()
     return (
@@ -2455,6 +2706,7 @@ export default function PropertyFormPage() {
   }
 
   function renderPropertySection() {
+	const acquisitionCostBreakdown = loanLifecycle?.acquisition?.closingAndTitleCosts
     return (
       <div className="space-y-4">
         <SetupSubsection title="Basics">
@@ -2481,7 +2733,7 @@ export default function PropertyFormPage() {
               required={REQUIRED_FIELDS.has('original_residency_status')}
             >
               <option value="">Select status</option>
-              {RESIDENCY_OPTIONS.map((option) => <option key={option.originalValue} value={option.originalValue}>{option.label}</option>)}
+              {ORIGINAL_RESIDENCY_OPTIONS.map((option) => <option key={option.originalValue} value={option.originalValue}>{option.label}</option>)}
             </SelectInput>
             <SelectInput
               label="Current Residency Status"
@@ -2492,7 +2744,7 @@ export default function PropertyFormPage() {
               helper="How the property is being used today."
               required={REQUIRED_FIELDS.has('usage_type')}
             >
-              {RESIDENCY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              {CURRENT_RESIDENCY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </SelectInput>
             <TextInput label="Street" value={form.address} onChange={(value) => setField('address', value, 'property')} />
             {normalizeHomeType(form.property_type) === 'other' ? (
@@ -2514,20 +2766,38 @@ export default function PropertyFormPage() {
           <div className="grid gap-4 md:grid-cols-3">
             <TextInput fieldKey="purchase_date" label="Purchase date" type="date" value={form.purchase_date} onChange={(value) => setField('purchase_date', value, 'property')} error={errors.purchase_date} required={REQUIRED_FIELDS.has('purchase_date')} source={settlementSources.purchase_date} />
             <MoneyInput fieldKey="purchase_price" label="Purchase price" value={form.purchase_price} onChange={(value) => setField('purchase_price', value, 'property')} error={errors.purchase_price} helper="Original contract price, excluding later improvements." emphasis required={REQUIRED_FIELDS.has('purchase_price')} source={settlementSources.purchase_price} />
-            <MoneyInput label="Down payment" value={form.down_payment} onChange={(value) => setField('down_payment', value, 'property')} error={errors.down_payment} helper="Cash contribution at purchase." source={settlementSources.down_payment} />
-            <MoneyInput label="Closing costs" value={form.closing_costs} onChange={(value) => setField('closing_costs', value, 'property')} error={errors.closing_costs} source={settlementSources.closing_costs} />
+            <MoneyInput fieldKey="down_payment" label="Down payment" value={form.down_payment} onChange={(value) => setField('down_payment', value, 'property')} error={errors.down_payment} helper="Cash contribution at purchase." source={settlementSources.down_payment} />
+            <MoneyInput
+	          fieldKey="closing_costs"
+	          label="Closing & Title costs"
+	          value={form.closing_costs}
+	          onChange={(value) => setField('closing_costs', value, 'property')}
+	          error={errors.closing_costs}
+	          helper={acquisitionCostBreakdown
+	            ? `Closing costs ${acquisitionCostBreakdown.closingCosts.display}; remaining title costs ${acquisitionCostBreakdown.titleCosts.display}.`
+	            : 'Combined closing and title costs. A linked settlement statement supplies the backend-calculated breakdown.'}
+	          source={settlementSources.settlement_accounting_total || settlementSources.closing_costs}
+	        />
+            <ReadOnlyMoneyField
+              fieldKey="settlement_total_amount"
+              label="Settlement accounting total"
+              display={loanLifecycle?.acquisition?.settlementAccountingTotal?.display || '—'}
+              helper="Buyer debit total or buyer credit total from the settlement accounting statement."
+              source={settlementSources.settlement_accounting_total}
+            />
           </div>
         </SetupSubsection>
 
         <SetupSubsection title="Valuation">
           <div className="grid gap-4 md:grid-cols-3">
-            <MoneyInput fieldKey="market_value" label="Current value" value={form.market_value} onChange={(value) => setField('market_value', value, 'property')} error={errors.market_value} helper="Used for equity and LTV calculations." emphasis required={REQUIRED_FIELDS.has('market_value')} source={settlementSources.market_value} />
-            <SelectInput label="Valuation source" value={form.market_value_source} onChange={(value) => setField('market_value_source', value, 'property')} helper="Manual, appraisal, or imported estimate.">
+            <MoneyInput fieldKey="market_value" label="Market Price" value={form.market_value} onChange={(value) => setField('market_value', value, 'property')} error={errors.market_value} helper={form.market_value_source === 'estimated_6pct' ? 'Backend estimate using 6% annual appreciation from the purchase year. Edit this field to override manually.' : 'Manual or reported market price used for equity and LTV.'} emphasis required={REQUIRED_FIELDS.has('market_value')} />
+            <SelectInput label="Valuation source" value={form.market_value_source} onChange={(value) => setField('market_value_source', value, 'property')} helper="Automatic estimate or a user-provided override.">
+              <option value="estimated_6pct">Automatic · 6% yearly</option>
               <option value="manual">Manual</option>
               <option value="appraisal">Appraisal</option>
               <option value="imported">Imported estimate</option>
             </SelectInput>
-            <TextInput label="Valuation date" type="date" value={form.market_value_updated} onChange={(value) => setField('market_value_updated', value, 'property')} error={errors.market_value_updated} helper="The date associated with the current market value. It initially defaults to the purchase date and can be updated." source={settlementSources.market_value_updated} />
+            <TextInput label="Valuation date" type="date" value={form.market_value_updated} onChange={(value) => setField('market_value_updated', value, 'property')} error={errors.market_value_updated} helper="As-of date for the market price." />
           </div>
         </SetupSubsection>
 
@@ -2543,8 +2813,10 @@ export default function PropertyFormPage() {
   }
 
   function renderSettlementUploadPanel() {
-    const hasDocuments = settlementDocuments.length > 0
     const documentUrl = propertyId ? `/properties/${propertyId}/documents` : '/uploads'
+    const documentById = new Map(settlementDocuments.map((document) => [document.id, document]))
+    const displayGroups = loanLifecycle?.documentGroups || []
+    const hasDocuments = displayGroups.some((group) => (group.documents || []).length > 0)
     return (
       <div className={`mb-4 rounded-lg border p-3 ${hasDocuments ? 'border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950/40' : 'border-blue-200 bg-blue-50/70 dark:border-blue-900/60 dark:bg-blue-950/20'}`}>
         <input
@@ -2558,35 +2830,38 @@ export default function PropertyFormPage() {
           <div className="space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Uploaded setup documents</p>
-                <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Review any document and choose exactly which fields it should populate.</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Resolved setup documents</p>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Purchase sources populate Property Setup. Refinance and current-loan sources remain grouped with the loan history they support.</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm" onClick={() => openSettlementUpload('closing_document')} disabled={settlementUploading}>
+                <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm" onClick={openSettlementUpload} disabled={settlementUploading}>
                   <Upload className="h-4 w-4" />
-                  {settlementUploading ? 'Uploading...' : 'Upload Closing'}
-                </button>
-                <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm" onClick={() => openSettlementUpload('settlement_document')} disabled={settlementUploading}>
-                  <Upload className="h-4 w-4" />
-                  {settlementUploading ? 'Uploading...' : 'Upload Settlement'}
+                  {settlementUploading ? 'Uploading...' : 'Upload document'}
                 </button>
               </div>
             </div>
-            <div className="divide-y divide-gray-200 rounded-md border border-gray-200 bg-white dark:divide-gray-800 dark:border-gray-800 dark:bg-gray-950/30">
-              {settlementDocuments.map((document) => {
-                const active = settlementDocument?.id === document.id
-                const role = setupImportRole(document)
-                const documentName = document.display_name || document.original_filename
+            <div className="space-y-3">
+              {displayGroups.map((group, groupIndex) => (
+                <div key={group.transactionId || `${group.purpose}-${groupIndex}`} className="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950/30">
+                  <div className="border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/60">
+                    <p className="text-sm font-semibold text-gray-950 dark:text-white">{group.title}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{group.usageLabel}</p>
+                  </div>
+                  <div className="divide-y divide-gray-100 dark:divide-gray-800">
+              {(group.documents || []).map((resolvedDocument) => {
+                const document = documentById.get(resolvedDocument.documentId) || resolvedDocument
+                const documentId = document.id || resolvedDocument.documentId
+                const active = settlementDocument?.id === documentId
+                const documentName = resolvedDocument.name || document.display_name || document.original_filename
                 const hasAddressIssue = active && ['mismatch', 'missing', 'document_address_missing'].includes(settlementAddressValidation?.status)
                 return (
-                  <div key={document.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div key={documentId} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 gap-2">
                       <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
                       <div className="min-w-0">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-semibold text-gray-900 dark:text-white" title={documentName}>{documentName}</p>
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-900 dark:text-gray-300">{setupImportRoleLabel(document)}</span>
-                          {active ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">Selected</span> : null}
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-900 dark:text-gray-300">{(resolvedDocument.documentType || setupImportRoleLabel(document)).replaceAll('_', ' ')}</span>
                           {hasAddressIssue ? (
                             <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">
                               {settlementAddressValidation.status === 'mismatch' ? 'Address mismatch' : 'Address unconfirmed'}
@@ -2594,37 +2869,36 @@ export default function PropertyFormPage() {
                           ) : null}
                         </div>
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          {role === 'settlement_document' ? 'Final closing price and valuation fields' : 'Purchase details, valuation fields, and loan terms'}
+                          {resolvedDocument.role ? resolvedDocument.role.replaceAll('_', ' ').toLowerCase() : 'Linked property document'}
                         </p>
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs font-medium">
-                      <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => navigate(document.displayUrl || documentUrl)}>Open</button>
-                      <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => loadSettlementReview(document.id, { openReview: true })}>Review import</button>
-                      <button type="button" className="text-gray-600 hover:underline dark:text-gray-300" onClick={() => {
-                        setSettlementDocument(document)
+                      <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => navigate(resolvedDocument.openUrl || document.displayUrl || documentUrl)}>Open</button>
+                      {['CLOSING_DISCLOSURE', 'SETTLEMENT_STATEMENT'].includes(resolvedDocument.documentType) ? <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => loadSettlementReview(documentId, { openReview: true })}>Review import</button> : null}
+                      {documentId ? <button type="button" className="text-gray-600 hover:underline dark:text-gray-300" onClick={() => {
+                        setSettlementDocument({ ...document, id: documentId })
                         setSettlementDelinkConfirm(true)
-                      }}>Delink</button>
+                      }}>Delink</button> : null}
                     </div>
                   </div>
                 )
               })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         ) : (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-semibold text-gray-950 dark:text-white">Upload setup documents</p>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Closing documents can include loan terms. Settlement documents provide final closing price.</p>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Upload a closing or settlement document. Its document type and available fields are identified automatically.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={() => openSettlementUpload('closing_document')} disabled={settlementUploading}>
+              <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={openSettlementUpload} disabled={settlementUploading}>
                 <Upload className="h-4 w-4" />
-                {settlementUploading ? 'Uploading...' : 'Upload Closing'}
-              </button>
-              <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={() => openSettlementUpload('settlement_document')} disabled={settlementUploading}>
-                <Upload className="h-4 w-4" />
-                {settlementUploading ? 'Uploading...' : 'Upload Settlement'}
+                {settlementUploading ? 'Uploading...' : 'Upload document'}
               </button>
             </div>
           </div>
@@ -2638,17 +2912,10 @@ export default function PropertyFormPage() {
               <button
                 type="button"
                 className="btn-secondary text-xs"
-                onClick={() => {
-	                  setSettlementDocument(null)
-                    setSettlementDocuments((current) => current.filter((document) => document.id !== settlementDocument?.id))
-	                  setSettlementReview(null)
-	                  setSettlementSources({})
-	                  setSettlementAddressValidation(null)
-	                  setSettlementAddressConfirmed(false)
-	                  setSettlementDelinkConfirm(false)
-	                }}
+                onClick={delinkSettlementDocument}
+                disabled={settlementDelinking}
               >
-                Delink Document
+                {settlementDelinking ? 'Delinking...' : 'Delink Document'}
               </button>
             </div>
           </div>
@@ -2661,9 +2928,11 @@ export default function PropertyFormPage() {
 	  function renderSettlementReview() {
 	    const addressValidation = settlementReview?.addressValidation || settlementAddressValidation
 	    const addressStatus = addressValidation?.status
-	    const addressBlocksApply = addressStatus === 'mismatch' || addressStatus === 'document_address_missing' || addressStatus === 'missing' || (addressStatus === 'possible_match' && !settlementAddressConfirmed)
+	    const missingAddressNeedsOverride = (addressStatus === 'document_address_missing' || addressStatus === 'missing') && !settlementAddressOverride
+	    const addressBlocksApply = addressStatus === 'mismatch' || missingAddressNeedsOverride || (addressStatus === 'possible_match' && !settlementAddressConfirmed)
 	    const addressStatusLabel = {
 	      match: 'Address confirmed',
+	      manual_override: 'Manual override',
 	      possible_match: 'Please confirm',
 	      property_address_empty: 'Ready to add',
 	      document_address_missing: 'Address not found',
@@ -2672,7 +2941,7 @@ export default function PropertyFormPage() {
 	    }[addressStatus] || 'Needs review'
 	    const addressStatusClass = addressStatus === 'match'
 	      ? 'text-green-700 dark:text-green-300'
-	      : addressStatus === 'possible_match' || addressStatus === 'property_address_empty'
+	      : addressStatus === 'possible_match' || addressStatus === 'property_address_empty' || addressStatus === 'manual_override'
 	        ? 'text-yellow-700 dark:text-yellow-300'
 	        : 'text-red-700 dark:text-red-300'
       const purchasePriceSelection = settlementReview.purchasePriceSelection
@@ -2723,10 +2992,27 @@ export default function PropertyFormPage() {
 	                I confirm this document belongs to this property.
 	              </label>
 	            ) : null}
+	            {['missing', 'document_address_missing'].includes(addressStatus) ? (
+	              <label className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+	                <input
+	                  type="checkbox"
+	                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+	                  checked={settlementAddressOverride}
+	                  onChange={(event) => setSettlementAddressOverride(event.target.checked)}
+	                />
+	                <span>
+	                  <span className="block font-medium">Use the Property Setup address</span>
+	                  <span className="mt-0.5 block text-xs">I confirm this document belongs to this property even though its address could not be extracted. This override will be recorded.</span>
+	                </span>
+	              </label>
+	            ) : null}
+	            {addressStatus === 'manual_override' ? (
+	              <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">Property Setup address accepted by manual override.</p>
+	            ) : null}
 	            {addressStatus === 'mismatch' && addressValidation.differences?.length ? (
 	              <p className="mt-2 text-xs text-red-700 dark:text-red-300">Different fields: {addressValidation.differences.join(', ')}</p>
 	            ) : null}
-	            {['mismatch', 'missing', 'document_address_missing'].includes(addressStatus) ? (
+	            {['mismatch', 'missing', 'document_address_missing'].includes(addressStatus) && !settlementAddressOverride ? (
 	              <p className="mt-3 text-sm text-red-700 dark:text-red-300">
 	                {addressStatus === 'mismatch' ? 'This document appears to belong to a different property.' : 'We could not find a property address in this document.'}
 	              </p>
@@ -2738,14 +3024,8 @@ export default function PropertyFormPage() {
             <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-sm font-semibold text-gray-950 dark:text-white">{purchasePriceSelection.label || 'Purchase price components'}</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Purchase price uses Sale Price. Settlement adjustments are shown for Closing costs.</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Purchase price uses the contract sale price. Closing & Title costs are resolved from the settlement accounting total.</p>
               </div>
-              {purchasePriceSelection.settlementTotalDisplay ? (
-                <div className="text-left sm:text-right">
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Statement final total</p>
-                  <p className="font-semibold text-gray-950 dark:text-white">{purchasePriceSelection.settlementTotalDisplay}</p>
-                </div>
-              ) : null}
             </div>
             <div className="divide-y divide-gray-100 rounded-md border border-gray-100 dark:divide-gray-800 dark:border-gray-800">
               {purchasePriceSelection.components.map((component) => (
@@ -2925,6 +3205,7 @@ export default function PropertyFormPage() {
               { id: 'lender_name', header: 'Lender', render: (loan) => loan.lender_name || 'New loan' },
               { id: 'account_number', header: 'Loan #', render: (loan) => loan.account_number || '—' },
               { id: 'status', header: 'Status', render: (loan) => loanLifecycleText(loan) },
+              { id: 'purpose', header: 'Purpose', render: (loan) => resolvedLoanById.get(Number(loan.id))?.purpose || loan.purpose || '—' },
               { id: 'origination_date', header: 'Origination Date', render: (loan) => loan.origination_date ? formatDate(loan.origination_date) : '—' },
               { id: 'servicer_start_date', header: 'Acquisition Date', render: (loan) => loan.servicer_start_date ? formatDate(loan.servicer_start_date) : '—' },
               { id: 'closed_date', header: 'Closed Date', render: (loan) => loan.closed_date ? formatDate(loan.closed_date) : '—' },
@@ -2932,7 +3213,10 @@ export default function PropertyFormPage() {
 	              { id: 'current_balance', header: 'Current/Final Balance', align: 'right', render: (loan) => formatCurrency(toNumber(loan.current_balance)) },
 	              { id: 'interest_rate', header: 'Rate', align: 'right', render: (loan) => formatInterestRate(toNumber(loan.interest_rate)) },
 	              { id: 'monthly_payment', header: 'P&I / mo', align: 'right', render: (loan) => formatCurrency(toNumber(loan.monthly_payment)) },
-	              { id: 'escrow_amount', header: 'Escrow / mo', align: 'right', render: (loan) => loan.escrow_included ? formatCurrency(toNumber(loan.escrow_amount)) : '—' },
+              { id: 'source', header: 'Source', sortable: false, render: (loan) => {
+                const resolved = resolvedLoanById.get(Number(loan.id))
+                return resolved ? <button type="button" className="text-left text-sm font-medium text-blue-700 hover:underline dark:text-blue-300" onClick={() => setLoanSourceDetails(resolved)}>{resolved.sourceSummary?.label || 'View sources'}</button> : 'Manual'
+              } },
               { id: 'actions', header: 'Actions', sortable: false, render: (loan) => <div className="flex justify-end gap-3"><button type="button" className="text-blue-600 hover:underline" onClick={() => setLoanEditorIndex(loan.draftIndex)}>Edit</button><button type="button" className="text-red-600 hover:underline" onClick={() => removeLoan(loan, loan.draftIndex)}>Delete</button></div> },
             ]}
           />
@@ -2956,20 +3240,81 @@ export default function PropertyFormPage() {
           <div>
             <p className="text-sm font-semibold text-gray-950 dark:text-white">Upload multiple loan documents</p>
             {loan?.source_type === 'mortgage_statement' ? (
-              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">Select one or more 1098 forms or mortgage statements. Latest statement values are marked as reported and remain editable.</p>
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">Upload a loan disclosure, 1098 form, or mortgage statement. Latest statement values are marked as reported and remain editable.</p>
             ) : (
-              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">Select one or more 1098 forms or mortgage statements. We will analyze the documents together and ask you to confirm the consolidated loan table before applying.</p>
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">Upload loan disclosures, 1098 forms, or mortgage statements. Review extracted loan terms before they are applied.</p>
             )}
           </div>
           <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={() => loanStatementInputRef.current?.click()} disabled={loanStatementUploading}>
             <Upload className="h-4 w-4" />
-            {loanStatementUploading ? 'Uploading...' : 'Upload 1098s / statements'}
+            {loanStatementUploading ? 'Uploading...' : 'Upload loan documents'}
           </button>
         </div>
         {loanStatementConflict ? renderLoanStatementConflict() : null}
         {loanConsolidatedReview ? renderLoanConsolidatedReview() : null}
         {loanStatementReview ? renderLoanStatementReview() : null}
       </div>
+    )
+  }
+
+  function renderLinkedLoanDocuments() {
+    const documents = linkedLoanDocuments.documents || []
+    const displayMoney = (value) => value === null || value === undefined || value === '' ? '—' : formatCurrency(Number(value))
+    return (
+      <SetupSubsection title="Linked statements">
+        {linkedLoanDocuments.status === 'loading' ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">Loading linked statements...</p>
+        ) : linkedLoanDocuments.status === 'failed' ? (
+          <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">Linked statements could not be loaded.</p>
+        ) : documents.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">No mortgage statements or 1098 forms are linked to this loan account.</p>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
+            <div className="overflow-x-auto">
+              <table className="min-w-[980px] w-full text-left text-sm">
+                <thead className="bg-gray-50 text-xs font-medium text-gray-500 dark:bg-gray-950/60 dark:text-gray-400">
+                  <tr>
+                    <th className="px-3 py-2.5">Document</th>
+                    <th className="px-3 py-2.5">Period</th>
+                    <th className="px-3 py-2.5">Account</th>
+                    <th className="px-3 py-2.5 text-right">Balance</th>
+                    <th className="px-3 py-2.5 text-right">Principal YTD</th>
+                    <th className="px-3 py-2.5 text-right">Interest YTD</th>
+                    <th className="px-3 py-2.5 text-right">Escrow / mo</th>
+                    <th className="px-3 py-2.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-800 dark:bg-gray-900">
+                  {documents.map((document) => (
+                    <tr key={document.documentId}>
+                      <td className="px-3 py-3">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                          <div className="min-w-0">
+                            <p className="max-w-[300px] truncate font-medium text-gray-950 dark:text-white" title={document.filename}>{document.filename}</p>
+                            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{document.docTypeLabel}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-gray-700 dark:text-gray-300">{document.statementDate ? formatDate(document.statementDate) : document.year}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-gray-700 dark:text-gray-300">{document.accountNumber || '—'}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-medium text-gray-950 dark:text-white">{displayMoney(document.endBalance ?? document.box2Balance)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700 dark:text-gray-300">{displayMoney(document.ytdPrincipal)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700 dark:text-gray-300">{displayMoney(document.ytdInterest ?? document.box1Interest)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700 dark:text-gray-300">{displayMoney(document.monthlyEscrow)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right">
+                        <button type="button" className="font-medium text-blue-600 hover:underline dark:text-blue-400" onClick={() => loadLoanStatementReview(document.documentId)}>
+                          Review fields
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </SetupSubsection>
     )
   }
 
@@ -3068,11 +3413,16 @@ export default function PropertyFormPage() {
     const accountMismatchBlocksApply = mapping?.matchType === 'selected_account_mismatch' && !loanStatementReview.accountMismatchConfirmed
     return (
       <div className="mt-4 border-t border-blue-200 pt-4 dark:border-blue-900/60">
-        <p className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">{loanStatementReview.document?.type === '1098' ? '1098 values found' : 'Mortgage statement values found'}</p>
+        <p className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">{loanStatementReview.document?.type === '1098' ? '1098 values found' : ['loan_disclosure', 'closing_statement'].includes(loanStatementReview.document?.type) ? 'Loan disclosure values found' : 'Mortgage statement values found'}</p>
+        {loanStatementReview.warnings?.map((warning) => (
+          <p key={warning} className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">{warning}</p>
+        ))}
         {mapping ? (
           <div className={`mb-3 rounded-md border p-3 text-sm ${
             mapping.matchType === 'selected_account_mismatch'
               ? 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20'
+              : mapping.matchType === 'refinance_candidate'
+                ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/20'
               : 'border-gray-200 bg-white/70 dark:border-gray-800 dark:bg-gray-950/30'
           }`}>
             <p className="font-medium text-gray-950 dark:text-white">{mapping.accountNumber ? `Loan account ${mapping.accountNumber}` : 'Loan account not found'}</p>
@@ -3090,6 +3440,11 @@ export default function PropertyFormPage() {
                   I confirm this document belongs to loan account {mapping.accountNumber} and should not overwrite account {mapping.selectedAccountNumber}.
                 </label>
               </>
+            ) : null}
+            {mapping.matchType === 'refinance_candidate' && mapping.selectedAccountNumber ? (
+              <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                Prior account {mapping.selectedAccountNumber} will be closed with reason Refinanced; account {mapping.accountNumber} will become the active loan.
+              </p>
             ) : null}
           </div>
         ) : null}
@@ -3110,7 +3465,9 @@ export default function PropertyFormPage() {
         </div>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
           <button type="button" className="btn-secondary" onClick={() => setLoanStatementReview(null)}>Keep current values</button>
-          <button type="button" className="btn-primary" onClick={applyLoanStatementReview} disabled={accountMismatchBlocksApply}>Apply selected values</button>
+          <button type="button" className="btn-primary" onClick={applyLoanStatementReview} disabled={accountMismatchBlocksApply}>
+            {mapping?.matchType === 'refinance_candidate' ? 'Add refinanced loan' : 'Apply selected values'}
+          </button>
         </div>
       </div>
     )
@@ -3137,6 +3494,7 @@ export default function PropertyFormPage() {
           </div>
         ) : (
           <div className="space-y-4">
+            {renderLinkedLoanDocuments()}
             {renderLoanStatementUploadPanel(loan)}
             {otherOpenLoans && (loan.status || 'OPEN') === 'OPEN' ? (
               <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/20 dark:text-yellow-200">
@@ -3184,23 +3542,6 @@ export default function PropertyFormPage() {
 	                  </>
 	                ) : null}
 	              </div>
-	            </SetupSubsection>
-	            <SetupSubsection title="Escrow Details">
-	              <label className="mb-4 flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
-	                <input type="checkbox" checked={Boolean(loan.escrow_included)} onChange={(event) => toggleLoanEscrow(loanEditorIndex, event.target.checked)} />
-	                Escrow included
-	              </label>
-	              {loan.escrow_included ? (
-	                <div className="grid gap-4 md:grid-cols-3">
-	                  <MoneyInput label="Monthly property tax escrow" value={loan.monthly_property_tax_escrow} onChange={(value) => updateLoan(loanEditorIndex, 'monthly_property_tax_escrow', value)} source={statementSources.monthly_property_tax_escrow} />
-	                  <MoneyInput label="Monthly insurance escrow" value={loan.monthly_insurance_escrow} onChange={(value) => updateLoan(loanEditorIndex, 'monthly_insurance_escrow', value)} source={statementSources.monthly_insurance_escrow} />
-	                  <MoneyInput label="Monthly mortgage insurance" value={loan.monthly_mortgage_insurance} onChange={(value) => updateLoan(loanEditorIndex, 'monthly_mortgage_insurance', value)} source={statementSources.monthly_mortgage_insurance} />
-	                  <MoneyInput label="Other monthly escrow" value={loan.monthly_other_escrow} onChange={(value) => updateLoan(loanEditorIndex, 'monthly_other_escrow', value)} source={statementSources.monthly_other_escrow} />
-	                  <MoneyInput label="Total monthly escrow" value={loan.escrow_amount} onChange={(value) => updateLoan(loanEditorIndex, 'escrow_amount', value)} error={errors[`loan_${loanEditorIndex}_escrow_amount`]} source={statementSources.escrow_amount} />
-	                  <MoneyInput label="Estimated total monthly payment" value={loan.estimated_total_monthly_payment} onChange={(value) => updateLoan(loanEditorIndex, 'estimated_total_monthly_payment', value)} source={statementSources.estimated_total_monthly_payment} />
-	                  <TextInput label="Statement date" type="date" value={loan.statement_date} onChange={(value) => updateLoan(loanEditorIndex, 'statement_date', value)} source={statementSources.statement_date} />
-	                </div>
-	              ) : null}
 	            </SetupSubsection>
           </div>
         )}
@@ -3341,104 +3682,122 @@ export default function PropertyFormPage() {
     )
   }
 
-  function renderExpenseDocumentControl(field) {
-    if (!['property_tax', 'insurance'].includes(field.key)) return null
-    const sourceDocument = selectedExpenseRow[`${field.key}_document`]
-    const uploadingThisField = expenseUploading && expenseUploadTarget === field.key
-    const documentUrl = propertyId ? `/properties/${propertyId}/documents` : '/uploads'
-    const pendingReview = expenseAddressReview?.field === field.key ? expenseAddressReview : null
-    if (pendingReview) {
-      const validation = pendingReview.addressValidation || {}
-      const missingAddress = validation.status === 'document_address_missing'
-      return (
-        <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-300" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold">{missingAddress ? "Couldn't read an address" : 'Address mismatch'}</p>
-              <p className="mt-0.5 text-red-700 dark:text-red-200">
-                {missingAddress
-                  ? "Confirm this is the right document before it drives expenses."
-                  : 'This document is blocked until the address is confirmed.'}
-              </p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <div>
-                  <p className="font-medium text-red-700 dark:text-red-200">Property address</p>
-                  <p className="mt-0.5 break-words text-red-950 dark:text-red-50">{validation.normalizedPropertyAddress || 'No property address'}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-red-700 dark:text-red-200">On-document address</p>
-                  <p className="mt-0.5 break-words text-red-950 dark:text-red-50">{validation.normalizedDocumentAddress || 'No address found'}</p>
-                </div>
-              </div>
-              <p className="mt-2 text-red-700 dark:text-red-200">Match confidence: {validation.matchScoreDisplay || '0%'}</p>
-              <div className="mt-2 flex flex-wrap gap-3 font-medium">
-                <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptExpenseAddressReview}>
-                  Same address — accept
-                </button>
-                <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeExpenseAddressReview}>
-                  Wrong document — remove
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    }
-    if (sourceDocument) {
-      return (
-        <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-xs dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-start gap-2">
-            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-gray-700 dark:text-gray-200" title={sourceDocument.name}>{sourceDocument.name}</p>
-              <p className="mt-0.5 truncate text-gray-500 dark:text-gray-400">
-                {sourceDocument.docType || 'document'} · {sourceDocument.amountDisplay || '—'} · parsed {documentDisplayDate(sourceDocument.parsedAt)}
-              </p>
-              {sourceDocument.addressConfirmed && (
-                <p className="mt-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300">Address confirmed</p>
-              )}
-              <div className="mt-1.5 flex flex-wrap gap-3 font-medium">
-                <button type="button" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300" onClick={() => navigate(documentUrl)}>
-                  <Eye className="h-3.5 w-3.5" aria-hidden="true" /> Preview
-                </button>
-                <button type="button" className="inline-flex items-center gap-1 text-blue-700 hover:underline dark:text-blue-300" onClick={() => openExpenseDocumentUpload(field.key)} disabled={expenseUploading}>
-                  <Upload className="h-3.5 w-3.5" aria-hidden="true" /> Replace
-                </button>
-                <button type="button" className="inline-flex items-center gap-1 text-gray-600 hover:underline dark:text-gray-300" onClick={() => removeExpenseDocument(field.key)}>
-                  <X className="h-3.5 w-3.5" aria-hidden="true" /> Remove
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <button
-        type="button"
-        className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs font-medium text-gray-500 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:text-gray-400 dark:hover:border-blue-800 dark:hover:text-blue-300"
-        onClick={() => openExpenseDocumentUpload(field.key)}
-        disabled={expenseUploading}
-      >
-        <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-        {uploadingThisField ? 'Uploading...' : `Upload ${field.key === 'property_tax' ? 'tax bill' : 'insurance'} doc — PDF, xls`}
-      </button>
-    )
-  }
-
   function renderExpensesSection() {
     return (
       <div className="space-y-5">
         <input
-          ref={expenseDocumentInputRef}
+          ref={escrowAnalysisInputRef}
           type="file"
+          multiple
           accept=".pdf,.xlsx,.xls"
           className="sr-only"
-          onChange={(event) => handleExpenseDocumentUpload(event.target.files?.[0])}
+          onChange={(event) => handleEscrowAnalysisUpload(event.target.files)}
         />
+        <section className="border-b border-gray-200 pb-5 dark:border-gray-800" aria-labelledby="expense-documents-heading">
+          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 id="expense-documents-heading" className="text-sm font-semibold text-gray-950 dark:text-white">Expense documents</h3>
+                <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">All years</span>
+              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Select one or more escrow analyses, property-tax statements, or insurance declarations. The backend detects each document type and assigns values using its tax year or covered period.</p>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary inline-flex shrink-0 items-center gap-2 text-sm"
+              onClick={() => escrowAnalysisInputRef.current?.click()}
+              disabled={escrowUploading || !propertyId}
+            >
+              <Upload className="h-4 w-4" aria-hidden="true" />
+              {escrowUploading ? 'Importing documents...' : 'Upload documents'}
+            </button>
+          </div>
+          {expenseAddressReview ? (
+            <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+              <p className="font-semibold">Confirm document address</p>
+              <p className="mt-1">{expenseAddressReview.addressValidation?.normalizedDocumentAddress || 'No address found'} · {expenseAddressReview.expenseYear || expenseAddressReview.year}</p>
+              <div className="mt-2 flex flex-wrap gap-3 font-medium">
+                <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptExpenseAddressReview}>Same property — apply</button>
+                <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeExpenseAddressReview}>Remove document</button>
+              </div>
+            </div>
+          ) : null}
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Escrow payment history</p>
+          <DataTable
+            rows={escrowPayments}
+            getRowKey={(row) => row.id}
+            emptyMessage="No annual escrow analyses uploaded."
+            tableWrapperClassName="overflow-x-auto rounded-md border border-gray-200 dark:border-gray-800"
+            columns={[
+              { id: 'expenseYear', header: 'Year', render: (row) => row.expenseYear || '—' },
+              { id: 'effectiveDate', header: 'Effective', render: (row) => row.effectiveDate ? formatDate(row.effectiveDate) : '—' },
+              { id: 'loanNumber', header: 'Loan #', render: (row) => row.loanNumber || '—' },
+              {
+                id: 'paymentChange',
+                header: 'Escrow / mo',
+                align: 'right',
+                render: (row) => (
+                  <span className="whitespace-nowrap">
+                    {row.currentEscrowPayment != null ? formatCurrency(row.currentEscrowPayment) : '—'}
+                    <span className="px-1 text-gray-400">→</span>
+                    <strong className="font-semibold text-gray-950 dark:text-white">{row.newEscrowPayment != null ? formatCurrency(row.newEscrowPayment) : '—'}</strong>
+                  </span>
+                ),
+              },
+              {
+                id: 'tax',
+                header: 'Property tax',
+                align: 'right',
+                render: (row) => (
+                  <div className="whitespace-nowrap text-xs leading-5">
+                    <div>Est. {row.estimatedTax != null ? formatCurrency(row.estimatedTax) : '—'}</div>
+                    <div>Actual {row.actualTax != null ? formatCurrency(row.actualTax) : '—'}</div>
+                    <div className="font-medium text-gray-950 dark:text-white">Next {row.projectedTax != null ? formatCurrency(row.projectedTax) : '—'}</div>
+                  </div>
+                ),
+              },
+              {
+                id: 'insurance',
+                header: 'Insurance',
+                align: 'right',
+                render: (row) => (
+                  <div className="whitespace-nowrap text-xs leading-5">
+                    <div>Est. {row.estimatedInsurance != null ? formatCurrency(row.estimatedInsurance) : '—'}</div>
+                    <div>Actual {row.actualInsurance != null ? formatCurrency(row.actualInsurance) : '—'}</div>
+                    <div className="font-medium text-gray-950 dark:text-white">Next {row.projectedInsurance != null ? formatCurrency(row.projectedInsurance) : '—'}</div>
+                  </div>
+                ),
+              },
+              {
+                id: 'period',
+                header: 'Analysis periods',
+                render: (row) => (
+                  <div className="min-w-44 text-xs leading-5">
+                    <div>History: {row.historyPeriodStart && row.historyPeriodEnd ? `${formatDate(row.historyPeriodStart)} – ${formatDate(row.historyPeriodEnd)}` : '—'}</div>
+                    <div>Projection: {row.projectionPeriodStart && row.projectionPeriodEnd ? `${formatDate(row.projectionPeriodStart)} – ${formatDate(row.projectionPeriodEnd)}` : '—'}</div>
+                  </div>
+                ),
+              },
+              {
+                id: 'documentName',
+                header: 'Source',
+                render: (row) => row.documentId ? (
+                  <button
+                    type="button"
+                    className="inline-flex max-w-48 items-center gap-1.5 text-left text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
+                    title={row.documentName || 'Escrow analysis'}
+                    onClick={() => navigate(`/properties/${propertyId}/documents?documentId=${row.documentId}`)}
+                  >
+                    <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{row.documentName || 'Escrow analysis'}</span>
+                  </button>
+                ) : '—',
+              },
+            ]}
+          />
+        </section>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="label mb-0" htmlFor="expense-year">Year</label>
+          <label className="label mb-0" htmlFor="expense-year">Edit year</label>
           <select id="expense-year" className="input max-w-40" value={expenseYear} onChange={(event) => setExpenseYear(Number(event.target.value))}>
             {expenseYears.map((year) => <option key={year} value={year}>{year}</option>)}
           </select>
@@ -3454,7 +3813,6 @@ export default function PropertyFormPage() {
                 error={errors[field.key]}
                 source={annualExpenseSourceBadge(selectedExpenseRow, field.key)}
               />
-              {renderExpenseDocumentControl(field)}
             </div>
           ))}
           {flags.hasHoa ? <MoneyInput label="HOA special assessment / yr" value={form.hoa_special_assessment} onChange={(value) => setField('hoa_special_assessment', value, 'expenses')} /> : null}

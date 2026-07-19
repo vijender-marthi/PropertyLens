@@ -4,6 +4,7 @@ import { Upload, FileText, Trash2, ChevronDown, Wand2, CheckSquare, Square, Aler
 import toast from 'react-hot-toast'
 import { formatCurrency, formatFileSize, formatInteger, formatNumber, formatPercent } from '../utils/formatters'
 import DataTable from './DataTable'
+import ConfirmDialog from './ConfirmDialog'
 
 const CATEGORIES = [
   { value: 'auto', label: 'Auto-detect' },
@@ -36,6 +37,7 @@ const [category, setCategory] = useState('auto')
   const [dragOver, setDragOver] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [deleting, setDeleting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const [previewDoc, setPreviewDoc] = useState(null)
   const [acceptingPreview, setAcceptingPreview] = useState(false)
   const inputRef = useRef()
@@ -121,27 +123,34 @@ const [category, setCategory] = useState('auto')
     setSelected(new Set(duplicateDocs.map((d) => d.id)))
   }
 
-  const handleBatchDelete = async () => {
-    if (selected.size === 0) return
-    if (!confirm(`Delete ${selected.size} document(s)?`)) return
+  const requestBatchDelete = (ids = [...selected]) => {
+    if (!ids.length) return
+    setDeleteTarget({ ids, label: `${ids.length} documents` })
+  }
+
+  const requestDelete = (doc) => {
+    setDeleteTarget({ ids: [doc.id], label: doc.display_name || doc.original_filename || 'this document' })
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget?.ids?.length) return
     setDeleting(true)
     try {
-      const { data } = await docAPI.deleteBatch([...selected])
-      toast.success(`Deleted ${data.count} document(s)`)
+      if (deleteTarget.ids.length === 1) {
+        await docAPI.delete(deleteTarget.ids[0])
+        toast.success('Document deleted')
+      } else {
+        const { data } = await docAPI.deleteBatch(deleteTarget.ids)
+        toast.success(`Deleted ${data.count} documents`)
+      }
       setSelected(new Set())
+      setDeleteTarget(null)
       onUploaded()
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Delete failed')
     } finally {
       setDeleting(false)
     }
-  }
-
-  const handleDelete = async (docId) => {
-    if (!confirm('Delete this document?')) return
-    await docAPI.delete(docId)
-    toast.success('Deleted')
-    onUploaded()
   }
 
   const handleApply = async (docId) => {
@@ -185,7 +194,7 @@ const [category, setCategory] = useState('auto')
                   Select duplicates
                 </button>
                 <button
-                  onClick={() => { selectDuplicates(); setTimeout(handleBatchDelete, 50) }}
+                  onClick={() => requestBatchDelete(duplicateDocs.map((doc) => doc.id))}
                   className="text-xs font-medium text-red-600 hover:text-red-800 underline">
                   Delete all duplicates
                 </button>
@@ -369,7 +378,7 @@ className="max-h-72"
             )}
           </div>
           {selected.size > 0 && (
-            <button onClick={handleBatchDelete} disabled={deleting}
+            <button onClick={() => requestBatchDelete()} disabled={deleting}
               className="btn-danger flex items-center gap-1.5 text-xs px-3 py-1.5">
               <Trash2 className="w-3 h-3" />
               {deleting ? 'Deleting…' : `Delete ${selected.size}`}
@@ -397,12 +406,23 @@ className="max-h-72"
               <DocRow key={doc.id} doc={doc} catLabel={catLabel}
                 selected={selected.has(doc.id)}
                 onToggle={() => toggleSelect(doc.id)}
-                onDelete={() => handleDelete(doc.id)}
+                onDelete={() => requestDelete(doc)}
                 onApply={() => handleApply(doc.id)} />
             ))}
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={deleteTarget?.ids?.length > 1 ? 'Delete documents?' : 'Delete document?'}
+        description={deleteTarget?.ids?.length > 1
+          ? `${deleteTarget.label} will be permanently removed. This action cannot be undone.`
+          : `“${deleteTarget?.label || 'This document'}” will be permanently removed. This action cannot be undone.`}
+        confirmLabel={deleteTarget?.ids?.length > 1 ? `Delete ${deleteTarget.ids.length}` : 'Delete document'}
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   )
 }

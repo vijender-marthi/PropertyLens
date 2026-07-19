@@ -12,6 +12,7 @@ import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 import { useAuth } from '../hooks/useAuth'
 import { formatCurrency, formatFileSize, formatInteger, formatNumber, formatPercent } from '../utils/formatters'
 import DataTable from '../components/DataTable'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { chartColors } from '../utils/chartTokens'
 
 const CATEGORIES = [
@@ -133,6 +134,8 @@ const [mode, setMode] = useState('manual')
   const [previewDoc, setPreviewDoc] = useState(null)
   const [acceptingPreview, setAcceptingPreview] = useState(false)
   const [uploadQueue, setUploadQueue] = useState([])
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deletingDocument, setDeletingDocument] = useState(false)
 
   // ── document list filters / grouping / sort ──
   const [docFilters, setDocFilters] = useState({
@@ -464,7 +467,21 @@ const downloadTemplate = () => {
     }
   }
 
-  const handleDelete   = async (id) => { if (!confirm('Delete this document?')) return; await docAPI.delete(id); toast.success('Deleted'); loadDocs() }
+  const requestDelete = (doc) => setDeleteTarget(doc)
+  const confirmDelete = async () => {
+    if (!deleteTarget?.id) return
+    setDeletingDocument(true)
+    try {
+      await docAPI.delete(deleteTarget.id)
+      toast.success('Document deleted')
+      setDeleteTarget(null)
+      await loadDocs()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Delete failed')
+    } finally {
+      setDeletingDocument(false)
+    }
+  }
   const handleApply = async (id) => {
 if (isDemo) { toast.error('Applying uploaded documents is a premium feature. Use Manual Entry in demo mode.'); return }
 try { const { data } = await docAPI.apply(id); toast(data.message, { icon: Object.keys(data.applied||{}).length ? '✅' : 'ℹ️' }) } catch(e) { toast.error(e.response?.data?.detail||'Apply failed') }
@@ -1306,7 +1323,7 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
               <div className="divide-y divide-slate-50">
                 {groupDocs.map((doc) => (
                   <DocRow key={doc.id} doc={doc} properties={properties} isDemo={isDemo}
-                    onDelete={() => handleDelete(doc.id)}
+                    onDelete={() => requestDelete(doc)}
                     onApply={() => handleApply(doc.id)}
                     onReparse={() => handleReparse(doc.id)} />
                 ))}
@@ -1315,6 +1332,15 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
           ))
         )}
       </div>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete document?"
+        description={`“${deleteTarget?.display_name || deleteTarget?.original_filename || 'This document'}” will be permanently removed. This action cannot be undone.`}
+        confirmLabel="Delete document"
+        busy={deletingDocument}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </div>
   )
 }

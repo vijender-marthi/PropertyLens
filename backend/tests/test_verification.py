@@ -167,7 +167,7 @@ def test_metric_vault_equity_story_handles_negative_equity(client, db, user, pro
     assert story["ownership"]["comparison"][2]["key"] == "equityShortfall"
 
 
-def test_metric_vault_equity_story_refinance_blocks_waterfall_only(client, db, user, prop):
+def test_metric_vault_equity_story_refinance_uses_purchase_debt_once(client, db, user, prop):
     prop.purchase_price = 400_000
     prop.down_payment = 80_000
     prop.market_value = 520_000
@@ -184,8 +184,10 @@ def test_metric_vault_equity_story_refinance_blocks_waterfall_only(client, db, u
     assert resp.status_code == 200
     story = resp.json()["charts"]["equityStory"]
     assert story["ownership"]["status"] == "available"
-    assert story["waterfall"]["status"] == "unavailable"
-    assert "refinancing" in story["waterfall"]["unavailableReason"]
+    assert story["waterfall"]["status"] == "available"
+    assert story["definitions"]["acquisitionDebt"] == 320_000
+    assert story["definitions"]["principalReductionSinceAcquisition"] == 10_000
+    assert all(check["passes"] for check in story["waterfall"]["validation"]["checks"])
 
 
 def test_verification_includes_backend_source_comparison_issues(client, db, user, prop):

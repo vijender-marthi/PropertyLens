@@ -16,10 +16,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const requestUrl = err.config?.url || ''
+    const isAuthRequest = requestUrl.includes('/auth/token') || requestUrl.includes('/auth/register') || requestUrl.includes('/auth/password-reset')
+    const isAlreadyOnLogin = window.location.pathname === '/login'
+    if (err.response?.status === 401 && !isAuthRequest) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      window.location.href = '/login'
+      if (!isAlreadyOnLogin) {
+        const next = encodeURIComponent(`${window.location.pathname}${window.location.search}`)
+        window.location.href = `/login?reason=session-expired&next=${next}`
+      }
     }
     return Promise.reject(err)
   }
@@ -45,6 +51,7 @@ export const authAPI = {
 export const propAPI = {
   list: () => api.get('/properties'),
   create: (data) => api.post('/properties', data),
+  defaultMarketPrice: (data) => api.post('/properties/market-price/default', data),
   get: (id) => api.get(`/properties/${id}`),
   update: (id, data) => api.put(`/properties/${id}`, data),
   delete: (id) => api.delete(`/properties/${id}`),
@@ -71,10 +78,12 @@ export const propAPI = {
   updateYearNote: (id, year, note) => api.patch(`/properties/${id}/year-note`, null, { params: { year, note } }),
   updateNotes: (id, note) => api.patch(`/properties/${id}/notes`, null, { params: { note } }),
   dashboard: (excludeIds = '') => api.get('/properties/dashboard/summary', { params: { exclude_ids: excludeIds } }),
+  portfolioAnalysis: (params = {}, config = {}) => api.get('/properties/analysis/portfolio', { ...config, params }),
   // Loans
   addLoan: (propId, data) => api.post(`/properties/${propId}/loans`, data),
   updateLoan: (propId, loanId, data) => api.put(`/properties/${propId}/loans/${loanId}`, data),
   deleteLoan: (propId, loanId) => api.delete(`/properties/${propId}/loans/${loanId}`),
+  loanDocuments: (propId, loanId) => api.get(`/properties/${propId}/loans/${loanId}/documents`),
   loanTransferSuggestions: (propId) => api.get(`/properties/${propId}/loans/servicing-transfer-suggestions`),
   groupServicingTransfer: (propId, data) => api.post(`/properties/${propId}/loans/group-servicing-transfer`, data),
   amortization: (propId, loanId, extra = 0) =>
@@ -121,6 +130,8 @@ export const docAPI = {
   acceptUpload: (data) => api.post('/documents/upload/accept', data),
   cancelUpload: (data) => api.post('/documents/upload/cancel', data),
   list: (propertyId) => api.get(`/documents/property/${propertyId}`),
+  lifecycle: (propertyId) => api.get(`/documents/property/${propertyId}/lifecycle`),
+  resolveLifecycle: (propertyId) => api.post(`/documents/property/${propertyId}/resolve-lifecycle`),
   listAll: () => api.get('/documents'),
   apply: (docId) => api.post(`/documents/${docId}/apply`),
   reparse: (docId) => api.post(`/documents/${docId}/reparse`),
@@ -128,6 +139,7 @@ export const docAPI = {
   markdown: (docId) => api.get(`/documents/${docId}/markdown`),
   setupImportReview: (docId) => api.get(`/documents/${docId}/setup-import-review`),
   applySetupImport: (docId, data) => api.post(`/documents/${docId}/apply-setup-import`, data),
+  delinkSetup: (docId) => api.post(`/documents/${docId}/delink-setup`),
   loanStatementReview: (docId) => api.get(`/documents/${docId}/loan-statement-review`),
   applyLoanStatement: (docId, data) => api.post(`/documents/${docId}/apply-loan-statement`, data),
   consolidatedLoanReview: (data) => api.post('/documents/loan-documents/consolidated-review', data),
@@ -136,6 +148,24 @@ export const docAPI = {
     api.post('/documents/upload/expense-field', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  uploadExpenseDocument: (formData) =>
+    api.post('/documents/upload/expense-document', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  uploadPropertyTax: (propertyId, formData) =>
+    api.post(`/properties/${propertyId}/documents/property-tax`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  propertyTaxes: (propertyId) => api.get(`/properties/${propertyId}/property-taxes`),
+  correctPropertyTax: (propertyId, recordId, data) =>
+    api.post(`/properties/${propertyId}/property-taxes/${recordId}/corrections`, data),
+  confirmPropertyTaxMatch: (propertyId, recordId) =>
+    api.post(`/properties/${propertyId}/property-taxes/${recordId}/confirm-match`),
+  uploadEscrowAnalysis: (formData) =>
+    api.post('/documents/upload/escrow-analysis', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  escrowPayments: (propertyId) => api.get(`/documents/property/${propertyId}/escrow-payments`),
   applyExpenseFieldDocument: (docId, data) => api.post(`/documents/${docId}/apply-expense-field-document`, data),
   removeExpenseFieldDocument: (params) => api.post('/documents/expense-field-document/remove', null, { params }),
   delete: (docId) => api.delete(`/documents/${docId}`),

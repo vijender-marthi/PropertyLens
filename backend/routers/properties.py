@@ -3,12 +3,13 @@ import json
 import math
 import uuid
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import models
 from database import get_db
 from routers.auth import get_current_user
@@ -17,7 +18,13 @@ from services.loan_calculator import (
     depreciation_schedule, simulate_what_if_scenarios
 )
 from services.property_engine import build_property_engine, loan_monthly_pi, monthly_principal_interest as engine_monthly_principal_interest
-from services.property_valuation import get_property_value
+from services.property_valuation import (
+    AUTO_MARKET_VALUE_SOURCE,
+    apply_default_market_price,
+    apply_default_settlement_total,
+    estimate_market_price,
+    get_property_value,
+)
 from services.checklist import build_checklist
 from services.formatters import format_currency, format_interest_rate, format_currency as _money_display, format_metric_currency as _compact_money_display, format_percent as _percent_display
 from services.metric_vault import build_property_metric_vault
@@ -26,12 +33,37 @@ from services.snapshot_store import ensure_document_record_uuid, ensure_tax_entr
 from services.annual_usage_engine import annual_usage_by_year, build_annual_usage_records
 from services.rental_timeline import build_rental_timeline
 from services.property_setup_defaults import apply_rental_available_from_default, rental_available_before_purchase
+from services.document_parser import parse_document
+from services.expense_source_engine import metric_dto
+from services.canonical_loan import accounts_match
+from services.loan_lifecycle import lifecycle_dto, select_acquisition_transaction
+from services.portfolio_analysis import build_portfolio_analysis
 
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
+UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 
 OPEN_LOAN_STATUS = "OPEN"
 LOAN_STATUSES = {"OPEN", "CLOSED", "REFINANCED", "PAID_OFF"}
+
+
+def _apply_resolved_acquisition_costs(data: Dict[str, Any], prop: Optional[models.Property] = None) -> None:
+    """Keep source-owned settlement accounting values in setup mutations."""
+    acquisition = select_acquisition_transaction(prop) if prop is not None else None
+    if acquisition is not None:
+        if not data.get("settlement_debit_total"):
+            data["settlement_debit_total"] = acquisition.settlement_debit_total or 0
+        if not data.get("settlement_credit_total"):
+            data["settlement_credit_total"] = acquisition.settlement_credit_total or 0
+        if not data.get("settlement_total_amount"):
+            data["settlement_total_amount"] = (
+                acquisition.settlement_debit_total
+                if acquisition.settlement_debit_total is not None
+                else acquisition.settlement_credit_total or 0
+            )
+    elif prop is not None and not data.get("settlement_total_amount"):
+        data["settlement_total_amount"] = prop.settlement_total_amount or 0
+    apply_default_settlement_total(data)
 CLOSED_LOAN_STATUSES = {"CLOSED", "REFINANCED", "PAID_OFF"}
 
 PROPERTY_CODE_NAMES = [
@@ -156,6 +188,14 @@ class LoanBase(BaseModel):
     arm_cap: Optional[float] = None
     arm_margin: Optional[float] = None
     arm_index: Optional[str] = None
+    purpose: Optional[str] = None
+    disbursement_date: Optional[str] = None
+    balance_as_of: Optional[str] = None
+    lender_at_origination: Optional[str] = None
+    current_servicer: Optional[str] = None
+    refinanced_into_loan_id: Optional[int] = None
+    refinanced_from_loan_id: Optional[int] = None
+    resolution_confidence: Optional[float] = None
 
 
 class LoanOut(LoanBase):
@@ -189,6 +229,15 @@ class PropertyBase(BaseModel):
     down_payment: float = 0.0
     settlement_total_amount: float = 0.0
     closing_costs: float = 0.0
+    cash_to_close: float = 0.0
+    deposit_paid_before_closing: float = 0.0
+    total_due_from_borrower: float = 0.0
+    total_paid_on_behalf_of_borrower: float = 0.0
+    settlement_debit_total: float = 0.0
+    settlement_credit_total: float = 0.0
+    seller_credits: float = 0.0
+    tax_prorations: float = 0.0
+    hoa_prorations: float = 0.0
     monthly_rent: float = 0.0
     occupancy_rate: float = 100.0
     property_tax: float = 0.0
@@ -211,8 +260,13 @@ class PropertyBase(BaseModel):
     construction_price: float = 0.0
     depreciation_years: float = 27.5
     market_value: float = 0.0
-    market_value_source: str = "manual"
+    market_value_source: str = AUTO_MARKET_VALUE_SOURCE
     market_value_updated: Optional[str] = None
+
+
+class MarketPriceEstimateRequest(BaseModel):
+    purchase_price: float = 0.0
+    purchase_date: Optional[str] = None
 
 
 class UsagePeriodBase(BaseModel):
@@ -462,11 +516,37 @@ def _validate_rental(r: RentalPeriodBase):
 
 def _normalize_usage_type(value: str) -> str:
     raw = (value or "").strip().upper()
-    if raw in {"PRIMARY", "PRIMARY HOME", "OWNER_OCCUPIED"}:
+    if raw in {"PRIMARY", "PRIMARY HOME", "PRIMARY RESIDENCE", "OWNER_OCCUPIED"}:
         return "PRIMARY"
-    if raw in {"RENTAL", "INVESTMENT"}:
+    if raw in {"RENTAL", "INVESTMENT", "INVESTMENT PROPERTY"}:
         return "RENTAL"
     raise HTTPException(status_code=400, detail="usage_type must be PRIMARY or RENTAL")
+
+
+def _is_current_rental_usage(value: Optional[str]) -> bool:
+    raw = str(value or "").strip().lower()
+    return raw in {"rental", "mixed", "mixed use", "investment", "investment property"} or "rental" in raw
+
+
+def _normalize_property_usage_type(value: Optional[str]) -> str:
+    """Normalize the property-level current residency without changing timeline semantics."""
+    raw = str(value or "").strip().lower()
+    if raw in {"primary", "primary residence", "primary home"}:
+        return "Primary"
+    if raw in {"mixed", "mixed use", "mixed-use"}:
+        return "Mixed"
+    return "Rental"
+
+
+def _normalize_current_residency_status(data: Dict[str, Any]) -> None:
+    usage = _normalize_property_usage_type(data.get("usage_type"))
+    data["usage_type"] = usage
+    if usage == "Primary":
+        data["current_residency_status"] = "Primary Residence"
+    elif usage == "Mixed":
+        data["current_residency_status"] = "Mixed Use"
+    else:
+        data["current_residency_status"] = "Rental"
 
 
 def _validate_usage_period(period: UsagePeriodBase, previous: Optional[models.UsagePeriod] = None):
@@ -493,11 +573,70 @@ def _usage_period_payload(period: UsagePeriodBase) -> Dict[str, Any]:
 
 
 def _sync_property_current_usage(prop: models.Property):
+    if _normalize_property_usage_type(prop.usage_type) == "Mixed" or str(
+        prop.current_residency_status or ""
+    ).strip().lower() in {"mixed", "mixed use", "mixed-use"}:
+        prop.usage_type = "Mixed"
+        prop.current_residency_status = "Mixed Use"
+        prop.usage_type_locked = True
+        return
+
     periods = sorted(prop.usage_periods or [], key=lambda p: p.start_date or "")
     current = next((p for p in reversed(periods) if not p.end_date), periods[-1] if periods else None)
     if current:
         prop.usage_type = "Primary" if (current.usage_type or "").upper() == "PRIMARY" else "Rental"
+        prop.current_residency_status = "Primary Residence" if prop.usage_type == "Primary" else "Rental"
         prop.usage_type_locked = True
+
+
+def _apply_property_current_usage_change(
+    prop: models.Property,
+    old_usage: Optional[str],
+    db: Session,
+) -> None:
+    """Persist a Property Setup current-usage change in the usage timeline.
+
+    The timeline is authoritative for current usage. Without updating its open
+    row, the subsequent sync would silently restore the previous status.
+    """
+    desired_property_usage = _normalize_property_usage_type(prop.usage_type)
+    previous_property_usage = _normalize_property_usage_type(old_usage)
+    if desired_property_usage == "Mixed":
+        prop.current_residency_status = "Mixed Use"
+        return
+
+    desired = _normalize_usage_type(desired_property_usage)
+    previous = None if previous_property_usage == "Mixed" else _normalize_usage_type(previous_property_usage)
+    if desired == previous:
+        return
+
+    today = date.today()
+    today_text = today.isoformat()
+    periods = sorted(prop.usage_periods or [], key=lambda period: period.start_date or "")
+    current = next((period for period in reversed(periods) if not period.end_date), None)
+
+    if current and str(current.start_date or "")[:10] >= today_text:
+        # A same-day setup correction should replace the accidental row rather
+        # than create a zero-length historical period.
+        current.usage_type = desired
+        current.end_date = None
+        return
+
+    if current:
+        current.end_date = (today - timedelta(days=1)).isoformat()
+
+    start_date = today_text if periods else (prop.purchase_date or today_text)
+    next_period = models.UsagePeriod(
+        property_id=prop.id,
+        usage_type=desired,
+        start_date=start_date,
+        monthly_rent=prop.monthly_rent or 0.0,
+        vacancy_allowance=prop.vacancy_allowance or 0.0,
+        property_management_fee=prop.property_management_fee or 0.0,
+        notes="Current residency updated from Property Setup",
+    )
+    prop.usage_periods.append(next_period)
+    db.add(next_period)
 
 
 
@@ -1034,6 +1173,22 @@ def _build_expense_view_row(prop: models.Property, year: int, current_year: int,
         total = None
 
     component_map = {item["key"]: item for item in components}
+    documents = {doc.id: doc for doc in getattr(prop, "documents", []) or []}
+    metric_map = {
+        metric.expense_type: metric_dto(metric, documents)
+        for metric in getattr(prop, "annual_expense_metrics", []) or []
+        if int(metric.year) == int(year)
+    }
+    if metric_map.get("PROPERTY_TAX"):
+        component_map["property_tax"]["metric"] = metric_map["PROPERTY_TAX"]
+    if metric_map.get("HOMEOWNERS_INSURANCE"):
+        component_map["insurance"]["metric"] = metric_map["HOMEOWNERS_INSURANCE"]
+    source_metrics = [metric_map[key] for key in ("PROPERTY_TAX", "HOMEOWNERS_INSURANCE") if key in metric_map]
+    source_labels = list(dict.fromkeys(metric.get("sourceLabel") for metric in source_metrics if metric.get("sourceLabel")))
+    source_label = source_labels[0] if len(source_labels) == 1 else ("Multiple Sources" if source_labels else "Manual")
+    other_operating_value = round(sum(float(component_map[key]["value"] or 0) for key in (
+        "property_management", "utilities", "vacancy_allowance", "capex_reserve", "other"
+    )), 2)
     return {
         "year": year,
         "isCurrent": year == current_year,
@@ -1047,6 +1202,15 @@ def _build_expense_view_row(prop: models.Property, year: int, current_year: int,
         "vacancy": component_map["vacancy_allowance"],
         "capex": component_map["capex_reserve"],
         "other": component_map["other"],
+        "hoa": component_map["hoa"],
+        "otherOperatingExpenses": {
+            "value": other_operating_value,
+            "display": format_currency(other_operating_value),
+        },
+        "source": {
+            "label": source_label,
+            "metrics": source_metrics,
+        },
         "total": total,
         "totalDisplay": "—" if total is None else format_currency(total),
     }
@@ -1350,6 +1514,12 @@ def _normalize_loan_status_value(value: Optional[str]) -> str:
     return status if status in LOAN_STATUSES else OPEN_LOAN_STATUS
 
 
+def _canonical_loan_status(value: Optional[str]) -> str:
+    """Keep refinance as a closure reason, never as a loan lifecycle state."""
+    status = _normalize_loan_status_value(value)
+    return "CLOSED" if status == "REFINANCED" else status
+
+
 def _is_closed_loan_status(value: Optional[str]) -> bool:
     return _normalize_loan_status_value(value) in CLOSED_LOAN_STATUSES
 
@@ -1369,7 +1539,7 @@ def _parse_setup_date(value: Optional[str]) -> Optional[date]:
     if not value:
         return None
     text = str(value).strip()
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y"):
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%Y"):
         try:
             return datetime.strptime(text[:10], fmt).date()
         except ValueError:
@@ -1386,6 +1556,8 @@ def _same_original_loan_date(left: Optional[date], right: Optional[date]) -> boo
 
 
 def _display_loan_date(value: Optional[str]) -> str:
+    if value and re.fullmatch(r"(?:19|20)\d{2}", str(value).strip()):
+        return str(value).strip()
     parsed = _parse_setup_date(value)
     return parsed.strftime("%b %d, %Y") if parsed else (str(value) if value else "")
 
@@ -1823,7 +1995,7 @@ def apply_document_loan_transition(prop: Any, current: Any, *, category: Optiona
     previous.servicer_sequence = previous.servicer_sequence or 1
     current.servicer_sequence = max((previous.servicer_sequence or 1) + 1, current.servicer_sequence or 0)
     close_date = _one_month_before(current_origination).isoformat()
-    previous.status = "REFINANCED"
+    previous.status = "CLOSED"
     previous.closed_date = close_date
     previous.servicer_end_date = close_date
     previous.closure_reason = "Refinanced"
@@ -2030,14 +2202,6 @@ def _loan_setup_issues(loan: Any, index: int = 0) -> tuple[Dict[str, str], List[
     if (getattr(loan, "current_balance", 0) or 0) > (getattr(loan, "original_amount", 0) or 0) > 0:
         field_errors[f"{prefix}.current_balance"] = "Current balance cannot exceed original amount."
         section_errors.append(_validation_item("current_balance", f"{_loan_record_label(loan, index)} balance exceeds original amount.", record_id=record_id))
-    if getattr(loan, "escrow_included", False) and status not in CLOSED_LOAN_STATUSES:
-        escrow_total = float(getattr(loan, "escrow_amount", 0) or 0)
-        component_total = _escrow_component_total(loan)
-        if escrow_total <= 0 and component_total <= 0:
-            field_errors[f"{prefix}.escrow_amount"] = "Monthly escrow total is required when escrow is included."
-            section_errors.append(_validation_item("escrow_amount", "Complete escrow details.", record_id=record_id))
-        if escrow_total > 0 and component_total > 0 and round(escrow_total, 2) != component_total:
-            section_errors.append(_validation_item("escrow_amount", "Escrow component breakdown does not match total monthly escrow.", record_id=record_id))
     return field_errors, section_errors
 
 
@@ -2055,7 +2219,7 @@ def _setup_finalize_validation(prop: Any, loans: List[Any], annual_expenses: Opt
     if (getattr(prop, "purchase_price", 0) or 0) < 0:
         add_section_error("property", "property.purchase_price", "purchase_price", "Purchase price cannot be negative.")
     if (getattr(prop, "market_value", 0) or 0) < 0:
-        add_section_error("property", "property.market_value", "market_value", "Current value cannot be negative.")
+        add_section_error("property", "property.market_value", "market_value", "Market Price cannot be negative.")
 
     meaningful_loans = [
         loan for loan in loans
@@ -2066,18 +2230,19 @@ def _setup_finalize_validation(prop: Any, loans: List[Any], annual_expenses: Opt
         field_errors.update(loan_field_errors)
         section_errors["loans"].extend(loan_section_errors)
 
-    if not _present(getattr(prop, "rental_start_date", None)):
-        add_section_error("rental", "property.rental_start_date", "rental_start_date", "Rental available from is required.")
-    elif rental_available_before_purchase({
-        "purchase_date": getattr(prop, "purchase_date", None),
-        "rental_start_date": getattr(prop, "rental_start_date", None),
-    }):
-        add_section_error(
-            "rental",
-            "property.rental_start_date",
-            "rental_start_date",
-            "Rental availability cannot begin before the property was purchased.",
-        )
+    if _is_current_rental_usage(getattr(prop, "usage_type", None)):
+        if not _present(getattr(prop, "rental_start_date", None)):
+            add_section_error("rental", "property.rental_start_date", "rental_start_date", "Rental available from is required.")
+        elif rental_available_before_purchase({
+            "purchase_date": getattr(prop, "purchase_date", None),
+            "rental_start_date": getattr(prop, "rental_start_date", None),
+        }):
+            add_section_error(
+                "rental",
+                "property.rental_start_date",
+                "rental_start_date",
+                "Rental availability cannot begin before the property was purchased.",
+            )
 
     for expense in annual_expenses or []:
         year = getattr(expense, "year", None)
@@ -2110,7 +2275,12 @@ def _setup_finalize_validation(prop: Any, loans: List[Any], annual_expenses: Opt
 
 def _build_setup_status(prop: models.Property) -> Dict[str, Any]:
     usage = (prop.usage_type or "Rental").lower()
-    is_rental = usage in {"rental", "mixed"} or "rental" in usage
+    original_residency = str(prop.original_residency_status or "").strip().lower()
+    is_rental = (
+        usage in {"rental", "mixed"}
+        or "rental" in usage
+        or original_residency in {"rental", "mixed", "mixed use"}
+    )
     setup_loans = list(prop.loans or [])
     sections = []
 
@@ -2553,18 +2723,7 @@ def _monthly_principal_interest(amount: float, annual_rate: float, years: int) -
 
 
 def _loan_monthly_pi(loan: models.Loan) -> float:
-    explicit_split = float(loan.principal_due or 0) + float(loan.interest_due or 0)
-    if explicit_split > 0:
-        return explicit_split
-    payment = float(loan.monthly_payment or 0)
-    escrow = float(loan.escrow_amount or 0)
-    if payment > 0:
-        return max(payment - escrow, 0.0)
-    return _monthly_principal_interest(
-        float(loan.original_amount or 0),
-        float(loan.interest_rate or 0),
-        int(loan.loan_term_years or 30),
-    )
+    return loan_monthly_pi(loan)
 
 
 def _scheduled_loan_years(loan: models.Loan, end_year: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -2604,7 +2763,10 @@ def _scheduled_balance_from_fields(
 
 def _normalize_loan_payload(prop: models.Property, payload: Dict[str, Any]) -> Dict[str, Any]:
     data = dict(payload)
-    data["status"] = _normalize_loan_status_value(data.get("status"))
+    incoming_status = _normalize_loan_status_value(data.get("status"))
+    data["status"] = _canonical_loan_status(incoming_status)
+    if incoming_status == "REFINANCED" and not data.get("closure_reason"):
+        data["closure_reason"] = "Refinanced"
     if data["status"] == OPEN_LOAN_STATUS:
         data["closed_date"] = None
         data["closure_reason"] = None
@@ -2654,6 +2816,58 @@ def _normalize_loan_payload(prop: models.Property, payload: Dict[str, Any]) -> D
     if original > 0 and prop.purchase_price and float(data.get("original_ltv") or 0) <= 0:
         data["original_ltv"] = round(original / prop.purchase_price * 100, 2)
     return data
+
+
+def _find_setup_loan_match(
+    db: Session,
+    prop: models.Property,
+    payload: Dict[str, Any],
+) -> Optional[models.Loan]:
+    """Match an id-less setup draft to canonical debt without creating duplicates."""
+    loans = db.query(models.Loan).filter(models.Loan.property_id == prop.id).all()
+    source_document_id = payload.get("source_document_id")
+    if source_document_id:
+        source_match = next((loan for loan in loans if loan.source_document_id == source_document_id), None)
+        if source_match:
+            return source_match
+        linked = db.query(models.LoanDocumentLink).filter_by(document_id=source_document_id).first()
+        if linked and linked.loan.property_id == prop.id:
+            return linked.loan
+
+    account_number = payload.get("account_number")
+    if account_number:
+        for loan in loans:
+            if accounts_match(loan.account_number, account_number) or any(
+                accounts_match(segment.account_number, account_number)
+                for segment in loan.servicer_segments
+            ):
+                return loan
+
+    amount = float(payload.get("original_amount") or 0)
+    if amount <= 0:
+        return None
+    rate = float(payload.get("interest_rate") or 0)
+    origin = _parse_iso_date(payload.get("origination_date"))
+    lender = re.sub(r"[^a-z0-9]", "", str(payload.get("lender_name") or "").lower())
+    ranked = []
+    for loan in loans:
+        if abs(float(loan.original_amount or 0) - amount) > 2:
+            continue
+        score = 70
+        if rate and abs(float(loan.interest_rate or 0) - rate) <= 0.01:
+            score += 25
+        loan_origin = _parse_iso_date(loan.disbursement_date or loan.origination_date)
+        if origin and loan_origin and abs((origin - loan_origin).days) <= 14:
+            score += 60
+        loan_lender = re.sub(
+            r"[^a-z0-9]", "",
+            str(loan.lender_at_origination or loan.lender_name or "").lower(),
+        )
+        if lender and lender == loan_lender:
+            score += 25
+        if score >= 95:
+            ranked.append((score, loan.id, loan))
+    return sorted(ranked, key=lambda item: (-item[0], item[1]))[0][2] if ranked else None
 
 
 def _property_tax_history(prop: models.Property) -> Dict[int, float]:
@@ -3145,6 +3359,7 @@ def build_summary_dto(prop: models.Property, summary_metrics: Optional[dict] = N
         "property_tax_warning": resolved_property_tax["warning"],
         "monthly_expenses": round(monthly_operating_expenses, 2),
         "operating_expenses": round(annual_operating_expenses, 2),
+        "monthly_noi": round(annual_noi / 12, 2),
         "annual_noi": round(annual_noi, 2),
         "annual_debt_service": round(annual_debt_service, 2),
         "monthly_mortgage": round(monthly_debt_service, 2),
@@ -3400,6 +3615,9 @@ def create_property(
 ):
     data = prop_in.model_dump(exclude={"loans", "usage_periods"})
     _normalize_property_type(data)
+    _normalize_current_residency_status(data)
+    _apply_resolved_acquisition_costs(data)
+    apply_default_market_price(data)
     apply_rental_available_from_default(data)
     if rental_available_before_purchase(data):
         raise HTTPException(status_code=422, detail="Rental availability cannot begin before the property was purchased.")
@@ -3441,6 +3659,15 @@ def create_property(
     db.commit()
     db.refresh(prop)
     return prop
+
+
+@router.post("/market-price/default")
+def default_market_price(
+    request: MarketPriceEstimateRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """Return the backend-owned default market price for Property Setup."""
+    return estimate_market_price(request.purchase_price, request.purchase_date)
 
 
 def _report_metric_from_dashboard(
@@ -3872,6 +4099,9 @@ def finalize_property_setup(
     prop = _get_accessible_property(prop_id, db, current_user)
     data = request.property.model_dump()
     _normalize_property_type(data)
+    _normalize_current_residency_status(data)
+    _apply_resolved_acquisition_costs(data, prop)
+    apply_default_market_price(data, existing_source=prop.market_value_source)
     apply_rental_available_from_default(data, prop)
     validation = _setup_finalize_validation(SimpleNamespace(**data), request.loans, request.annual_expenses)
     if validation["status"] == "validation_failed":
@@ -3883,15 +4113,7 @@ def finalize_property_setup(
         prop.usage_type_locked = True
     for key, value in data.items():
         setattr(prop, key, value)
-    if data.get("usage_type") != old_usage and not prop.usage_periods:
-        db.add(models.UsagePeriod(
-            property_id=prop.id,
-            usage_type="PRIMARY" if (prop.usage_type or "").lower() == "primary" else "RENTAL",
-            start_date=prop.purchase_date or date.today().isoformat(),
-            monthly_rent=prop.monthly_rent or 0.0,
-            vacancy_allowance=prop.vacancy_allowance or 0.0,
-            property_management_fee=prop.property_management_fee or 0.0,
-        ))
+    _apply_property_current_usage_change(prop, old_usage, db)
     _sync_property_current_usage(prop)
     db.flush()
 
@@ -3911,10 +4133,13 @@ def finalize_property_setup(
             if not loan:
                 continue
         else:
-            loan = models.Loan(property_id=prop.id)
-            db.add(loan)
+            loan = _find_setup_loan_match(db, prop, loan_data)
+            if loan is None:
+                loan = models.Loan(property_id=prop.id)
+                db.add(loan)
         for key, value in _normalize_loan_payload(prop, loan_data).items():
             setattr(loan, key, value)
+        db.flush()
 
     _sync_servicing_transfer_chain_dates(prop)
     db.commit()
@@ -3995,6 +4220,9 @@ def update_property(
     old_usage = prop.usage_type
     data = prop_in.model_dump()
     _normalize_property_type(data)
+    _normalize_current_residency_status(data)
+    _apply_resolved_acquisition_costs(data, prop)
+    apply_default_market_price(data, existing_source=prop.market_value_source)
     apply_rental_available_from_default(data, prop)
     if rental_available_before_purchase(data):
         raise HTTPException(status_code=422, detail="Rental availability cannot begin before the property was purchased.")
@@ -4003,16 +4231,7 @@ def update_property(
         prop.usage_type_locked = True
     for k, v in data.items():
         setattr(prop, k, v)
-    if data.get("usage_type") != old_usage and not prop.usage_periods:
-        usage_period = models.UsagePeriod(
-            property_id=prop.id,
-            usage_type="PRIMARY" if (prop.usage_type or "").lower() == "primary" else "RENTAL",
-            start_date=prop.purchase_date or date.today().isoformat(),
-            monthly_rent=prop.monthly_rent or 0.0,
-            vacancy_allowance=prop.vacancy_allowance or 0.0,
-            property_management_fee=prop.property_management_fee or 0.0,
-        )
-        db.add(usage_period)
+    _apply_property_current_usage_change(prop, old_usage, db)
     _sync_property_current_usage(prop)
     db.commit()
     db.refresh(prop)
@@ -4103,7 +4322,7 @@ def get_property_verification(
 
 
 def _parse_statement_date(s: str):
-    for f in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m/%Y"):
+    for f in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m/%Y", "%Y"):
         try:
             return datetime.strptime(s, f)
         except (ValueError, TypeError):
@@ -4155,8 +4374,10 @@ def _collect_doc_history(prop: models.Property):
                 "date": dt.strftime("%Y-%m-%d") if dt else f"01/01/{year}",
                 "year": year,
                 "balance": data.get("current_balance"),
-                "principal": data.get("principal_due"),
-                "interest": data.get("interest_due"),
+                "principal": data.get("principal_paid_ytd"),
+                "interest": data.get("interest_paid_ytd"),
+                "principal_due": data.get("principal_due"),
+                "interest_due": data.get("interest_due"),
                 "payment": data.get("monthly_payment"),
                 "escrow": data.get("escrow_amount"),
                 "taxes_paid": data.get("property_tax_amount"),
@@ -4587,12 +4808,9 @@ def _loan_document_matches(loan: models.Loan, doc: models.Document, total_loans:
 
 
 def _loan_monthly_pi_amount(loan: models.Loan, balance: Optional[float] = None) -> float:
-    direct = float((getattr(loan, "principal_due", 0) or 0) + (getattr(loan, "interest_due", 0) or 0))
-    if direct > 0:
-        return direct
-    entered = max(float(getattr(loan, "monthly_payment", 0) or 0) - float(getattr(loan, "escrow_amount", 0) or 0), 0)
-    if entered > 0:
-        return entered
+    resolved = loan_monthly_pi(loan)
+    if resolved > 0:
+        return resolved
     principal = float(balance or getattr(loan, "original_amount", 0) or getattr(loan, "current_balance", 0) or 0)
     return engine_monthly_principal_interest(principal, float(getattr(loan, "interest_rate", 0) or 0), int(getattr(loan, "loan_term_years", 0) or 30))
 
@@ -4705,6 +4923,27 @@ def _document_payload(doc: models.Document) -> Dict[str, Any]:
         return {}
 
 
+def _statement_payload_with_ytd_fallback(doc: models.Document, data: Dict[str, Any]) -> Dict[str, Any]:
+    if getattr(doc, "doc_category", None) != "mortgage_statement":
+        return data
+    if data.get("principal_paid_ytd") is not None and data.get("interest_paid_ytd") is not None:
+        return data
+    path = UPLOAD_DIR / str(getattr(doc, "filename", "") or "")
+    if not path.exists():
+        return data
+    try:
+        category, extracted, _markdown = parse_document(str(path), "mortgage_statement")
+    except Exception:
+        return data
+    if category != "mortgage_statement" or not isinstance(extracted, dict):
+        return data
+    merged = dict(data)
+    for key in ("principal_paid_ytd", "interest_paid_ytd", "escrow_paid_ytd"):
+        if merged.get(key) is None and extracted.get(key) is not None:
+            merged[key] = extracted.get(key)
+    return merged
+
+
 def _document_timestamp(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -4802,6 +5041,7 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
         if not _loan_document_matches(loan, doc, total_loans) or not getattr(doc, "extracted_data", None):
             continue
         data = _document_payload(doc)
+        data = _statement_payload_with_ytd_fallback(doc, data)
         year = doc.statement_year or data.get("statement_year") or data.get("tax_year")
         if not year and data.get("statement_date"):
             parsed = _parse_statement_date(data.get("statement_date"))
@@ -4824,8 +5064,11 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
             "box1Interest": data.get("mortgage_interest") if data.get("mortgage_interest") is not None else data.get("box1_interest"),
             "box2Balance": data.get("current_balance") if data.get("current_balance") is not None else data.get("box2_balance"),
             "propertyTax": data.get("property_tax_amount"),
-            "ytdInterest": data.get("interest_paid_ytd") or data.get("interest"),
-            "ytdPrincipal": data.get("principal_paid_ytd") or data.get("principal"),
+            "ytdInterest": data.get("interest_paid_ytd"),
+            "ytdPrincipal": data.get("principal_paid_ytd"),
+            "monthlyEscrow": data.get("escrow_amount"),
+            "currentPaymentInterest": data.get("interest_due") if data.get("interest_due") is not None else data.get("interest"),
+            "currentPaymentPrincipal": data.get("principal_due") if data.get("principal_due") is not None else data.get("principal"),
             "endBalance": data.get("year_end_outstanding_balance") or data.get("current_balance") or data.get("ending_balance"),
             "statementDate": data.get("statement_date"),
             "mortgageAcquisitionDate": data.get("mortgage_acquisition_date"),
@@ -4865,8 +5108,25 @@ def _loan_doc_sort_key(doc: Dict[str, Any]) -> Tuple[Any, str, int]:
     )
 
 
+def _dedup_1098_docs_by_account(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Use one 1098 per account/year.
+
+    Re-uploaded duplicate 1098s should still be visible in Documents, but the
+    loan year table must not add the same account's Box 1 interest twice.
+    """
+    latest_by_account: Dict[str, Dict[str, Any]] = {}
+    no_account: List[Dict[str, Any]] = []
+    for doc in sorted(docs, key=_loan_doc_sort_key):
+        account = str(doc.get("accountNumber") or "").strip()
+        if not account:
+            no_account.append(doc)
+            continue
+        latest_by_account[account] = doc
+    return sorted([*latest_by_account.values(), *no_account], key=_loan_doc_sort_key)
+
+
 def _combined_1098_doc(docs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    forms = [doc for doc in docs if doc.get("docType") == "1098"]
+    forms = _dedup_1098_docs_by_account([doc for doc in docs if doc.get("docType") == "1098"])
     if len(forms) <= 1:
         return None
     ordered = sorted(forms, key=_loan_doc_sort_key)
@@ -4911,22 +5171,29 @@ def _preferred_loan_doc(docs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not docs:
         return None
     ordered = sorted(docs, key=lambda doc: (str(doc.get("uploadedAt") or ""), int(doc.get("documentId") or 0)))
-    statements = [doc for doc in docs if doc.get("docType") == "mortgage_statement"]
-    if statements:
-        return sorted(statements, key=lambda doc: (str(doc.get("uploadedAt") or ""), int(doc.get("documentId") or 0)))[-1]
     combined_1098 = _combined_1098_doc(docs)
     if combined_1098:
         return combined_1098
     forms = [doc for doc in ordered if doc.get("docType") == "1098"]
     if forms:
         return forms[-1]
+    statements = [doc for doc in docs if doc.get("docType") == "mortgage_statement"]
+    if statements:
+        return sorted(statements, key=lambda doc: (str(doc.get("uploadedAt") or ""), int(doc.get("documentId") or 0)))[-1]
     return ordered[-1]
 
 
 def _loan_tracking_as_of(loan: models.Loan, today: Optional[date] = None) -> date:
     today = today or date.today()
+    raw_closed_date = str(getattr(loan, "closed_date", None) or "").strip()
+    year_only_closed_at = (
+        date(int(raw_closed_date), 12, 31)
+        if re.fullmatch(r"(?:19|20)\d{2}", raw_closed_date)
+        else None
+    )
     closed_at = (
-        _parse_statement_date(getattr(loan, "closed_date", None))
+        year_only_closed_at
+        or _parse_statement_date(getattr(loan, "closed_date", None))
         or _parse_statement_date(getattr(loan, "servicer_end_date", None))
     )
     if hasattr(closed_at, "date"):
@@ -4949,9 +5216,47 @@ def _loan_tracking_start_date(loan: models.Loan) -> Optional[date]:
 
 
 def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Optional[date] = None) -> Dict[str, Any]:
-    today = _loan_tracking_as_of(loan, today)
+    reporting_date = today or date.today()
+    today = _loan_tracking_as_of(loan, reporting_date)
+    is_closed_tracking_period = bool(
+        _is_closed_loan_status(getattr(loan, "status", None))
+        or getattr(loan, "closed_date", None)
+        or getattr(loan, "servicer_end_date", None)
+    )
     orig = _parse_statement_date(getattr(loan, "origination_date", None)) if getattr(loan, "origination_date", None) else None
     active_start = _loan_tracking_start_date(loan) or (orig.date() if hasattr(orig, "date") else orig)
+    docs_by_year = _loan_document_inventory(loan, prop)
+    has_payment_terms = (
+        float(getattr(loan, "monthly_payment", 0) or 0) > 0
+        or float(getattr(loan, "principal_due", 0) or 0) + float(getattr(loan, "interest_due", 0) or 0) > 0
+    )
+    if not has_payment_terms and not any(docs_by_year.values()):
+        original_amount = round(float(getattr(loan, "original_amount", 0) or 0), 2)
+        reported_balance = round(float(getattr(loan, "current_balance", 0) or 0), 2)
+        return {
+            "summary": {
+                "totalTopUp": 0.0,
+                "totalTopUpDisplay": format_currency(0),
+                "principalPaidToDate": max(original_amount - reported_balance, 0.0),
+                "principalPaidToDateDisplay": format_currency(max(original_amount - reported_balance, 0.0)),
+                "interestPaidToDate": 0.0,
+                "interestPaidToDateDisplay": format_currency(0),
+                "aheadOfScheduleMonths": None,
+                "aheadOfScheduleDisplay": "—",
+                "warnings": ["Loan payment terms are missing; yearly amortization was not projected."],
+            },
+            "rows": [],
+            "assertions": {
+                "loanStartDatePresent": bool(active_start),
+                "paymentTermsPresent": False,
+                "balanceChainValid": None,
+                "principalPaidMatchesBalanceDelta": None,
+                "latestReportedBalanceMatchesLoanCard": None,
+                "latestReportedBalance": reported_balance,
+                "latestReportedYear": None,
+                "loanCardBalance": reported_balance,
+            },
+        }
     current_balance = round(float(current_loan_balance(loan, today) or 0), 2)
     original_amount = round(float(getattr(loan, "original_amount", 0) or 0), 2)
     if not active_start:
@@ -4979,7 +5284,6 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             },
         }
     start_year = active_start.year if active_start else today.year
-    docs_by_year = _loan_document_inventory(loan, prop)
     if active_start:
         docs_by_year = {year: docs for year, docs in docs_by_year.items() if year >= active_start.year}
     rows = []
@@ -5008,7 +5312,6 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         end_balance_source_label = "Projected"
         principal_from_payment_less_interest = None
         interest = None
-        projected_source_doc = None
         scheduled_months = 12
         if active_start and year == active_start.year:
             scheduled_months = max(0, 12 - active_start.month + 1)
@@ -5028,8 +5331,23 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             source_tier = "REPORTED"
             start_balance = primary_doc.get("box2Balance")
             interest = primary_doc.get("box1Interest")
+            year_statements = sorted(
+                [doc for doc in docs if doc.get("docType") == "mortgage_statement"],
+                key=_loan_doc_sort_key,
+            )
+            companion_statement = year_statements[-1] if year_statements else None
             if start_balance is None:
                 warnings.append("Box 2 balance missing; top-up unknown. Upload a year-end statement.")
+            elif companion_statement and companion_statement.get("endBalance") is not None:
+                end_balance = companion_statement.get("endBalance")
+                end_balance_source = "reported"
+                end_balance_source_label = "Reported from statement"
+                if companion_statement.get("ytdPrincipal") is not None:
+                    actual_principal = companion_statement.get("ytdPrincipal")
+                else:
+                    actual_principal = max(0.0, round(float(start_balance) - float(end_balance), 2))
+                source_label = "1098 interest + statement balance"
+                source_display = source_label
             elif next_doc and next_doc.get("box2Balance") is not None:
                 end_balance = next_doc.get("box2Balance")
                 end_balance_source = "reported"
@@ -5100,12 +5418,10 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         if source == "projected" and actual_principal is None and next_doc and next_doc.get("box2Balance") is not None and start_balance is not None:
             end_balance = next_doc.get("box2Balance")
             end_balance_source = "reported"
-            end_balance_source_label = "Reported from next 1098"
+            end_balance_source_label = "Calculated from next-year balance checkpoint"
             actual_principal = max(0.0, round(float(start_balance) - float(end_balance), 2))
             interest = expected_interest
-            projected_source_doc = next_doc
-            projected_year = next_doc.get("parsedValues", {}).get("taxYear") or year + 1
-            source_label = f"Projected from {projected_year} 1098"
+            source_label = "Projected from balance checkpoint"
             source_display = source_label
 
         if source == "statement" and actual_principal is None and end_balance is not None and start_balance is not None:
@@ -5174,7 +5490,7 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         total_principal_paid += float(actual_principal or 0)
         total_interest_paid += float(interest or 0)
         assertion_ok = actual_principal is None or abs((scheduled_principal + top_up) - float(actual_principal)) <= 1
-        comment_doc = primary_doc or projected_source_doc or (docs[0] if docs else None)
+        comment_doc = primary_doc or (docs[0] if docs else None)
         comments = [
             {
                 "message": warning,
@@ -5201,11 +5517,12 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             ),
         }
         failed_assertions = [key for key, ok in assertion_payload.items() if ok is False]
+        display_docs = [primary_doc] if primary_doc and primary_doc.get("isCombined1098") else docs
         rows.append({
             "rowKey": f"{year}-actual",
             "year": year,
-            "yearLabel": f"{year} · now" if year == today.year else str(year),
-            "isCurrentYear": year == today.year,
+            "yearLabel": f"{year} · now" if not is_closed_tracking_period and year == reporting_date.year else str(year),
+            "isCurrentYear": not is_closed_tracking_period and year == reporting_date.year,
             "scheduledMonths": scheduled_months,
             "startBalance": None if start_balance is None else round(float(start_balance), 2),
             "startBalanceDisplay": "—" if start_balance is None else format_currency(start_balance),
@@ -5258,8 +5575,8 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             "sourceLabel": source_label,
             "sourceTier": source_tier,
             "sourceDisplay": source_display or source_label,
-            "documents": docs or ([projected_source_doc] if projected_source_doc else []),
-            "sourceDocument": primary_doc or projected_source_doc,
+            "documents": display_docs,
+            "sourceDocument": primary_doc,
             "warnings": warnings,
             "comments": comments,
             "issues": issues,
@@ -5278,11 +5595,7 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             "assertions": assertion_payload,
         })
 
-    is_open_tracking_period = not (
-        _is_closed_loan_status(getattr(loan, "status", None))
-        or getattr(loan, "closed_date", None)
-        or getattr(loan, "servicer_end_date", None)
-    )
+    is_open_tracking_period = not is_closed_tracking_period
     if is_open_tracking_period and rows and today.month < 12 and rows[-1].get("year") == today.year and rows[-1].get("endBalance") is not None:
         current_row = rows[-1]
         elapsed_months = int(current_row.get("scheduledMonths") or today.month)
@@ -5575,8 +5888,14 @@ def _loan_debt_waterfall(
     paydown = _loan_paydown_tracking(loan, prop, today)
     latest_reported_balance = (paydown.get("assertions") or {}).get("latestReportedBalance")
     original_amount = float(loan.original_amount or 0)
-    current_balance = float(latest_reported_balance if latest_reported_balance is not None else current_loan_balance(loan, today) or 0)
-    principal_paid = max(original_amount - current_balance, 0.0)
+    historical_ending_balance = float(
+        latest_reported_balance
+        if latest_reported_balance is not None
+        else current_loan_balance(loan, today) or 0
+    )
+    is_closed = _is_closed_loan_status(getattr(loan, "status", None)) or bool(getattr(loan, "closed_date", None))
+    current_balance = 0.0 if is_closed else historical_ending_balance
+    principal_paid = max(original_amount - historical_ending_balance, 0.0)
     principal_paid_percent = (principal_paid / original_amount * 100) if original_amount > 0 else 0.0
     paydown_interest = (paydown.get("summary") or {}).get("interestPaidToDate")
     if paydown_interest is not None:
@@ -5587,6 +5906,7 @@ def _loan_debt_waterfall(
         "account_number": loan.account_number,
         "source": source,
         "current_balance": round(current_balance, 2),
+        "historical_ending_balance": round(historical_ending_balance, 2) if is_closed else None,
         "principal_paid": round(principal_paid, 2),
         "principal_paid_display": format_currency(principal_paid),
         "principal_paid_percent": round(principal_paid_percent, 1),
@@ -5664,14 +5984,19 @@ def _sync_metric_vault_loan_interest_from_paydown(prop: models.Property, payload
         interest_by_account,
         today,
     )
+    active_debt_loans = [
+        item for item in debt_loans
+        if str(item.get("status") or "OPEN").upper() not in CLOSED_LOAN_STATUSES
+    ]
     by_loan_id = {str(item.get("loan_id")): item for item in debt_loans if item.get("loan_id") is not None}
     loan_metrics = payload.get("loanMetrics") or {}
     metric_map = payload.get("metrics") or {}
-    total_original = round(sum(float(item.get("original_amount") or 0) for item in debt_loans), 2)
-    total_balance = round(sum(float(item.get("current_balance") or 0) for item in debt_loans), 2)
-    total_principal = round(sum(float(item.get("principal_paid") or 0) for item in debt_loans), 2)
+    total_original = round(sum(float(item.get("original_amount") or 0) for item in active_debt_loans), 2)
+    total_balance = round(sum(float(item.get("current_balance") or 0) for item in active_debt_loans), 2)
+    total_principal = round(sum(float(item.get("principal_paid") or 0) for item in active_debt_loans), 2)
     total_interest = 0.0
     total_rows_interest = 0.0
+    active_loan_ids = {str(item.get("loan_id")) for item in active_debt_loans if item.get("loan_id") is not None}
     for loan_id, debt in by_loan_id.items():
         paydown_summary = (debt.get("paydown") or {}).get("summary") or {}
         paydown_rows = (debt.get("paydown") or {}).get("rows") or []
@@ -5680,8 +6005,9 @@ def _sync_metric_vault_loan_interest_from_paydown(prop: models.Property, payload
         interest_value = paydown_summary.get("interestPaidToDate")
         if interest_value is None:
             interest_value = row_interest
-        total_interest += float(interest_value or 0)
-        total_rows_interest += row_interest
+        if loan_id in active_loan_ids:
+            total_interest += float(interest_value or 0)
+            total_rows_interest += row_interest
         loan_metric = loan_metrics.get(loan_id)
         if not loan_metric and loan_id.isdigit():
             loan_metric = loan_metrics.get(int(loan_id))
@@ -5882,6 +6208,23 @@ def _servicer_segments_for_group(members: List[Any], today: date) -> List[Dict[s
     ordered = _ordered_loan_group_members(members)
     if not ordered:
         return []
+    if len(ordered) == 1 and getattr(ordered[0], "servicer_segments", None):
+        canonical = ordered[0]
+        ordered = [
+            SimpleNamespace(
+                id=canonical.id,
+                lender_name=segment.servicer or canonical.lender_name,
+                account_number=segment.account_number,
+                servicer_start_date=segment.from_date,
+                servicer_end_date=segment.to_date,
+                origination_date=segment.from_date,
+                is_current_servicer=segment.is_current,
+                status="OPEN" if segment.is_current else "CLOSED",
+                transfer_reason="Servicing transfer",
+                closure_reason=None,
+            )
+            for segment in canonical.servicer_segments
+        ]
     raw_segments = []
     for index, loan in enumerate(ordered):
         start = (
@@ -5943,6 +6286,43 @@ def _servicer_segments_for_group(members: List[Any], today: date) -> List[Dict[s
             "widthPercent": round(duration / total_duration * 100, 2),
         })
     return segments
+
+
+def _servicer_group_account_aliases(members: List[Any], prop: models.Property) -> List[str]:
+    aliases = [
+        str(getattr(loan, "account_number", "") or "").strip()
+        for loan in members
+        if str(getattr(loan, "account_number", "") or "").strip()
+    ]
+    alias_set = set(aliases)
+    member_ids = {getattr(loan, "id", None) for loan in members}
+    external_accounts = {
+        str(getattr(loan, "account_number", "") or "").strip()
+        for loan in getattr(prop, "loans", []) or []
+        if getattr(loan, "id", None) not in member_ids and str(getattr(loan, "account_number", "") or "").strip()
+    }
+    group_origination_dates = [
+        parsed
+        for parsed in (
+            _parse_setup_date(getattr(loan, "origination_date", None))
+            for loan in members
+        )
+        if parsed
+    ]
+    if not group_origination_dates:
+        return aliases
+    for doc in getattr(prop, "documents", []) or []:
+        if getattr(doc, "doc_category", None) not in {"1098", "mortgage_statement"} or not getattr(doc, "extracted_data", None):
+            continue
+        data = _document_payload(doc)
+        doc_account = str(getattr(doc, "loan_account_number", None) or data.get("account_number") or data.get("loan_account_number") or "").strip()
+        if not doc_account or doc_account in alias_set or doc_account in external_accounts:
+            continue
+        doc_origination = _parse_setup_date(data.get("origination_date"))
+        if doc_origination and any(_same_original_loan_date(doc_origination, group_date) for group_date in group_origination_dates):
+            alias_set.add(doc_account)
+            aliases.append(doc_account)
+    return aliases
 
 
 def _row_servicer_label(row: Dict[str, Any], segments: List[Dict[str, Any]]) -> str:
@@ -6033,9 +6413,15 @@ def _servicer_transfer_boundary_assertion(members: List[Any], loan_payload: Dict
 
 def _compat_loan_payload(loan: Any, debt: Dict[str, Any], members: List[Any]) -> Dict[str, Any]:
     original_amount = float(getattr(members[0], "original_amount", None) or getattr(loan, "original_amount", 0) or 0)
-    current_balance = float(debt.get("current_balance") or getattr(loan, "current_balance", 0) or 0)
-    monthly_pi = _loan_monthly_pi_amount(loan, original_amount)
-    amortized_pi = engine_monthly_principal_interest(
+    debt_current_balance = debt.get("current_balance")
+    current_balance = float(
+        debt_current_balance
+        if debt_current_balance is not None
+        else getattr(loan, "current_balance", 0) or 0
+    )
+    payment_terms_present = (debt.get("paydown") or {}).get("assertions", {}).get("paymentTermsPresent")
+    monthly_pi = 0.0 if payment_terms_present is False else _loan_monthly_pi_amount(loan, original_amount)
+    amortized_pi = 0.0 if payment_terms_present is False else engine_monthly_principal_interest(
         original_amount,
         float(getattr(loan, "interest_rate", 0) or 0),
         int(getattr(loan, "loan_term_years", 0) or 30),
@@ -6053,7 +6439,7 @@ def _compat_loan_payload(loan: Any, debt: Dict[str, Any], members: List[Any]) ->
         "rate": getattr(loan, "interest_rate", None),
         "rateDisplay": format_interest_rate(getattr(loan, "interest_rate", None)),
         "interest_rate": getattr(loan, "interest_rate", None),
-        "status": "OPEN" if not _is_closed_loan_status(getattr(loan, "status", None)) else "CLOSED",
+        "status": str(getattr(loan, "status", None) or "OPEN").upper(),
         "original_amount": original_amount,
         "originalAmount": original_amount,
         "originalAmountDisplay": format_currency(original_amount),
@@ -6073,6 +6459,9 @@ def _compat_loan_payload(loan: Any, debt: Dict[str, Any], members: List[Any]) ->
         "termDisplay": f"{int(getattr(loan, 'loan_term_years', 0) or 30)}-yr",
         "origination_date": getattr(members[0], "origination_date", None) or getattr(loan, "origination_date", None),
         "originationDateDisplay": _display_loan_date(getattr(members[0], "origination_date", None) or getattr(loan, "origination_date", None)),
+        "closed_date": getattr(loan, "closed_date", None),
+        "closedDateDisplay": _display_loan_date(getattr(loan, "closed_date", None)),
+        "replacementLoanId": getattr(loan, "replacement_loan_id", None),
         "maturity_date": getattr(loan, "maturity_date", None),
         "maturityDateDisplay": _display_loan_date(getattr(loan, "maturity_date", None)),
         "servicerSegments": debt.get("servicerSegments") or [],
@@ -6095,6 +6484,85 @@ def _compat_loan_payload(loan: Any, debt: Dict[str, Any], members: List[Any]) ->
     return payload
 
 
+def _resolved_debt_metadata(prop: models.Property, loans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    resolved_by_id = {
+        int(item["loanId"]): item
+        for item in (lifecycle_dto(prop).get("loans") or [])
+        if item.get("loanId") is not None
+    }
+    enriched = []
+    for loan in loans:
+        resolved = resolved_by_id.get(int(loan.get("loan_id") or 0)) or {}
+        raw_status = str(resolved.get("status") or loan.get("status") or "OPEN").upper()
+        status = _canonical_loan_status(raw_status)
+        purpose = str(resolved.get("purpose") or "UNKNOWN").upper()
+        is_closed = status in CLOSED_LOAN_STATUSES
+        has_reported_balance = bool(resolved.get("hasReportedCurrentBalance"))
+        display_balance = (
+            resolved.get("currentBalance")
+            if (is_closed or has_reported_balance) and resolved.get("currentBalance") is not None
+            else None if resolved else loan.get("current_balance")
+        )
+        enriched.append({
+            **loan,
+            "status": status,
+            "statusLabel": status.replace("_", " ").title(),
+            "closureReasonLabel": "Refinanced" if raw_status == "REFINANCED" else resolved.get("closureReason"),
+            "purpose": purpose,
+            "purposeLabel": purpose.replace("_", " ").title(),
+            "lender": resolved.get("lender") or loan.get("lender_name"),
+            "maskedLoanNumber": resolved.get("maskedLoanNumber"),
+            "disbursementDate": resolved.get("disbursementDate"),
+            "disbursementDateDisplay": _display_loan_date(resolved.get("disbursementDate")),
+            "closed_date": resolved.get("closedDate") or loan.get("closed_date"),
+            "closedDateDisplay": _display_loan_date(resolved.get("closedDate") or loan.get("closed_date")),
+            "displayBalance": display_balance,
+            "displayBalanceDisplay": format_currency(display_balance) if display_balance is not None else "—",
+            "balanceLabel": (
+                "Final / payoff balance" if is_closed
+                else "Current balance" if has_reported_balance
+                else "Current balance (statement needed)"
+            ),
+            "balanceAsOf": resolved.get("balanceAsOf"),
+            "refinancedIntoLoanId": resolved.get("refinancedIntoLoanId"),
+            "refinancedFromLoanId": resolved.get("refinancedFromLoanId"),
+        })
+    return enriched
+
+
+def _refinance_chain_payload(loans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_id = {int(loan["loan_id"]): loan for loan in loans if loan.get("loan_id") is not None}
+    roots = [
+        loan for loan in loans
+        if loan.get("refinancedIntoLoanId") and not loan.get("refinancedFromLoanId")
+    ]
+    chains = []
+    for root in roots:
+        nodes = []
+        seen = set()
+        current = root
+        while current and current.get("loan_id") not in seen:
+            loan_id = current.get("loan_id")
+            seen.add(loan_id)
+            status = str(current.get("status") or "OPEN").upper()
+            period_end = current.get("closedDateDisplay") if status in CLOSED_LOAN_STATUSES else "Present"
+            nodes.append({
+                "loanId": loan_id,
+                "lender": current.get("lender") or current.get("lender_name") or "Loan",
+                "periodDisplay": f"{current.get('originationDateDisplay') or '—'} – {period_end}",
+                "originalAmountDisplay": current.get("originalAmountDisplay") or format_currency(current.get("original_amount")),
+                "rateDisplay": current.get("rateDisplay") or format_interest_rate(current.get("interest_rate")),
+                "status": status,
+                "statusLabel": current.get("statusLabel") or status.replace("_", " ").title(),
+                "currentBalanceDisplay": current.get("displayBalanceDisplay") or "—",
+            })
+            next_id = current.get("refinancedIntoLoanId")
+            current = by_id.get(int(next_id)) if next_id is not None else None
+        if len(nodes) > 1:
+            chains.append({"chainId": f"refinance-{nodes[0]['loanId']}", "nodes": nodes})
+    return chains
+
+
 def _consolidated_loan_debt_waterfall(
     members: List[Any],
     prop: models.Property,
@@ -6106,11 +6574,7 @@ def _consolidated_loan_debt_waterfall(
     ordered = _ordered_loan_group_members(members)
     current = _current_servicer_member(ordered)
     first = ordered[0]
-    aliases = [
-        getattr(loan, "account_number", None)
-        for loan in ordered
-        if getattr(loan, "account_number", None)
-    ]
+    aliases = _servicer_group_account_aliases(ordered, prop)
     data = {
         column.name: getattr(current, column.name, None)
         for column in models.Loan.__table__.columns
@@ -6335,6 +6799,194 @@ def resolve_rent(prop: models.Property, year: Optional[int] = None) -> dict:
         **rent,
         "annual_rent": round(monthly * 12, 2),
     }
+
+
+def _portfolio_income_expense_yearly_trends(
+    props: List[models.Property],
+    *,
+    current_year: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Build the portfolio's calendar-year operating history.
+
+    TaxReturnEntry.total_expenses is a Schedule E total that includes mortgage
+    interest and depreciation. Those amounts are excluded here because this
+    series represents operating expenses and NOI, not taxable income.
+    """
+    target_year = int(current_year or date.today().year)
+    totals: Dict[int, Dict[str, Any]] = {}
+
+    for prop in props:
+        if (getattr(prop, "usage_type", None) or "Rental").lower() == "primary":
+            continue
+
+        rental_income = _rental_income_by_year(prop)
+        annual_expenses = {
+            int(row.year): row
+            for row in (getattr(prop, "annual_expenses", None) or [])
+            if row.year and int(row.year) <= target_year and _annual_expense_entered(row)
+        }
+        tax_entries = {
+            int(entry.tax_year): entry
+            for entry in (getattr(prop, "tax_entries", None) or [])
+            if entry.tax_year and int(entry.tax_year) <= target_year
+        }
+        years = set(rental_income) | set(annual_expenses) | set(tax_entries)
+        purchase_date = _parse_iso_date(getattr(prop, "purchase_date", None))
+        if purchase_date:
+            years = {year for year in years if year >= purchase_date.year}
+        years.add(target_year)
+
+        for year in sorted(years):
+            tax_entry = tax_entries.get(year)
+            lease_row = rental_income.get(year) or {}
+            source_labels = set()
+
+            if tax_entry and float(tax_entry.rents_received or 0) > 0:
+                income = float(tax_entry.rents_received or 0)
+                source_labels.add("Schedule E")
+            elif year == target_year:
+                income = float(
+                    lease_row.get("run_rate_annual_income")
+                    or resolve_rent(prop, year).get("annual_rent")
+                    or 0
+                )
+                if income:
+                    source_labels.add("Lease projection")
+            else:
+                income = float(lease_row.get("income") or 0)
+                if income:
+                    source_labels.add("Lease history")
+
+            if year in annual_expenses:
+                expenses = float(resolve_annual_operating_expenses(prop, year).get("value") or 0)
+                source_labels.add("Annual expenses")
+            elif tax_entry:
+                expenses = max(
+                    float(tax_entry.total_expenses or 0)
+                    - float(tax_entry.mortgage_interest or 0)
+                    - float(tax_entry.depreciation or 0),
+                    0.0,
+                )
+                if expenses:
+                    source_labels.add("Schedule E")
+            else:
+                expenses = 0.0
+
+            if not income and not expenses and year != target_year:
+                continue
+
+            row = totals.setdefault(year, {
+                "year": year,
+                "year_label": str(year),
+                "status": "PROJECTED" if year == target_year else "ACTUAL",
+                "rental_income": 0.0,
+                "operating_expenses": 0.0,
+                "net_operating_income": 0.0,
+                "net_income": 0.0,
+                "properties": [],
+                "sources": set(),
+            })
+            row["rental_income"] += income
+            row["operating_expenses"] += expenses
+            row["sources"].update(source_labels)
+            row["properties"].append({
+                "property_id": prop.id,
+                "rental_income": round(income, 2),
+                "operating_expenses": round(expenses, 2),
+                "net_operating_income": round(income - expenses, 2),
+                "sources": sorted(source_labels),
+            })
+
+    rows = []
+    for year in sorted(totals):
+        row = totals[year]
+        income = round(row["rental_income"], 2)
+        expenses = round(row["operating_expenses"], 2)
+        noi = round(income - expenses, 2)
+        rows.append({
+            **row,
+            "year_label": f"{year} Projected" if year == target_year else str(year),
+            "rental_income": income,
+            "operating_expenses": expenses,
+            "net_operating_income": noi,
+            "net_income": noi,
+            "sources": sorted(row["sources"]),
+        })
+    return rows
+
+
+def _loan_payment_history_rows(prop: models.Property) -> List[Dict[str, Any]]:
+    """Return accepted mortgage-statement snapshots without inventing payments."""
+    rows: List[Dict[str, Any]] = []
+    for loan in prop.loans:
+        for snapshot in loan.balance_snapshots:
+            document = snapshot.document
+            if not document or document.doc_category != "mortgage_statement":
+                continue
+            rows.append({
+                "rowKey": snapshot.id,
+                "loanId": loan.id,
+                "lenderName": loan.current_servicer or loan.lender_name or "Loan",
+                "accountNumber": loan.account_number,
+                "statementDate": snapshot.as_of_date,
+                "payment": snapshot.payment,
+                "principalYtd": snapshot.principal_paid_ytd,
+                "interestYtd": snapshot.interest_paid_ytd,
+                "balance": snapshot.balance,
+                "documentId": document.id,
+                "sourceLabel": document.display_name or document.original_filename or document.filename,
+                "sourceType": "Mortgage statement",
+            })
+    rows.sort(key=lambda row: (row.get("statementDate") or "", row.get("rowKey") or ""), reverse=True)
+    return rows
+
+
+def _tax_yearly_trends(
+    tax_entries: List[models.TaxReturnEntry],
+    property_ids: set,
+) -> List[Dict[str, Any]]:
+    """Preserve the Schedule E trend contract used by reports and tax views."""
+    by_year: Dict[int, Dict[str, Any]] = {}
+    for entry in tax_entries:
+        if entry.property_id not in property_ids:
+            continue
+        row = by_year.setdefault(entry.tax_year, {
+            "year": entry.tax_year,
+            "rental_income": 0.0,
+            "mortgage_interest": 0.0,
+            "property_taxes": 0.0,
+            "operating_expenses": 0.0,
+            "depreciation": 0.0,
+            "net_income": 0.0,
+            "properties": [],
+        })
+        row["rental_income"] += entry.rents_received or 0.0
+        row["mortgage_interest"] += entry.mortgage_interest or 0.0
+        row["property_taxes"] += entry.property_taxes or 0.0
+        row["operating_expenses"] += entry.total_expenses or 0.0
+        row["depreciation"] += entry.depreciation or 0.0
+        row["net_income"] += entry.net_income or 0.0
+        row["properties"].append({
+            "property_id": entry.property_id,
+            "rental_income": round(entry.rents_received or 0.0, 2),
+            "mortgage_interest": round(entry.mortgage_interest or 0.0, 2),
+            "property_taxes": round(entry.property_taxes or 0.0, 2),
+            "operating_expenses": round(entry.total_expenses or 0.0, 2),
+            "depreciation": round(entry.depreciation or 0.0, 2),
+            "net_income": round(entry.net_income or 0.0, 2),
+        })
+    return [
+        {
+            **row,
+            "rental_income": round(row["rental_income"], 2),
+            "mortgage_interest": round(row["mortgage_interest"], 2),
+            "property_taxes": round(row["property_taxes"], 2),
+            "operating_expenses": round(row["operating_expenses"], 2),
+            "depreciation": round(row["depreciation"], 2),
+            "net_income": round(row["net_income"], 2),
+        }
+        for row in sorted(by_year.values(), key=lambda item: item["year"])
+    ]
 
 
 def _rental_income_by_year(prop: models.Property) -> dict:
@@ -7907,7 +8559,17 @@ def _schedule_e_depreciation(prop: models.Property, year: int) -> float:
     recovery_period = float(prop.depreciation_years or 27.5)
     if basis <= 0 or recovery_period <= 0:
         return 0.0
-    return _depreciation_for_year(basis, recovery_period, _rental_months_by_year(prop), year)
+    # Schedule E history presents the current year as a full-year projection.
+    # Build the rental timeline through December of the requested year so an
+    # open rental period is not truncated at today's month. The current-year
+    # breakdown separately prorates this annual value into reported and
+    # projected-remainder rows.
+    return _depreciation_for_year(
+        basis,
+        recovery_period,
+        _rental_months_by_year(prop, through_year=year),
+        year,
+    )
 
 
 def _computed_schedule_e_components(prop: models.Property, year: int, lifetime_row: Optional[Dict[str, Any]]) -> Dict[str, float]:
@@ -7931,6 +8593,14 @@ def _computed_schedule_e_components(prop: models.Property, year: int, lifetime_r
         "depreciation": _schedule_e_depreciation(prop, year),
         "other_expenses": expense_components["other_expenses"],
     }
+    computed["operating_expenses"] = _schedule_e_number(sum(
+        computed[key]
+        for key in (
+            "advertising", "auto_travel", "cleaning_maintenance", "commissions",
+            "insurance", "legal_professional", "management_fees", "other_interest",
+            "repairs", "supplies", "utilities", "other_expenses",
+        )
+    ))
     computed["total_expenses"] = _schedule_e_number(sum(
         computed[key]
         for key in (
@@ -7944,15 +8614,93 @@ def _computed_schedule_e_components(prop: models.Property, year: int, lifetime_r
     return computed
 
 
-def _schedule_e_history_row(year: int, components: Dict[str, float]) -> Dict[str, Any]:
-    return {
+def _schedule_e_history_row(
+    year: int,
+    components: Dict[str, float],
+    *,
+    label: Optional[str] = None,
+    source_label: Optional[str] = None,
+    row_kind: str = "year",
+    detail_rows: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    row = {
         "year": year,
+        "label": label or str(year),
+        "kind": row_kind,
+        "sourceLabel": source_label or "Computed",
+        "rentalIncome": _schedule_e_money(components.get("rents_received")),
+        "operatingExpenses": _schedule_e_money(components.get("operating_expenses")),
         "deductibleInterest": _schedule_e_money(components.get("mortgage_interest")),
         "mortgageInterest": _schedule_e_money(components.get("mortgage_interest")),
         "propertyTax": _schedule_e_money(components.get("taxes")),
         "depreciation": _schedule_e_money(components.get("depreciation")),
+        "totalExpenses": _schedule_e_money(components.get("total_expenses")),
         "netScheduleE": _schedule_e_money(components.get("net_income")),
     }
+    if detail_rows:
+        row["detailRows"] = detail_rows
+    return row
+
+
+def _schedule_e_history_total_row(history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    totals = {
+        "rents_received": sum(_schedule_e_number(row.get("rentalIncome", {}).get("value")) for row in history),
+        "operating_expenses": sum(_schedule_e_number(row.get("operatingExpenses", {}).get("value")) for row in history),
+        "mortgage_interest": sum(_schedule_e_number(row.get("mortgageInterest", {}).get("value")) for row in history),
+        "taxes": sum(_schedule_e_number(row.get("propertyTax", {}).get("value")) for row in history),
+        "depreciation": sum(_schedule_e_number(row.get("depreciation", {}).get("value")) for row in history),
+        "total_expenses": sum(_schedule_e_number(row.get("totalExpenses", {}).get("value")) for row in history),
+        "net_income": sum(_schedule_e_number(row.get("netScheduleE", {}).get("value")) for row in history),
+    }
+    return _schedule_e_history_row(
+        9999,
+        totals,
+        label="Total",
+        source_label="Accumulated",
+        row_kind="total",
+    )
+
+
+def _schedule_e_components_from_breakdown_metrics(row: Dict[str, Any]) -> Dict[str, float]:
+    metrics = row.get("metrics") or {}
+    return {
+        "rents_received": _schedule_e_number(metrics.get("rentsReceived", {}).get("value")),
+        "mortgage_interest": _schedule_e_number(metrics.get("mortgageInterest", {}).get("value")),
+        "taxes": _schedule_e_number(metrics.get("propertyTax", {}).get("value")),
+        "operating_expenses": _schedule_e_number(metrics.get("operatingExpenses", {}).get("value")),
+        "depreciation": _schedule_e_number(metrics.get("depreciation", {}).get("value")),
+        "total_expenses": _schedule_e_number(metrics.get("totalExpenses", {}).get("value")),
+        "net_income": _schedule_e_number(metrics.get("netScheduleE", {}).get("value")),
+    }
+
+
+def _schedule_e_amortized_interest_through_month(
+    prop: models.Property,
+    year: int,
+    through_month: int,
+) -> float:
+    """Return backend-amortized interest for a calendar year through a month.
+
+    This is the current-year fallback when rental activity establishes a
+    reported period but no mortgage statement has supplied YTD interest. Loan
+    closure dates are respected so refinanced or paid-off debt does not leak
+    into later years.
+    """
+    through_month = max(0, min(12, int(through_month or 0)))
+    if through_month <= 0:
+        return 0.0
+
+    cutoff = date(int(year), through_month, 1)
+    total = 0.0
+    for loan in getattr(prop, "loans", []) or []:
+        tracking_start = _loan_tracking_start_date(loan)
+        if tracking_start and tracking_start > cutoff:
+            continue
+        loan_cutoff = _loan_tracking_as_of(loan, cutoff)
+        if loan_cutoff.year < int(year):
+            continue
+        total += _projected_interest_by_year(loan, loan_cutoff).get(int(year), 0.0)
+    return _schedule_e_number(total)
 
 
 def _schedule_e_current_year_breakdown(
@@ -7987,9 +8735,11 @@ def _schedule_e_current_year_breakdown(
     expense_components = _schedule_e_annual_expense_components(prop, current_year)
     full_interest = interest_by_year.get(current_year)
     if full_interest is None:
-        projected_interest = 0.0
-        for loan in prop.loans:
-            projected_interest += _projected_interest_by_year(loan).get(current_year, 0.0)
+        projected_interest = _schedule_e_amortized_interest_through_month(
+            prop,
+            current_year,
+            12,
+        )
         full_interest = _schedule_e_number(projected_interest or total_components.get("mortgage_interest"))
 
     full_rent = _schedule_e_number(
@@ -8044,7 +8794,24 @@ def _schedule_e_current_year_breakdown(
     if interest_by_year.get(current_year) is not None:
         reported["mortgage_interest"] = total["mortgage_interest"]
     elif has_current_statement:
-        reported["mortgage_interest"] = _schedule_e_number(sum(snap.get("interest") or 0 for snap in current_snapshots))
+        reported["mortgage_interest"] = _schedule_e_number(sum(
+            snap.get("interest")
+            if snap.get("interest") is not None
+            else (snap.get("interest_due") or 0)
+            for snap in current_snapshots
+        ))
+        if reported["mortgage_interest"] <= 0 and months_elapsed:
+            reported["mortgage_interest"] = _schedule_e_amortized_interest_through_month(
+                prop,
+                current_year,
+                months_elapsed,
+            )
+    elif has_rental_details and months_elapsed:
+        reported["mortgage_interest"] = _schedule_e_amortized_interest_through_month(
+            prop,
+            current_year,
+            months_elapsed,
+        )
     if tax_by_year.get(current_year) is not None:
         reported["taxes"] = total["taxes"]
     elif has_current_statement:
@@ -8168,17 +8935,38 @@ def get_schedule_e_capture(
             "status": status,
         })
 
-    history = [
-        _schedule_e_history_row(history_year, _computed_schedule_e_components(prop, history_year, yearly_by_year.get(history_year)))
-        for history_year in available_years
-    ]
-    selected_history = next((row for row in history if row["year"] == selected_year), None)
     current_year_breakdown = _schedule_e_current_year_breakdown(
         prop,
         selected_year,
         computed,
         yearly_by_year.get(selected_year),
     )
+    current_year_history_breakdown = _schedule_e_current_year_breakdown(
+        prop,
+        current_year,
+        _computed_schedule_e_components(prop, current_year, yearly_by_year.get(current_year)),
+        yearly_by_year.get(current_year),
+    )
+    history = []
+    for history_year in available_years:
+        if history_year == current_year and current_year_history_breakdown:
+            total_row = (current_year_history_breakdown.get("rows") or [{}])[0]
+            total_components = _schedule_e_components_from_breakdown_metrics(total_row)
+            history.append(_schedule_e_history_row(
+                history_year,
+                total_components,
+                label=f"{history_year} Projected *",
+                source_label=total_row.get("sourceLabel") or "Reported + projected",
+                row_kind="projected_current_year",
+                detail_rows=current_year_history_breakdown.get("detailRows") or [],
+            ))
+        else:
+            history.append(_schedule_e_history_row(
+                history_year,
+                _computed_schedule_e_components(prop, history_year, yearly_by_year.get(history_year)),
+            ))
+    history_total_row = _schedule_e_history_total_row(history)
+    selected_history = next((row for row in history if row["year"] == selected_year), None)
     lifetime_net = _schedule_e_number(sum(row["netScheduleE"]["value"] for row in history))
     accumulated_depreciation = _schedule_e_number(sum(row["depreciation"]["value"] for row in history))
     tax_summary = lifetime_payload.get("tax_summary", {}).get("lifetime", {}) or {}
@@ -8197,20 +8985,29 @@ def get_schedule_e_capture(
         for row in full_rental_rows
         if row.get("year")
     ]
-    partial_rental_depreciation = [
-        _schedule_e_depreciation(prop, int(row["year"]))
-        for row in yearly
-        if row.get("is_partial") and row.get("usage_status") != "Primary" and row.get("year")
-    ]
     depreciation_full_years_ok = (
         depreciable_basis <= 0
         or all(_schedule_e_number(value) > 0 for value in full_rental_depreciation)
     )
-    partial_depreciation_ok = (
-        not full_rental_depreciation
-        or not partial_rental_depreciation
-        or max(partial_rental_depreciation) < max(full_rental_depreciation)
-    )
+    current_projection_depreciation_ok = True
+    reported_depreciation_below_projected_total = True
+    if current_year_history_breakdown:
+        current_total = (current_year_history_breakdown.get("rows") or [{}])[0]
+        detail_rows = current_year_history_breakdown.get("detailRows") or []
+        current_total_depreciation = _schedule_e_number(
+            (current_total.get("metrics") or {}).get("depreciation", {}).get("value")
+        )
+        detail_depreciation = sum(
+            _schedule_e_number((detail.get("metrics") or {}).get("depreciation", {}).get("value"))
+            for detail in detail_rows
+        )
+        current_projection_depreciation_ok = abs(current_total_depreciation - detail_depreciation) <= 1
+        reported_row = next((detail for detail in detail_rows if detail.get("kind") == "reported"), None)
+        if reported_row and int(current_year_history_breakdown.get("monthsReported") or 0) < 12:
+            reported_depreciation = _schedule_e_number(
+                (reported_row.get("metrics") or {}).get("depreciation", {}).get("value")
+            )
+            reported_depreciation_below_projected_total = reported_depreciation < current_total_depreciation
     strip_matches_selected_history = (
         selected_history is None
         or (
@@ -8251,14 +9048,15 @@ def get_schedule_e_capture(
             "accumulatedDepreciation": _schedule_e_money(accumulated_depreciation),
             "suspendedLosses": _schedule_e_money(tax_summary.get("suspended_loss", 0)),
         },
-        "history": history,
+        "history": history + [history_total_row],
         "currentYearBreakdown": current_year_breakdown,
         "assertions": {
             "netLineMatchesFormula": net_formula_ok,
             "historyMatchesLifetimeNetScheduleE": abs(lifetime_net - _schedule_e_number(sum(row["netScheduleE"]["value"] for row in history))) <= 1,
             "depreciationMatchesAccumulated": abs(accumulated_depreciation - _schedule_e_number(sum(row["depreciation"]["value"] for row in history))) <= 1,
             "depreciationPresentForFullRentalYears": depreciation_full_years_ok,
-            "partialYearDepreciationBelowFullYear": partial_depreciation_ok,
+            "partialYearDepreciationBelowFullYear": reported_depreciation_below_projected_total,
+            "currentYearDepreciationSplitMatchesProjectedTotal": current_projection_depreciation_ok,
             "selectedYearStripMatchesHistory": strip_matches_selected_history,
         },
         "warnings": warnings,
@@ -8271,17 +9069,11 @@ def get_raw_data(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Return every raw data point we hold for a property, grouped by source,
-    so the frontend can render a side-by-side cross-verification view.
+    """Return the complete property snapshot as normalized business tables.
 
-    Sources:
-      tax_entries  — TaxReturnEntry rows extracted from uploaded Schedule E
-      docs_1098    — exact mortgage interest from Form 1098 (per year, per account)
-      docs_balance — outstanding principal at Jan-1 from Form 1098 Box 2
-      stmt_annual  — annualised figures from monthly mortgage statements
-      tax_docs     — property-tax amounts extracted from any uploaded document
-      lease_rent   — income / occupancy derived from entered RentalPeriod records
-      snapshots    — every raw statement row (date, balance, interest, principal)
+    Document-derived values remain in the response as provenance for loan,
+    expense, rental, and tax records; the property Documents inventory is a
+    separate product view and is not the organizing model for Raw Data.
     """
     prop = _get_accessible_property(prop_id, db, current_user)
 
@@ -8383,6 +9175,206 @@ def get_raw_data(
     depreciable = _depreciable_basis(prop)
     annual_depr = round(depreciable / prop.depreciation_years, 2) if prop.depreciation_years else 0
 
+    property_snapshot = {
+        "id": prop.id,
+        "property_uid": prop.property_uid,
+        "name": prop.name,
+        "address": prop.address,
+        "city": prop.city,
+        "state": prop.state,
+        "zip_code": prop.zip_code,
+        "property_type": prop.property_type,
+        "property_type_raw": prop.property_type_raw,
+        "usage_type": prop.usage_type,
+        "original_residency_status": prop.original_residency_status,
+        "current_residency_status": prop.current_residency_status,
+        "primary_start_date": prop.primary_start_date,
+        "primary_end_date": prop.primary_end_date,
+        "rental_start_date": prop.rental_start_date,
+        "rental_end_date": prop.rental_end_date,
+        "recorded_date": prop.recorded_date,
+        "held_period": prop.held_period,
+        "purchase_date": prop.purchase_date,
+        "purchase_price": prop.purchase_price,
+        "down_payment": prop.down_payment,
+        "settlement_total_amount": prop.settlement_total_amount,
+        "closing_costs": prop.closing_costs,
+        "monthly_rent": prop.monthly_rent,
+        "occupancy_rate": prop.occupancy_rate,
+        "property_tax": prop.property_tax,
+        "insurance": prop.insurance,
+        "hoa_flag": prop.hoa_flag,
+        "hoa_fee": prop.hoa_fee,
+        "hoa_special_assessment": prop.hoa_special_assessment,
+        "solar_ownership": prop.solar_ownership,
+        "solar_monthly_payment": prop.solar_monthly_payment,
+        "solar_purchase_price": prop.solar_purchase_price,
+        "maintenance": prop.maintenance,
+        "property_management_fee": prop.property_management_fee,
+        "utilities": prop.utilities,
+        "vacancy_allowance": prop.vacancy_allowance,
+        "capex_reserve": prop.capex_reserve,
+        "other_expenses": prop.other_expenses,
+        "land_value": prop.land_value,
+        "construction_price": prop.construction_price,
+        "depreciation_years": prop.depreciation_years,
+        "depreciable_basis": depreciable,
+        "irs_annual_depreciation": annual_depr,
+        "market_value": prop.market_value,
+        "market_value_source": prop.market_value_source,
+        "market_value_updated": prop.market_value_updated,
+        "notes": prop.notes,
+        "created_at": str(prop.created_at) if prop.created_at else None,
+        "updated_at": str(prop.updated_at) if prop.updated_at else None,
+    }
+
+    def _loan_status_rank(loan):
+        if getattr(loan, "is_current_servicer", False):
+            return 0
+        if str(getattr(loan, "status", "") or "").upper() == "OPEN":
+            return 1
+        return 2
+
+    loan_snapshot = []
+    ordered_loans = sorted(
+        prop.loans,
+        key=lambda loan: (
+            _loan_status_rank(loan),
+            getattr(loan, "servicer_sequence", None) if getattr(loan, "servicer_sequence", None) is not None else 999,
+            getattr(loan, "servicer_start_date", None) or getattr(loan, "origination_date", None) or "",
+            getattr(loan, "id", 0) or 0,
+        ),
+    )
+    for index, loan in enumerate(ordered_loans, start=1):
+        loan_snapshot.append({
+            "sequence": index,
+            "id": loan.id,
+            "lender": loan.lender_name,
+            "account_number": loan.account_number,
+            "loan_product": loan.loan_product,
+            "loan_type": loan.loan_type,
+            "status": loan.status,
+            "is_current_servicer": loan.is_current_servicer,
+            "loan_group_id": loan.loan_group_id,
+            "servicer_sequence": loan.servicer_sequence,
+            "servicer_start_date": loan.servicer_start_date,
+            "servicer_end_date": loan.servicer_end_date,
+            "transfer_reason": loan.transfer_reason,
+            "closed_date": loan.closed_date,
+            "closure_reason": loan.closure_reason,
+            "replacement_loan_id": loan.replacement_loan_id,
+            "original_amount": loan.original_amount,
+            "current_balance": current_loan_balance(loan),
+            "stored_current_balance": loan.current_balance,
+            "current_balance_source": loan.current_balance_source,
+            "current_balance_as_of": loan.current_balance_as_of,
+            "current_balance_verified": loan.current_balance_verified,
+            "interest_rate": loan.interest_rate,
+            "rate_note": loan.rate_note,
+            "monthly_payment": loan.monthly_payment,
+            "estimated_total_monthly_payment": loan.estimated_total_monthly_payment,
+            "extra_monthly_payment": loan.extra_monthly_payment,
+            "loan_term_years": loan.loan_term_years,
+            "origination_date": loan.origination_date,
+            "maturity_date": loan.maturity_date,
+            "original_ltv": loan.original_ltv,
+            "borrowers": loan.borrowers,
+            "principal_due": loan.principal_due,
+            "interest_due": loan.interest_due,
+            "statement_date": loan.statement_date,
+            "payment_due_date": loan.payment_due_date,
+            "interest_paid_ytd": loan.interest_paid_ytd,
+            "principal_paid_ytd": loan.principal_paid_ytd,
+            "projected_principal_fy": loan.projected_principal_fy,
+            "projected_interest_fy": loan.projected_interest_fy,
+            "escrow_included": loan.escrow_included,
+            "escrow_amount": loan.escrow_amount,
+            "monthly_property_tax_escrow": loan.monthly_property_tax_escrow,
+            "monthly_insurance_escrow": loan.monthly_insurance_escrow,
+            "monthly_mortgage_insurance": loan.monthly_mortgage_insurance,
+            "monthly_other_escrow": loan.monthly_other_escrow,
+            "source_document_id": loan.source_document_id,
+            "source_type": loan.source_type,
+            "import_status": loan.import_status,
+        })
+
+    usage_timeline = [
+        {
+            "id": period.id,
+            "usage_type": period.usage_type,
+            "start_date": period.start_date,
+            "end_date": period.end_date,
+            "fmv_at_start": period.fmv_at_start,
+            "monthly_rent": period.monthly_rent,
+            "vacancy_allowance": period.vacancy_allowance,
+            "property_management_fee": period.property_management_fee,
+            "accumulated_depreciation_at_start": period.accumulated_depreciation_at_start,
+            "suspended_losses_at_start": period.suspended_losses_at_start,
+            "notes": period.notes,
+        }
+        for period in getattr(prop, "usage_periods", []) or []
+    ]
+
+    rental_period_snapshot = [
+        {
+            "id": period.id,
+            "tenant_name": period.tenant_name,
+            "start_year": period.start_year,
+            "start_month": period.start_month,
+            "end_year": period.end_year,
+            "end_month": period.end_month,
+            "monthly_rent": period.monthly_rent,
+            "notes": period.notes,
+        }
+        for period in getattr(prop, "rental_periods", []) or []
+    ]
+
+    annual_expense_snapshot = [
+        _annual_expense_out(expense)
+        for expense in getattr(prop, "annual_expenses", []) or []
+    ]
+
+    loan_yearly_history = []
+    for loan in ordered_loans:
+        tracking = _loan_paydown_tracking(loan, prop)
+        for row in tracking.get("rows", []):
+            loan_yearly_history.append({
+                "id": f"{loan.id}:{row.get('rowKey') or row.get('year')}",
+                "loan_id": loan.id,
+                "loan_order": next((item["sequence"] for item in loan_snapshot if item["id"] == loan.id), None),
+                "lender": loan.lender_name,
+                "account_number": loan.account_number,
+                "loan_status": loan.status,
+                "year": row.get("year"),
+                "year_label": row.get("yearLabel"),
+                "is_projection": bool(row.get("isFullYearProjection")),
+                "start_balance": row.get("startBalance"),
+                "principal_paid": row.get("principalPaid"),
+                "scheduled_principal": row.get("scheduledPrincipal"),
+                "top_up": row.get("topUp"),
+                "interest_paid": row.get("interestPaid"),
+                "end_balance": row.get("endBalance"),
+                "source": row.get("sourceDisplay") or row.get("sourceLabel") or row.get("source"),
+                "issue_count": row.get("issueCount", 0),
+                "comments": row.get("comments"),
+            })
+
+    depreciation_asset_snapshot = [
+        {
+            "id": asset.id,
+            "asset_type": asset.asset_type,
+            "description": asset.description,
+            "placed_in_service_date": asset.placed_in_service_date,
+            "cost_basis": asset.cost_basis,
+            "land_portion": asset.land_portion,
+            "method": asset.method,
+            "recovery_period": asset.recovery_period,
+            "prior_depreciation": asset.prior_depreciation,
+            "notes": asset.notes,
+        }
+        for asset in getattr(prop, "depreciation_assets", []) or []
+    ]
+
     # Compute duplicate flags across all docs for this property
     from routers.documents import detect_duplicate_ids
     _dup_ids = detect_duplicate_ids(prop.documents)
@@ -8415,6 +9407,39 @@ def get_raw_data(
             "is_duplicate": d.id in _dup_ids,
         })
 
+    all_documents = []
+    for d in prop.documents:
+        extracted = {}
+        if d.extracted_data:
+            try:
+                extracted = json.loads(d.extracted_data)
+            except Exception:
+                extracted = {}
+        doc_year = d.statement_year or extracted.get("tax_year") or extracted.get("statement_year")
+        if isinstance(doc_year, str):
+            match = re.search(r"(?:19|20)\d{2}", doc_year)
+            doc_year = int(match.group(0)) if match else None
+        if purchase_year and doc_year and doc_year < purchase_year:
+            continue
+        all_documents.append({
+            "id": d.id,
+            "record_uuid": ensure_document_record_uuid(d),
+            "category": d.doc_category,
+            "display_name": d.display_name or d.original_filename or d.filename,
+            "original_filename": d.original_filename or d.filename,
+            "file_type": d.file_type,
+            "file_size": d.file_size,
+            "statement_year": doc_year,
+            "statement_date": extracted.get("statement_date"),
+            "period_type": d.period_type or extracted.get("period_type"),
+            "period_start": d.period_start or extracted.get("period_start"),
+            "period_end": d.period_end or extracted.get("period_end"),
+            "loan_account_number": d.loan_account_number or extracted.get("account_number"),
+            "upload_date": str(d.upload_date) if d.upload_date else None,
+            "is_duplicate": d.id in _dup_ids,
+            "extracted_field_count": len(extracted) if isinstance(extracted, dict) else 0,
+        })
+
     for document in getattr(prop, "documents", []) or []:
         ensure_document_record_uuid(document)
     for entry in tax_entries:
@@ -8424,6 +9449,14 @@ def get_raw_data(
     source_docs = {d.id: d for d in getattr(prop, "documents", []) or []}
 
     return {
+        "property_snapshot": property_snapshot,
+        "loan_snapshot": loan_snapshot,
+        "loan_yearly_history": loan_yearly_history,
+        "usage_timeline": usage_timeline,
+        "rental_periods": rental_period_snapshot,
+        "annual_expenses": annual_expense_snapshot,
+        "depreciation_assets": depreciation_asset_snapshot,
+        "all_documents": all_documents,
         "duplicate_validations": duplicate_validations,
         "tax_entries": [
             {
@@ -9042,6 +10075,41 @@ def link_tax_entry(
 
 # ── Loan endpoints ─────────────────────────────────────────────────────────────
 
+@router.get("/{prop_id}/loans/{loan_id}/documents")
+def get_loan_documents(
+    prop_id: int,
+    loan_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Return statements matched to a loan; all matching stays backend-owned."""
+    prop = _get_accessible_property(prop_id, db, current_user)
+    loan = next((item for item in prop.loans if item.id == loan_id), None)
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    inventory = _loan_document_inventory(loan, prop)
+    documents = [
+        {**document, "year": year}
+        for year, year_documents in inventory.items()
+        for document in year_documents
+    ]
+    documents.sort(
+        key=lambda document: (
+            int(document.get("year") or 0),
+            str(document.get("statementDate") or ""),
+            str(document.get("uploadedAt") or ""),
+            int(document.get("documentId") or 0),
+        ),
+        reverse=True,
+    )
+    return {
+        "loanId": loan.id,
+        "accountNumber": loan.account_number,
+        "count": len(documents),
+        "documents": documents,
+    }
+
 @router.post("/{prop_id}/loans", response_model=LoanOut)
 def add_loan(
     prop_id: int,
@@ -9161,7 +10229,7 @@ def group_servicing_transfer(
     previous.servicer_start_date = previous.servicer_start_date or previous.origination_date
     previous.servicer_end_date = parsed_closed.isoformat()
     previous.closed_date = parsed_closed.isoformat()
-    previous.status = "CLOSED" if same_original_loan else "REFINANCED"
+    previous.status = "CLOSED"
     previous.closure_reason = "Servicing transfer" if same_original_loan else "Refinanced"
     previous.transfer_reason = "Servicing transfer" if same_original_loan else "Refinanced"
     previous.is_current_servicer = False
@@ -9558,27 +10626,33 @@ def get_debt(
     }
 
     today = date.today()
-    loans = _logical_debt_waterfalls(
+    loans = _resolved_debt_metadata(prop, _logical_debt_waterfalls(
         prop,
         interest_by_year,
         tax_return_interest_by_year,
         interest_by_account,
         today,
-    )
-    total_balance = round(sum(float(l.get("current_balance") or 0) for l in loans), 2)
-    total_original = round(sum(float(l.get("original_amount") or 0) for l in loans), 2)
-    total_principal = round(sum(float(l.get("principal_paid") or 0) for l in loans), 2)
-    total_interest = round(sum(float(l.get("accumulated_interest") or 0) for l in loans), 2)
+    ))
+    active_loans = [
+        loan for loan in loans
+        if str(loan.get("status") or "OPEN").upper() not in CLOSED_LOAN_STATUSES
+    ]
+    total_balance = round(sum(float(l.get("current_balance") or 0) for l in active_loans), 2)
+    total_original = round(sum(float(l.get("original_amount") or 0) for l in active_loans), 2)
+    total_principal = round(sum(float(l.get("principal_paid") or 0) for l in active_loans), 2)
+    total_interest = round(sum(float(l.get("accumulated_interest") or 0) for l in active_loans), 2)
     row_interest = round(sum(
         float(row.get("interestPaid") or 0)
-        for loan in loans
+        for loan in active_loans
         for row in ((loan.get("paydown") or {}).get("rows") or [])
         if not row.get("isFullYearProjection")
     ), 2)
 
     return {
         "loans": loans,
+        "refinanceChains": _refinance_chain_payload(loans),
         "yearlyPrincipalInterestRows": _loan_yearly_reporting_rows(loans),
+        "paymentHistoryRows": _loan_payment_history_rows(prop),
         "portfolio": {
             "totalBalance": total_balance,
             "totalBalanceDisplay": format_currency(total_balance),
@@ -9586,8 +10660,8 @@ def get_debt(
             "paidToDateDisplay": format_currency(total_principal),
             "interestToDate": total_interest,
             "interestToDateDisplay": format_currency(total_interest),
-            "loanCount": len(loans),
-            "loanCountDisplay": str(len(loans)),
+            "loanCount": len(active_loans),
+            "loanCountDisplay": str(len(active_loans)),
             "originalAmount": total_original,
             "originalAmountDisplay": format_currency(total_original),
         },
@@ -9596,7 +10670,7 @@ def get_debt(
             "total_accumulated_interest": total_interest,
         },
         "assertions": {
-            "L3_totalBalanceEqualsSumLoanBalances": abs(total_balance - sum(float(l.get("current_balance") or 0) for l in loans)) <= 1,
+            "L3_totalBalanceEqualsSumLoanBalances": abs(total_balance - sum(float(l.get("current_balance") or 0) for l in active_loans)) <= 1,
             "L8_interestToDateEqualsSumLoanInterest": abs(total_interest - row_interest) <= 1,
             "interestToDateFromRows": row_interest,
         },
@@ -9972,6 +11046,7 @@ def dashboard_summary(
 
     properties_detail = []
     total_monthly_rent = 0.0
+    total_monthly_operating_expenses = 0.0
     total_annual_noi = 0.0
     total_monthly_cf = 0.0
     for p in props:
@@ -9979,6 +11054,7 @@ def dashboard_summary(
         m = canonical["raw"]
         metric_map = canonical["metrics"]
         total_monthly_rent += m["effective_rent"]
+        total_monthly_operating_expenses += m["monthly_expenses"]
         total_annual_noi += m["annual_noi"]
         total_monthly_cf += m["monthly_cash_flow"]
         _orig_loans = [l for l in p.loans if (l.original_amount or 0) > 0]
@@ -10056,46 +11132,8 @@ def dashboard_summary(
 
     total_cap_rate = round(total_annual_noi / total_market_value * 100, 2) if total_market_value else 0
     prop_ids = {p.id for p in props}
-    yearly_trends_by_year: dict[int, dict] = {}
-    for entry in tax_entries:
-        if entry.property_id not in prop_ids:
-            continue
-        row = yearly_trends_by_year.setdefault(entry.tax_year, {
-            "year": entry.tax_year,
-            "rental_income": 0.0,
-            "mortgage_interest": 0.0,
-            "property_taxes": 0.0,
-            "operating_expenses": 0.0,
-            "depreciation": 0.0,
-            "net_income": 0.0,
-            "properties": [],
-        })
-        row["rental_income"] += entry.rents_received or 0.0
-        row["mortgage_interest"] += entry.mortgage_interest or 0.0
-        row["property_taxes"] += entry.property_taxes or 0.0
-        row["operating_expenses"] += entry.total_expenses or 0.0
-        row["depreciation"] += entry.depreciation or 0.0
-        row["net_income"] += entry.net_income or 0.0
-        row["properties"].append({
-            "property_id": entry.property_id,
-            "rental_income": round(entry.rents_received or 0.0, 2),
-            "mortgage_interest": round(entry.mortgage_interest or 0.0, 2),
-            "property_taxes": round(entry.property_taxes or 0.0, 2),
-            "operating_expenses": round(entry.total_expenses or 0.0, 2),
-            "depreciation": round(entry.depreciation or 0.0, 2),
-            "net_income": round(entry.net_income or 0.0, 2),
-        })
-    yearly_trends = []
-    for row in sorted(yearly_trends_by_year.values(), key=lambda r: r["year"]):
-        yearly_trends.append({
-            **row,
-            "rental_income": round(row["rental_income"], 2),
-            "mortgage_interest": round(row["mortgage_interest"], 2),
-            "property_taxes": round(row["property_taxes"], 2),
-            "operating_expenses": round(row["operating_expenses"], 2),
-            "depreciation": round(row["depreciation"], 2),
-            "net_income": round(row["net_income"], 2),
-        })
+    yearly_trends = _tax_yearly_trends(tax_entries, prop_ids)
+    income_expense_trends = _portfolio_income_expense_yearly_trends(props)
 
     def _is_primary_row(row):
         return (row.get("usage_type") or "Rental").lower() == "primary"
@@ -10169,6 +11207,11 @@ def dashboard_summary(
         "portfolio_ltv": round(portfolio_ltv, 2),
         "portfolio_equity_pct": round(((rental_market_value - rental_loan_balance) / rental_market_value * 100) if rental_market_value else 0, 2),
         "total_monthly_rent": round(rental_monthly_rent, 2),
+        "total_monthly_operating_expenses": round(
+            sum(p.get("monthly_expenses") or 0 for p in rental_details),
+            2,
+        ),
+        "total_monthly_noi": round(rental_annual_noi / 12, 2),
         "total_monthly_mortgage": round(rental_monthly_mortgage, 2),
         "total_monthly_cash_flow": round(rental_monthly_cf, 2),
         "total_annual_noi": round(rental_annual_noi, 2),
@@ -10236,6 +11279,8 @@ def dashboard_summary(
         "dashboard": dashboard_model,
         "total_properties": total_properties,
         "total_monthly_rent": round(total_monthly_rent, 2),
+        "total_monthly_operating_expenses": round(total_monthly_operating_expenses, 2),
+        "total_monthly_noi": round(total_annual_noi / 12, 2),
         "total_market_value": round(total_market_value, 2),
         "total_loan_balance": round(total_loan_balance, 2),
         "total_monthly_mortgage": round(total_monthly_mortgage, 2),
@@ -10256,5 +11301,124 @@ def dashboard_summary(
         "portfolio_dscr": portfolio_dscr,
         "annual_debt_service": round(annual_debt_service, 2),
         "yearly_trends": yearly_trends,
+        "income_expense_trends": income_expense_trends,
         "properties": properties_detail,
     }
+
+
+@router.get("/analysis/portfolio")
+def portfolio_analysis(
+    selected_property_ids: str = "",
+    selection_explicit: bool = False,
+    include_primary_residence: bool = True,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    comparison_period: Optional[str] = None,
+    accounting_basis: str = "cash",
+    active_loan_only: bool = True,
+    loan_status: str = "Active",
+    tax_year: Optional[int] = None,
+    scenario_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Return one versioned, traceable analysis contract for portfolio pages.
+
+    Explicit property IDs define the scope and therefore override the primary
+    residence toggle.  Without an explicit selection, the toggle determines
+    whether primary residences are included in ownership and debt metrics.
+    Rental-only metrics still exclude primary-residence activity by definition.
+    """
+    own_props = db.query(models.Property).filter(models.Property.owner_id == current_user.id).all()
+    shared_owner_ids = [
+        share.owner_id
+        for share in db.query(models.UserSharing).filter(
+            models.UserSharing.shared_with_id == current_user.id
+        ).all()
+    ]
+    shared_props = (
+        db.query(models.Property).filter(models.Property.owner_id.in_(shared_owner_ids)).all()
+        if shared_owner_ids else []
+    )
+    all_props = own_props + shared_props
+    requested_ids = {
+        int(item) for item in (selected_property_ids or "").split(",")
+        if item.strip().isdigit()
+    }
+    explicit_selection = bool(requested_ids) or selection_explicit
+    if explicit_selection:
+        props = [prop for prop in all_props if prop.id in requested_ids]
+    elif include_primary_residence:
+        props = list(all_props)
+    else:
+        props = [
+            prop for prop in all_props
+            if str(prop.usage_type or "Rental").lower() != "primary"
+        ]
+
+    selected_year = int(tax_year or date.today().year)
+    normalized_properties: List[Dict[str, Any]] = []
+    debts: Dict[int, Dict[str, Any]] = {}
+    schedules: Dict[int, Dict[str, Any]] = {}
+    for prop in props:
+        canonical = _canonical_property_metric_row(prop, db, current_user)
+        raw = canonical.get("raw") or {}
+        normalized_properties.append({
+            "id": prop.id,
+            "property_uid": prop.property_uid,
+            "name": prop.name or _default_property_name(prop.address, prop.id),
+            "address": prop.address,
+            "city": prop.city,
+            "state": prop.state,
+            "usage_type": prop.usage_type or "Rental",
+            "market_value": _schedule_e_number(prop.market_value),
+            "purchase_price": _schedule_e_number(prop.purchase_price),
+            "down_payment": _schedule_e_number(prop.down_payment),
+            "closing_costs": _schedule_e_number(prop.closing_costs),
+            "monthly_rent": _schedule_e_number(prop.monthly_rent),
+            "occupancy_rate": _schedule_e_number(prop.occupancy_rate),
+            "metrics": canonical.get("metrics") or {},
+            **raw,
+        })
+        debts[prop.id] = get_debt(prop.id, db, current_user)
+        schedules[prop.id] = get_schedule_e_capture(prop.id, selected_year, db, current_user)
+
+    yearly_trends = _portfolio_income_expense_yearly_trends(props)
+    start_year = _parse_iso_date(start_date).year if _parse_iso_date(start_date) else None
+    end_year = _parse_iso_date(end_date).year if _parse_iso_date(end_date) else None
+    if start_year is not None:
+        yearly_trends = [row for row in yearly_trends if int(row.get("year") or 0) >= start_year]
+    if end_year is not None:
+        yearly_trends = [row for row in yearly_trends if int(row.get("year") or 0) <= end_year]
+
+    filter_context = {
+        "selectedPropertyIds": [prop.id for prop in props],
+        "requestedPropertyIds": sorted(requested_ids),
+        "explicitSelection": explicit_selection,
+        "includePrimaryResidence": include_primary_residence,
+        "dateRange": {"start": start_date, "end": end_date},
+        "comparisonPeriod": comparison_period,
+        "accountingBasis": accounting_basis,
+        "activeLoanOnly": active_loan_only,
+        "loanStatus": loan_status,
+        "taxYear": selected_year,
+        "scenarioId": scenario_id,
+        "availableProperties": [
+            {
+                "id": prop.id,
+                "name": prop.name or _default_property_name(prop.address, prop.id),
+                "address": prop.address,
+                "usageType": prop.usage_type or "Rental",
+                "isPrimary": str(prop.usage_type or "Rental").lower() == "primary",
+            }
+            for prop in all_props
+        ],
+    }
+    return build_portfolio_analysis(
+        properties=normalized_properties,
+        debts=debts,
+        schedules=schedules,
+        yearly_trends=yearly_trends,
+        selected_year=selected_year,
+        filter_context=filter_context,
+    )

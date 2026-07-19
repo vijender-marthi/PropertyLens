@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import re
 import uuid
 from collections import defaultdict
@@ -14,6 +15,15 @@ from sqlalchemy.orm import Session
 import models
 from services.snapshot_store import ensure_document_record_uuid
 from services.property_setup_defaults import apply_rental_available_from_default, rental_available_before_purchase
+from services.property_valuation import apply_default_market_price, apply_default_settlement_total
+from services.expense_source_engine import replace_escrow_activities, rebuild_annual_expenses, metric_dto
+from services.loan_lifecycle import (
+    SETUP_DELINKED_TAG,
+    classify_document,
+    lifecycle_dto,
+    resolve_property_lifecycle,
+)
+from services.canonical_loan import apply_periodic_loan_evidence, resolve_canonical_loan
 
 
 def detect_duplicate_ids(doc_objects) -> set:
@@ -72,6 +82,14 @@ from routers.properties import (
     import_tax_return,
 )
 from services.document_parser import parse_document
+from services.document_conversion import MarkItDownConverter
+from services.property_tax_parser import (
+    PARSER_NAME as PROPERTY_TAX_PARSER_NAME,
+    PARSER_VERSION as PROPERTY_TAX_PARSER_VERSION,
+    classify_property_tax_document,
+    parse_property_tax_document,
+    validate_property_tax_document,
+)
 from services.formatters import format_currency, format_interest_rate, format_percent
 from services.document_config import (
     DOCUMENT_TYPE_CONFIG,
@@ -82,6 +100,8 @@ from services.document_config import (
 )
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+property_tax_router = APIRouter(prefix="/api/properties", tags=["property taxes"])
+property_tax_logger = logging.getLogger("propertylens.property_tax_pipeline")
 
 
 class BatchDeleteRequest(BaseModel):
@@ -106,6 +126,7 @@ class SetupImportApplyRequest(BaseModel):
     selected_purchase_price_components: Optional[List[str]] = None
     selected_loan_fields: List[str] = []
     confirm_address_match: bool = False
+    address_override: bool = False
 
 
 class LoanStatementApplyRequest(BaseModel):
@@ -127,6 +148,12 @@ class ExpenseFieldDocumentApplyRequest(BaseModel):
     year: int
     field: str
     address_override: bool = False
+
+
+class PropertyTaxCorrectionRequest(BaseModel):
+    field_path: str
+    value: Any
+    reason: Optional[str] = None
 
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -176,7 +203,32 @@ def _normalize_loan_document_extracted(category: str, extracted: Dict[str, Any])
     elif category == "mortgage_statement":
         if data.get("current_balance_display") is None and data.get("current_balance") is not None:
             data["current_balance_display"] = format_currency(data.get("current_balance") or 0)
+    elif category in {"loan_disclosure", "closing_statement"}:
+        if not data.get("account_number") and data.get("loan_id"):
+            data["account_number"] = str(data.get("loan_id")).strip()
+        if data.get("original_amount") is None and data.get("loan_amount") is not None:
+            data["original_amount"] = data.get("loan_amount")
+        if data.get("current_balance") is None and data.get("original_amount") is not None:
+            data["current_balance"] = data.get("original_amount")
+            data["current_balance_source"] = "loan_disclosure_initial_balance"
+            data["current_balance_verified"] = False
     return data
+
+
+def _is_supported_loan_document(category: str, extracted: Dict[str, Any]) -> bool:
+    if category in {"mortgage_statement", "1098", "loan_disclosure"}:
+        return True
+    if category != "closing_statement":
+        return False
+    data = _normalize_loan_document_extracted(category, extracted)
+    has_debt_amount = _to_float_or_none(data.get("original_amount")) not in (None, 0)
+    has_loan_term = any(data.get(key) not in (None, "") for key in (
+        "account_number",
+        "interest_rate",
+        "monthly_payment",
+        "loan_term_years",
+    ))
+    return has_debt_amount and has_loan_term
 
 
 def _apply_loan_document_overrides(category: str, extracted: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -530,9 +582,29 @@ def _address_validation(prop: Optional[models.Property], extracted: Dict[str, An
     }
 
 
+def _closing_address_validation(document: models.Document, extracted: Dict[str, Any]) -> Dict[str, Any]:
+    validation = _address_validation(getattr(document, "property", None), extracted)
+    override = extracted.get("_address_override") or {}
+    prop = getattr(document, "property", None)
+    normalized_property = validation.get("normalizedPropertyAddress") or ""
+    override_matches_property = (
+        str(override.get("propertyId") or "") == str(getattr(prop, "id", "") or "")
+        and override.get("normalizedPropertyAddress") == normalized_property
+    )
+    if validation.get("status") == "document_address_missing" and override_matches_property:
+        return {
+            **validation,
+            "status": "manual_override",
+            "canContinue": True,
+            "overrideApplied": True,
+            "overrideAppliedAt": override.get("appliedAt"),
+            "overrideAppliedBy": override.get("appliedBy"),
+        }
+    return validation
+
+
 def _purchase_price_selection_payload(extracted: Dict[str, Any], setup_import_role: str = "closing_document") -> Optional[Dict[str, Any]]:
     sale_price = _to_float(extracted.get("sale_price") or extracted.get("purchase_price"))
-    settlement_total = _to_float(extracted.get("settlement_total_amount"))
 
     components = []
     if sale_price:
@@ -545,18 +617,6 @@ def _purchase_price_selection_payload(extracted: Dict[str, Any], setup_import_ro
             "sourceField": "purchase_price",
             "description": "Contract sale price from the settlement statement.",
         })
-    if settlement_total and sale_price and round(settlement_total - sale_price, 2) != 0:
-        adjustment_value = round(settlement_total - sale_price, 2)
-        components.append({
-            "id": "settlement_adjustment",
-            "label": "Closing costs / settlement adjustment",
-            "value": adjustment_value,
-            "display": format_currency(adjustment_value),
-            "selected": False,
-            "sourceField": "settlement_purchase_price_adjustment",
-            "description": "Shown for closing costs. It is not added to Purchase price.",
-        })
-
     if not components:
         return None
 
@@ -568,9 +628,6 @@ def _purchase_price_selection_payload(extracted: Dict[str, Any], setup_import_ro
         "selectedTotal": selected_total,
         "selectedTotalDisplay": format_currency(selected_total),
     }
-    if settlement_total:
-        payload["settlementTotal"] = round(settlement_total, 2)
-        payload["settlementTotalDisplay"] = format_currency(settlement_total)
     if extracted.get("settlement_debit_subtotal") is not None:
         payload["debitSubtotalDisplay"] = format_currency(extracted.get("settlement_debit_subtotal"))
     if extracted.get("settlement_due_to_buyer") is not None:
@@ -586,7 +643,7 @@ def _settlement_calculations_payload(extracted: Dict[str, Any]) -> List[Dict[str
         ("settlement_due_to_buyer", "Due to buyer"),
         ("settlement_debit_total", "Buyer debit total"),
         ("settlement_credit_total", "Buyer credit total"),
-        ("settlement_total_amount", "Final settlement total"),
+        ("settlement_total_amount", "Settlement accounting total"),
         ("settlement_purchase_price_adjustment", "Settlement adjustment"),
     ]:
         if extracted.get(key) is not None:
@@ -613,22 +670,23 @@ def _closing_setup_review_payload(document: models.Document, markdown: str = "")
     extracted = _safe_extracted_data(document)
     setup_import_role = extracted.get("setup_import_role") or extracted.get("_setup_import_role") or "closing_document"
     review_extracted = dict(extracted)
-    current_value = extracted.get("settlement_total_amount") or extracted.get("purchase_price")
-    settlement_total = _to_float(extracted.get("settlement_total_amount"))
     home_purchase_price = _to_float(extracted.get("sale_price") or extracted.get("purchase_price"))
     explicit_closing_costs = extracted.get("closing_costs")
     if home_purchase_price:
         review_extracted["purchase_price"] = round(home_purchase_price, 2)
-    if settlement_total and home_purchase_price:
-        review_extracted["settlement_purchase_price_adjustment"] = round(settlement_total - home_purchase_price, 2)
     if explicit_closing_costs is not None:
         review_extracted["closing_costs"] = explicit_closing_costs
-    elif settlement_total and home_purchase_price:
-        review_extracted["closing_costs"] = round(settlement_total - home_purchase_price, 2)
-    if current_value is not None:
-        review_extracted["settlement_current_value"] = current_value
-    if extracted.get("purchase_date"):
-        review_extracted["settlement_current_value_date"] = extracted.get("purchase_date")
+    settlement_accounting_total = extracted.get("settlement_debit_total")
+    if settlement_accounting_total is None:
+        settlement_accounting_total = extracted.get("settlement_credit_total")
+    if settlement_accounting_total is not None:
+        review_extracted["settlement_accounting_total"] = settlement_accounting_total
+    parsed_purpose = str(extracted.get("transaction_purpose") or "").upper()
+    is_acquisition = parsed_purpose == "PURCHASE" or (
+        parsed_purpose in {"", "UNKNOWN"}
+        and home_purchase_price is not None
+        and extracted.get("prior_loan_payoff_amount") is None
+    )
     property_fields = [
         _setup_field(review_extracted, "property_address", "address", "Street address"),
         _setup_field(review_extracted, "property_city", "city", "City"),
@@ -636,14 +694,19 @@ def _closing_setup_review_payload(document: models.Document, markdown: str = "")
         _setup_field(review_extracted, "property_zip", "zip_code", "ZIP"),
         _setup_field(review_extracted, "purchase_date", "purchase_date", "Purchase date", "date", 0.95),
         _setup_field(review_extracted, "purchase_price", "purchase_price", "Purchase price", "currency", 0.95),
-        _setup_field(review_extracted, "settlement_current_value", "market_value", "Current value", "currency", 0.9),
-        _setup_field(review_extracted, "settlement_current_value_date", "market_value_updated", "Valuation date", "date", 0.85),
         _setup_field(review_extracted, "down_payment", "down_payment", "Down payment", "currency", 0.88),
         _setup_field(review_extracted, "closing_costs", "closing_costs", "Closing costs", "currency", 0.84),
+        _setup_field(review_extracted, "deposit_paid_before_closing", "deposit_paid_before_closing", "Deposit paid before closing", "currency", 0.94),
+        _setup_field(review_extracted, "total_due_from_borrower", "total_due_from_borrower", "Total due from borrower", "currency", 0.99),
+        _setup_field(review_extracted, "total_paid_on_behalf_of_borrower", "total_paid_on_behalf_of_borrower", "Total paid already/on behalf", "currency", 0.96),
+        _setup_field(review_extracted, "settlement_accounting_total", "settlement_total_amount", "Settlement accounting total", "currency", 0.99),
     ]
-    property_fields = [field for field in property_fields if field]
-    purchase_price_selection = _purchase_price_selection_payload(extracted, setup_import_role)
-    settlement_calculations = _settlement_calculations_payload(extracted)
+    property_fields = [
+        field for field in property_fields
+        if field and (is_acquisition or field["targetKey"] in {"address", "city", "state", "zip_code"})
+    ]
+    purchase_price_selection = _purchase_price_selection_payload(review_extracted, setup_import_role)
+    settlement_calculations = _settlement_calculations_payload(review_extracted)
 
     original_amount = extracted.get("original_amount") or 0
     if setup_import_role == "settlement_document":
@@ -717,21 +780,31 @@ def _closing_setup_review_payload(document: models.Document, markdown: str = "")
         "loanDetected": loan_detected,
         "loanDrafts": [loan_draft] if loan_draft else [],
         "loanFields": loan_fields,
-        "addressValidation": _address_validation(getattr(document, "property", None), extracted),
+        "addressValidation": _closing_address_validation(document, extracted),
         "warnings": warnings,
     }
 
 
 def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]:
-    extracted = _safe_extracted_data(document)
+    extracted = _normalize_loan_document_extracted(document.doc_category, _safe_extracted_data(document))
+    is_disclosure = document.doc_category in {"loan_disclosure", "closing_statement"}
     current_balance = extracted.get("current_balance")
-    escrow_total = extracted.get("escrow_amount")
-    if not escrow_total:
-        component_total = _escrow_component_total_from_mapping(extracted)
-        escrow_total = component_total if component_total > 0 else escrow_total
+    escrow_total = _normalized_monthly_escrow_total(extracted)
+    estimated_total = _normalized_total_monthly_payment(extracted)
     statement_fields = [
+        _setup_field(extracted, "lender_name", "lender_name", "Lender", "text", 0.94),
         _setup_field(extracted, "account_number", "account_number", "Loan account number", "text", 0.98),
-        _setup_field(extracted, "current_balance", "current_balance", "Current balance", "currency", 0.92),
+        _setup_field(extracted, "original_amount", "original_amount", "Original loan amount", "currency", 0.96) if is_disclosure else None,
+        _setup_field(extracted, "current_balance", "current_balance", "Opening balance", "currency", 0.9) if is_disclosure else _setup_field(extracted, "current_balance", "current_balance", "Current balance", "currency", 0.92),
+        _setup_field(extracted, "interest_rate", "interest_rate", "Interest rate", "percent", 0.95),
+        _setup_field(extracted, "loan_type", "loan_type", "Loan type", "text", 0.94) if is_disclosure else None,
+        _setup_field(extracted, "loan_product", "loan_product", "Loan product", "text", 0.88) if is_disclosure else None,
+        _setup_field(extracted, "loan_term_years", "loan_term_years", "Term", "text", 0.95) if is_disclosure else None,
+        _setup_field(extracted, "monthly_payment", "monthly_payment", "Monthly principal & interest", "currency", 0.95),
+        _setup_field(extracted, "principal_due", "principal_due", "Current payment principal", "currency", 0.96),
+        _setup_field(extracted, "interest_due", "interest_due", "Current payment interest", "currency", 0.96),
+        _setup_field(extracted, "principal_paid_ytd", "principal_paid_ytd", "Principal paid YTD", "currency", 0.98),
+        _setup_field(extracted, "interest_paid_ytd", "interest_paid_ytd", "Interest paid YTD", "currency", 0.98),
         _setup_field(extracted, "monthly_property_tax_escrow", "monthly_property_tax_escrow", "Monthly property tax escrow", "currency", 0.84),
         _setup_field(extracted, "monthly_insurance_escrow", "monthly_insurance_escrow", "Monthly insurance escrow", "currency", 0.84),
         _setup_field(extracted, "monthly_mortgage_insurance", "monthly_mortgage_insurance", "Monthly mortgage insurance", "currency", 0.8),
@@ -739,6 +812,8 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         _setup_field(extracted, "escrow_amount", "escrow_amount", "Total monthly escrow", "currency", 0.84),
         _setup_field(extracted, "estimated_total_monthly_payment", "estimated_total_monthly_payment", "Estimated total monthly payment", "currency", 0.8),
         _setup_field(extracted, "statement_date", "statement_date", "Statement date", "date", 0.9),
+        _setup_field(extracted, "payment_due_date", "payment_due_date", "Payment due date", "date", 0.9),
+        _setup_field(extracted, "maturity_date", "maturity_date", "Maturity date", "date", 0.9),
         _setup_field(extracted, "origination_date", "origination_date", "Mortgage origination date", "date", 0.9),
         _setup_field(extracted, "mortgage_acquisition_date", "servicer_start_date", "Mortgage acquisition date", "date", 0.94),
     ]
@@ -750,7 +825,7 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         "monthly_mortgage_insurance": extracted.get("monthly_mortgage_insurance") or "",
         "monthly_other_escrow": extracted.get("monthly_other_escrow") or "",
         "escrow_amount": escrow_total or "",
-        "estimated_total_monthly_payment": extracted.get("estimated_total_monthly_payment") or extracted.get("monthly_payment") or "",
+        "estimated_total_monthly_payment": estimated_total or "",
         "statement_date": extracted.get("statement_date") or "",
         "origination_date": extracted.get("origination_date") or "",
         "servicer_start_date": extracted.get("mortgage_acquisition_date") or "",
@@ -760,9 +835,9 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         "sourceDocumentType": document.doc_category,
         "importStatus": "review_required",
         "importStatusLabel": "Statement imported · Review values",
-        "current_balance_source": "mortgage_statement_reported_balance",
-        "current_balance_source_label": "Reported from mortgage statement",
-        "current_balance_verification_status": "Reported",
+        "current_balance_source": "loan_disclosure_initial_balance" if is_disclosure else "mortgage_statement_reported_balance",
+        "current_balance_source_label": "Opening balance from loan disclosure" if is_disclosure else "Reported from mortgage statement",
+        "current_balance_verification_status": "Needs latest mortgage statement" if is_disclosure else "Reported",
     }
     return {
         "document": {
@@ -778,7 +853,7 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         "loanMapping": _loan_statement_mapping_payload(getattr(document, "property", None), extracted),
         "loanFields": statement_fields,
         "addressValidation": _address_validation(getattr(document, "property", None), extracted),
-        "warnings": [],
+        "warnings": ["Loan disclosure values establish opening loan terms. Current balance, YTD principal, interest, and escrow require a 1098 or mortgage statement."] if is_disclosure else [],
     }
 
 
@@ -792,11 +867,32 @@ def _escrow_component_total_from_mapping(data: Dict[str, Any]) -> float:
     )
 
 
+def _normalized_monthly_escrow_total(data: Dict[str, Any]) -> float:
+    """Return the single monthly escrow total.
+
+    Some statements provide both a total escrow payment and component lines
+    including mortgage insurance. The total already includes those components,
+    so callers must not add mortgage insurance again.
+    """
+    reported_total = _to_float(data.get("escrow_amount"))
+    component_total = _escrow_component_total_from_mapping(data)
+    return round(reported_total if reported_total > 0 else component_total, 2)
+
+
+def _normalized_total_monthly_payment(data: Dict[str, Any], monthly_pi: Any = None) -> float:
+    reported_total = _to_float(data.get("estimated_total_monthly_payment"))
+    if reported_total > 0:
+        return reported_total
+    pi_payment = _to_float(monthly_pi if monthly_pi is not None else data.get("monthly_payment"))
+    escrow_total = _normalized_monthly_escrow_total(data)
+    return round(pi_payment + escrow_total, 2) if pi_payment > 0 and escrow_total > 0 else pi_payment
+
+
 def _loan_statement_mapping_payload(prop: Optional[models.Property], extracted: Dict[str, Any], selected_loan_id: Optional[int] = None) -> Dict[str, Any]:
     account_number = (extracted.get("account_number") or "").strip()
     loans = list(getattr(prop, "loans", []) or [])
     selected = next((loan for loan in loans if loan.id == selected_loan_id), None) if selected_loan_id else None
-    matched = next((loan for loan in loans if account_number and (loan.account_number or "").strip() == account_number), None)
+    matched = next((loan for loan in loans if _account_numbers_match(loan.account_number, account_number)), None)
     if matched:
         return {
             "accountNumber": account_number,
@@ -804,7 +900,17 @@ def _loan_statement_mapping_payload(prop: Optional[models.Property], extracted: 
             "loanId": matched.id,
             "message": "Statement account number matches an existing loan.",
         }
-    if account_number and selected and (selected.account_number or "").strip() and (selected.account_number or "").strip() != account_number:
+    if account_number and selected and (selected.account_number or "").strip() and not _account_numbers_match(selected.account_number, account_number):
+        purpose = str(extracted.get("transaction_purpose") or extracted.get("loan_purpose") or "").upper()
+        if purpose == "REFINANCE":
+            return {
+                "accountNumber": account_number,
+                "matchType": "refinance_candidate",
+                "loanId": None,
+                "selectedLoanId": selected.id,
+                "selectedAccountNumber": (selected.account_number or "").strip(),
+                "message": "Refinance detected. Applying this document will add the replacement loan and close the prior open loan on the refinance disbursement date.",
+            }
         return {
             "accountNumber": account_number,
             "matchType": "selected_account_mismatch",
@@ -871,6 +977,90 @@ def _to_int(value: Any, fallback: int = 0) -> int:
         return fallback
 
 
+def _normalized_account(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _account_numbers_match(left: Any, right: Any) -> bool:
+    """Match canonical accounts and disclosure IDs carrying a sub-account suffix."""
+    left_account = _normalized_account(left)
+    right_account = _normalized_account(right)
+    if not left_account or not right_account:
+        return False
+    if left_account == right_account:
+        return True
+    shorter, longer = sorted((left_account, right_account), key=len)
+    return len(shorter) >= 8 and longer.startswith(shorter)
+
+
+def _amount_close(left: Any, right: Any, tolerance: float = 1.0) -> bool:
+    left_amount = _to_float(left)
+    right_amount = _to_float(right)
+    return bool(left_amount and right_amount and abs(left_amount - right_amount) <= tolerance)
+
+
+def _same_date(left: Any, right: Any) -> bool:
+    left_date = _parse_date(left)
+    right_date = _parse_date(right)
+    return bool(left_date and right_date and left_date == right_date)
+
+
+def _find_existing_setup_import_loan(prop: models.Property, doc: models.Document, loan_values: Dict[str, Any]) -> Optional[models.Loan]:
+    """Find the purchase loan represented by a closing document import.
+
+    Re-applying a setup/closing document may use a newly uploaded duplicate
+    document, so source_document_id alone is not enough. Prefer exact source
+    linkage, then account number, then the stable purchase-loan fingerprint
+    from closing disclosures: origination date + original amount + rate.
+    """
+    loans = list(getattr(prop, "loans", []) or [])
+    if not loans:
+        return None
+
+    linked = next((
+        loan for loan in loans
+        if getattr(loan, "source_document_id", None) == doc.id
+        and getattr(loan, "import_status", None) in {"review_required", "reviewed", None}
+    ), None)
+    if linked:
+        return linked
+
+    account = _normalized_account(loan_values.get("account_number"))
+    if account:
+        by_account = next((loan for loan in loans if _account_numbers_match(getattr(loan, "account_number", None), account)), None)
+        if by_account:
+            return by_account
+
+    origination_date = loan_values.get("origination_date")
+    original_amount = loan_values.get("original_amount")
+    interest_rate = loan_values.get("interest_rate")
+    candidates = [
+        loan for loan in loans
+        if _same_date(getattr(loan, "origination_date", None), origination_date)
+        and _amount_close(getattr(loan, "original_amount", None), original_amount, tolerance=2.0)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    rate_candidates = [
+        loan for loan in candidates
+        if not interest_rate or _amount_close(getattr(loan, "interest_rate", None), interest_rate, tolerance=0.01)
+    ]
+    if len(rate_candidates) == 1:
+        return rate_candidates[0]
+
+    closing_candidates = [
+        loan for loan in loans
+        if getattr(loan, "source_type", None) == doc.doc_category
+        and _amount_close(getattr(loan, "original_amount", None), original_amount, tolerance=2.0)
+        and (not interest_rate or _amount_close(getattr(loan, "interest_rate", None), interest_rate, tolerance=0.01))
+    ]
+    if len(closing_candidates) == 1:
+        return closing_candidates[0]
+
+    return None
+
+
 def _setup_property_payload(prop: models.Property) -> Dict[str, Any]:
     return {
         "id": prop.id,
@@ -891,6 +1081,16 @@ def _setup_property_payload(prop: models.Property) -> Dict[str, Any]:
         "purchase_price": prop.purchase_price or 0,
         "down_payment": prop.down_payment or 0,
         "closing_costs": prop.closing_costs or 0,
+        "settlement_total_amount": prop.settlement_total_amount or 0,
+        "cash_to_close": prop.cash_to_close or 0,
+        "deposit_paid_before_closing": prop.deposit_paid_before_closing or 0,
+        "total_due_from_borrower": prop.total_due_from_borrower or 0,
+        "total_paid_on_behalf_of_borrower": prop.total_paid_on_behalf_of_borrower or 0,
+        "settlement_debit_total": prop.settlement_debit_total or 0,
+        "settlement_credit_total": prop.settlement_credit_total or 0,
+        "seller_credits": prop.seller_credits or 0,
+        "tax_prorations": prop.tax_prorations or 0,
+        "hoa_prorations": prop.hoa_prorations or 0,
         "market_value": prop.market_value or 0,
         "market_value_source": prop.market_value_source,
         "market_value_updated": prop.market_value_updated,
@@ -1254,7 +1454,7 @@ def _apply_extracted(db, prop, data, category=None) -> dict:
     """
     applied = {}
     account_number = (data.get("account_number") or "").strip()
-    allowed_loan_fields = mapped_loan_fields(category) or LOAN_FIELDS
+    allowed_loan_fields = mapped_loan_fields(category) if category else LOAN_FIELDS
     loan_updates = {k: v for k, v in data.items() if k in allowed_loan_fields and v is not None}
     borrowers = "; ".join(
         data[k] for k in ("borrower_1", "borrower_2", "borrower_3", "borrower_4")
@@ -1264,8 +1464,9 @@ def _apply_extracted(db, prop, data, category=None) -> dict:
         loan_updates["borrowers"] = borrowers
 
     if loan_updates:
-        # Match loans by account number. A new account number represents a
-        # distinct loan/servicer record and must not overwrite an older loan.
+        # Generic extraction may enrich an existing debt, but canonical loan
+        # creation belongs to the transaction resolver after the document is
+        # persisted and classified.
         loan = None
         if account_number:
             loan = next((l for l in prop.loans if l.account_number == account_number), None)
@@ -1275,52 +1476,66 @@ def _apply_extracted(db, prop, data, category=None) -> dict:
         if loan is None:
             loan = prop.loans[0] if prop.loans and not account_number else None
         if loan is None:
-            loan = models.Loan(
-                property_id=prop.id,
-                original_amount=_to_float(data.get("original_amount") or data.get("current_balance")),
-                current_balance=_to_float(data.get("current_balance")),
-                interest_rate=_to_float(data.get("interest_rate")),
-                monthly_payment=_to_float(data.get("monthly_payment")),
-                loan_term_years=30,
-                account_number=account_number or None,
-            )
-            db.add(loan)
+            loan_updates = {}
 
         # "Statement Details" must reflect the LATEST statement only. If this
         # document is older than the loan's current statement (or is undated
         # while the loan already has a dated statement), keep the existing
         # snapshot and apply only the static identity/origination fields.
-        new_date = _parse_date(data.get("statement_date"))
-        cur_date = _parse_date(loan.statement_date)
-        if cur_date is not None and (new_date is None or new_date < cur_date):
-            for k in STATEMENT_FIELDS:
-                loan_updates.pop(k, None)
+        if loan is not None:
+            new_date = _parse_date(data.get("statement_date"))
+            cur_date = _parse_date(loan.statement_date)
+            if cur_date is not None and (new_date is None or new_date < cur_date):
+                for k in STATEMENT_FIELDS:
+                    loan_updates.pop(k, None)
 
-        for k, v in loan_updates.items():
-            setattr(loan, k, v)
-            applied[f"loan.{k}"] = v
+            for k, v in loan_updates.items():
+                setattr(loan, k, v)
+                applied[f"loan.{k}"] = v
 
     annual_rent = data.get("annual_rental_income") or data.get("rents_received")
     if annual_rent:
         prop.monthly_rent = round(annual_rent / 12, 2)
         applied["property.monthly_rent"] = prop.monthly_rent
 
-    # Closing statement: populate purchase/origination property fields
-    if data.get("purchase_price") is not None:
+    # Only an acquisition transaction may populate immutable purchase fields.
+    is_purchase_transaction = str(data.get("transaction_purpose") or "").upper() == "PURCHASE"
+    if is_purchase_transaction and data.get("purchase_price") is not None:
         prop.purchase_price = data["purchase_price"]
         applied["property.purchase_price"] = data["purchase_price"]
-    if data.get("purchase_date"):
-        prop.purchase_date = data["purchase_date"]
-        applied["property.purchase_date"] = data["purchase_date"]
+    purchase_date = data.get("purchase_date") or data.get("closing_date")
+    if is_purchase_transaction and purchase_date:
+        prop.purchase_date = purchase_date
+        applied["property.purchase_date"] = purchase_date
     if data.get("recorded_date"):
         prop.recorded_date = data["recorded_date"]
         applied["property.recorded_date"] = data["recorded_date"]
-    if data.get("settlement_total_amount") is not None:
-        prop.settlement_total_amount = data["settlement_total_amount"]
-        applied["property.settlement_total_amount"] = data["settlement_total_amount"]
-    if data.get("closing_costs") is not None:
+    if is_purchase_transaction and data.get("closing_costs") is not None:
         prop.closing_costs = data["closing_costs"]
         applied["property.closing_costs"] = data["closing_costs"]
+    if is_purchase_transaction:
+        for target in (
+            "down_payment", "cash_to_close", "deposit_paid_before_closing",
+            "total_due_from_borrower", "total_paid_on_behalf_of_borrower",
+            "settlement_debit_total", "settlement_credit_total", "seller_credits",
+            "tax_prorations", "hoa_prorations",
+        ):
+            if data.get(target) is not None:
+                setattr(prop, target, data[target])
+                applied[f"property.{target}"] = data[target]
+    if is_purchase_transaction and (data.get("purchase_price") is not None or purchase_date):
+        valuation_data = {
+            "purchase_price": prop.purchase_price,
+            "purchase_date": prop.purchase_date,
+            "market_value": prop.market_value,
+            "market_value_source": prop.market_value_source,
+            "market_value_updated": prop.market_value_updated,
+        }
+        apply_default_market_price(valuation_data, existing_source=prop.market_value_source)
+        prop.market_value = valuation_data["market_value"]
+        prop.market_value_source = valuation_data["market_value_source"]
+        prop.market_value_updated = valuation_data.get("market_value_updated")
+        applied["property.market_value"] = prop.market_value
     if data.get("annual_property_tax") is not None:
         prop.property_tax = data["annual_property_tax"]
         applied["property.property_tax"] = data["annual_property_tax"]
@@ -1432,7 +1647,11 @@ def _set_annual_expense_source_document(
     sources[field] = {
         "documentId": doc.id,
         "documentName": doc.display_name or doc.original_filename or doc.filename,
-        "docType": "tax bill" if field == "property_tax" else "dec page",
+        "docType": (
+            "escrow analysis"
+            if category == "escrow_analysis"
+            else "tax bill" if field == "property_tax" else "dec page"
+        ),
         "sourceType": category,
         "amount": amount,
         "amountDisplay": format_currency(amount),
@@ -1483,6 +1702,151 @@ def _expense_address_requires_review(address_validation: Dict[str, Any]) -> bool
     status = address_validation.get("status")
     score = float(address_validation.get("matchScore") or 0)
     return status != "match" or score < 0.95
+
+
+def _escrow_payment_out(row: models.EscrowPayment) -> Dict[str, Any]:
+    return {
+        "id": row.id,
+        "propertyId": row.property_id,
+        "loanId": row.loan_id,
+        "documentId": row.document_id,
+        "loanNumber": row.loan_number,
+        "propertyAddress": row.property_address,
+        "statementDate": row.statement_date,
+        "effectiveDate": row.effective_date,
+        "historyPeriodStart": row.history_period_start,
+        "historyPeriodEnd": row.history_period_end,
+        "projectionPeriodStart": row.projection_period_start,
+        "projectionPeriodEnd": row.projection_period_end,
+        "expenseYear": row.expense_year,
+        "currentEscrowPayment": row.current_escrow_payment,
+        "newEscrowPayment": row.new_escrow_payment,
+        "servicer": row.servicer,
+        "principalInterestPayment": row.principal_interest_payment,
+        "currentTotalPayment": row.current_total_payment,
+        "newTotalPayment": row.new_total_payment,
+        "estimatedTax": row.estimated_tax,
+        "actualTax": row.actual_tax,
+        "estimatedInsurance": row.estimated_insurance,
+        "actualInsurance": row.actual_insurance,
+        "projectedTax": row.projected_tax,
+        "projectedInsurance": row.projected_insurance,
+        "projectedTotal": row.projected_total,
+        "projectedMonthlyEscrow": row.projected_monthly_escrow,
+        "shortageAmount": row.shortage_amount,
+        "overageAmount": row.overage_amount,
+        "refundAmount": row.refund_amount,
+        "projectedMinimumBalance": row.projected_minimum_balance,
+        "requiredMinimumBalance": row.required_minimum_balance,
+        "escrowCushion": row.escrow_cushion,
+        "selectedPaymentOption": row.selected_payment_option,
+        "estimatedTotalDisbursement": row.estimated_total_disbursement,
+        "actualTotalDisbursement": row.actual_total_disbursement,
+        "documentName": (row.document.display_name or row.document.original_filename or row.document.filename) if row.document else None,
+        "createdAt": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _escrow_account_matches(loan_account: Any, document_account: Any) -> bool:
+    loan_digits = re.sub(r'\D', '', str(loan_account or ''))
+    document_raw = str(document_account or '').upper()
+    document_digits = re.sub(r'\D', '', document_raw)
+    if not loan_digits or not document_digits:
+        return False
+    if loan_digits == document_digits:
+        return True
+    if 'X' in document_raw or '*' in document_raw:
+        return len(document_digits) >= 4 and loan_digits.endswith(document_digits[-4:])
+    return _account_numbers_match(loan_digits, document_digits)
+
+
+def _apply_escrow_analysis(
+    db: Session,
+    current_user: models.User,
+    prop: models.Property,
+    doc: models.Document,
+    extracted: Dict[str, Any],
+) -> tuple[models.EscrowPayment, Optional[models.AnnualExpense], Dict[str, Any]]:
+    loan_number = extracted.get('loan_number') or extracted.get('account_number')
+    loan = next((item for item in prop.loans if _escrow_account_matches(item.account_number, loan_number)), None)
+    payment = db.query(models.EscrowPayment).filter(models.EscrowPayment.document_id == doc.id).first()
+    if not payment and extracted.get('statement_date'):
+        dated_payments = db.query(models.EscrowPayment).filter(
+            models.EscrowPayment.property_id == prop.id,
+            models.EscrowPayment.statement_date == extracted.get('statement_date'),
+        ).all()
+        payment = next(
+            (item for item in dated_payments if _escrow_account_matches(item.loan_number, loan_number)),
+            None,
+        )
+    if not payment:
+        payment = models.EscrowPayment(
+            id=str(uuid.uuid4()),
+            property_id=prop.id,
+            owner_id=current_user.id,
+            document_id=doc.id,
+        )
+        db.add(payment)
+    else:
+        payment.document_id = doc.id
+
+    payment.loan_id = loan.id if loan else None
+    payment.loan_number = loan_number
+    payment.property_address = ', '.join(filter(None, [
+        extracted.get('property_address'),
+        extracted.get('property_city'),
+        extracted.get('property_state'),
+        extracted.get('property_zip'),
+    ]))
+    for model_field, extracted_field in (
+        ('statement_date', 'statement_date'),
+        ('effective_date', 'effective_date'),
+        ('history_period_start', 'history_period_start'),
+        ('history_period_end', 'history_period_end'),
+        ('projection_period_start', 'projection_period_start'),
+        ('projection_period_end', 'projection_period_end'),
+        ('expense_year', 'expense_year'),
+        ('current_escrow_payment', 'current_escrow_payment'),
+        ('new_escrow_payment', 'new_escrow_payment'),
+        ('servicer', 'servicer'),
+        ('principal_interest_payment', 'principal_interest_payment'),
+        ('current_total_payment', 'current_total_payment'),
+        ('new_total_payment', 'new_total_payment'),
+        ('estimated_tax', 'estimated_tax'),
+        ('actual_tax', 'actual_tax'),
+        ('estimated_insurance', 'estimated_insurance'),
+        ('actual_insurance', 'actual_insurance'),
+        ('projected_tax', 'projected_tax'),
+        ('projected_insurance', 'projected_insurance'),
+        ('projected_total', 'projected_total'),
+        ('projected_monthly_escrow', 'projected_monthly_escrow'),
+        ('shortage_amount', 'shortage_amount'),
+        ('overage_amount', 'overage_amount'),
+        ('refund_amount', 'refund_amount'),
+        ('projected_minimum_balance', 'projected_minimum_balance'),
+        ('required_minimum_balance', 'required_minimum_balance'),
+        ('escrow_cushion', 'escrow_cushion'),
+        ('selected_payment_option', 'selected_payment_option'),
+        ('estimated_total_disbursement', 'estimated_total_disbursement'),
+        ('actual_total_disbursement', 'actual_total_disbursement'),
+    ):
+        setattr(payment, model_field, extracted.get(extracted_field))
+    db.flush()
+    replace_escrow_activities(db, payment, extracted)
+    db.flush()
+    metrics = rebuild_annual_expenses(db, prop)
+    affected_years = sorted({metric.year for metric in metrics if doc.id in json.loads(metric.document_ids_json or '[]')})
+    row = db.query(models.AnnualExpense).filter(
+        models.AnnualExpense.property_id == prop.id,
+        models.AnnualExpense.year == (affected_years[-1] if affected_years else int(extracted.get('expense_year') or 0)),
+    ).first() if (affected_years or extracted.get('expense_year')) else None
+    result = {
+        "applied": {metric.expense_type.lower(): metric.value for metric in metrics if metric.year in affected_years},
+        "preserved": [],
+        "loanMatched": bool(loan),
+        "affectedYears": affected_years,
+    }
+    return payment, row, result
 
 
 def _expense_address_review_response(
@@ -1759,6 +2123,10 @@ async def _commit_parsed_document(
         period_end=period_end,
     )
     db.add(doc)
+    db.flush()
+    if prop and category in FINAL_LOAN_LIFECYCLE_CATEGORIES:
+        db.expire(prop, ["documents", "loans", "transactions"])
+        resolve_property_lifecycle(db, prop)
     db.commit()
     db.refresh(doc)
 
@@ -1998,6 +2366,799 @@ async def upload_document(
         raise
 
 
+async def _store_escrow_analysis_upload(
+    db: Session,
+    current_user: models.User,
+    prop: models.Property,
+    save_path: Path,
+    original_filename: str,
+    suffix: str,
+    file_size: int,
+    category: str,
+    extracted: Dict[str, Any],
+    markdown: str,
+) -> Dict[str, Any]:
+    property_id = prop.id
+    required = ('loan_number', 'statement_date')
+    missing = [field for field in required if not extracted.get(field)]
+    if missing or not any(extracted.get(field) is not None for field in ('new_escrow_payment', 'projected_tax', 'projected_insurance', 'actual_tax', 'actual_insurance')):
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail="Could not find the loan, statement date, and escrow tax or insurance details in this document.")
+
+    address_validation = _address_validation(prop, extracted)
+    if address_validation.get('status') not in {'match', 'possible_match'}:
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail="Escrow analysis property address does not match this property.")
+
+    try:
+        content_hash = _file_hash(save_path)
+        doc = db.query(models.Document).filter(
+            models.Document.owner_id == current_user.id,
+            models.Document.content_hash == content_hash,
+        ).first()
+        reused_document = bool(doc)
+        if doc and doc.property_id not in {None, property_id}:
+            raise HTTPException(status_code=409, detail="This escrow statement is already linked to another property.")
+        if doc:
+            _discard_uploaded_source(save_path)
+            doc.property_id = property_id
+            doc.doc_category = category
+            doc.module_tags = "EXPENSES"
+            doc.extracted_data = json.dumps(extracted)
+            doc.statement_year = extracted.get('statement_year')
+            doc.statement_date = extracted.get('statement_date')
+            doc.loan_account_number = extracted.get('loan_number') or extracted.get('account_number')
+            doc.period_type = extracted.get('period_type') or 'yearly'
+            doc.period_start = extracted.get('history_period_start') or extracted.get('statement_date')
+            doc.period_end = extracted.get('projection_period_end') or extracted.get('statement_date')
+            doc.display_name = _build_display_name(
+                category,
+                extracted,
+                doc.statement_year,
+                doc.period_start,
+                doc.period_end,
+            )
+        else:
+            commit = await _commit_parsed_document(
+                db,
+                current_user,
+                save_path,
+                original_filename,
+                suffix,
+                file_size,
+                category,
+                extracted,
+                markdown,
+                property_id,
+                apply_extracted=False,
+            )
+            doc = db.query(models.Document).filter(models.Document.id == commit['id']).first()
+        doc.module_tags = "EXPENSES"
+        payment, annual_row, result = _apply_escrow_analysis(db, current_user, prop, doc, extracted)
+        db.commit()
+        db.refresh(payment)
+        if annual_row:
+            db.refresh(annual_row)
+        return {
+            "status": "reused" if reused_document else "applied",
+            "escrowPayment": _escrow_payment_out(payment),
+            "annualExpense": _annual_expense_out(annual_row) if annual_row else None,
+            "expenseApplication": result,
+            "addressValidation": address_validation,
+        }
+    except Exception:
+        db.rollback()
+        _discard_uploaded_source(save_path)
+        raise
+
+
+@router.post("/upload/escrow-analysis")
+async def upload_escrow_analysis(
+    property_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    require_premium_user(current_user)
+    prop = db.query(models.Property).filter(
+        models.Property.id == property_id,
+        models.Property.owner_id == current_user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    save_path, _pending_upload_id, suffix, file_size = await _save_pending_upload(file, current_user)
+    original_filename = file.filename
+    try:
+        category, extracted, markdown = parse_document(str(save_path), "escrow_analysis")
+    except Exception as exc:
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail=f"Escrow analysis parse failed: {exc}")
+    return await _store_escrow_analysis_upload(
+        db,
+        current_user,
+        prop,
+        save_path,
+        original_filename,
+        suffix,
+        file_size,
+        category,
+        extracted,
+        markdown,
+    )
+
+
+def _expense_document_year(extracted: Dict[str, Any], fallback_year: Optional[int]) -> int:
+    for value in (
+        extracted.get('tax_year'),
+        extracted.get('expense_year'),
+        extracted.get('effective_date'),
+        extracted.get('projection_period_start'),
+        extracted.get('period_start'),
+        extracted.get('statement_year'),
+        extracted.get('history_period_end'),
+        extracted.get('statement_date'),
+    ):
+        match = re.search(r'(?:19|20)\d{2}', str(value or ''))
+        if match:
+            return int(match.group(0))
+    # Kept only for backwards compatibility with older API clients. The
+    # property-wide uploader never supplies a UI-selected year.
+    if fallback_year:
+        return int(fallback_year)
+    raise HTTPException(status_code=422, detail="Could not determine the expense year from this document.")
+
+
+def _normalized_address_parts(value: Optional[str]) -> set[str]:
+    normalized = re.sub(r"[^A-Z0-9 ]", " ", (value or "").upper())
+    replacements = {"STREET": "ST", "DRIVE": "DR", "ROAD": "RD", "AVENUE": "AVE"}
+    return {replacements.get(part, part) for part in normalized.split() if part}
+
+
+def _property_tax_match(prop: models.Property, parsed: Dict[str, Any], db: Session) -> Dict[str, Any]:
+    parsed_parts = _normalized_address_parts(parsed.get("property_address"))
+    street_parts = _normalized_address_parts(prop.address)
+    city_parts = _normalized_address_parts(prop.city)
+    street_score = len(parsed_parts & street_parts) / max(len(street_parts), 1)
+    city_score = 1.0 if city_parts and city_parts.issubset(parsed_parts) else 0.0
+    score = min(1.0, street_score * 0.8 + city_score * 0.2)
+
+    parcel = parsed.get("parcel_number")
+    if parcel:
+        known_parcel = db.query(models.PropertyTaxRecord).filter(
+            models.PropertyTaxRecord.property_id == prop.id,
+            models.PropertyTaxRecord.parcel_number == parcel,
+        ).first()
+        if known_parcel:
+            score = max(score, 0.99)
+    status = "MATCHED" if score >= 0.8 else "NEEDS_REVIEW"
+    return {
+        "status": status,
+        "confidence": round(score, 2),
+        "selectedPropertyAddress": ", ".join(filter(None, [prop.address, prop.city, prop.state, prop.zip_code])),
+        "documentAddress": parsed.get("property_address"),
+        "signals": {"streetTokenScore": round(street_score, 2), "cityMatch": bool(city_score)},
+    }
+
+
+def _property_tax_record_out(record: models.PropertyTaxRecord, duplicate_status: Optional[str] = None) -> Dict[str, Any]:
+    parsed = json.loads(record.structured_json or "{}")
+    validation = json.loads(record.validation_json or "{}")
+    return {
+        "id": record.id,
+        "documentId": record.document_id,
+        "propertyId": record.property_id,
+        "candidatePropertyId": record.candidate_property_id,
+        "documentType": record.document_type,
+        "taxType": record.tax_type,
+        "issuer": record.issuer,
+        "propertyAddress": record.property_address,
+        "parcelNumber": record.parcel_number,
+        "tracerNumber": record.tracer_number,
+        "taxRateArea": record.tax_rate_area,
+        "fiscalYear": record.fiscal_year_label,
+        "fiscalPeriodStart": record.fiscal_period_start,
+        "fiscalPeriodEnd": record.fiscal_period_end,
+        "eventType": record.event_type,
+        "eventDate": record.event_date,
+        "supplementalAssessment": str(record.supplemental_assessment) if record.supplemental_assessment is not None else None,
+        "totalTaxRatePercent": str(record.total_tax_rate_percent) if record.total_tax_rate_percent is not None else None,
+        "prorationPercent": str(record.proration_percent) if record.proration_percent is not None else None,
+        "taxBeforeProration": str(record.tax_before_proration) if record.tax_before_proration is not None else None,
+        "totalAmountBilled": str(record.total_amount_billed) if record.total_amount_billed is not None else None,
+        "paymentStatus": record.payment_status,
+        "status": record.status,
+        "propertyMatchStatus": record.property_match_status,
+        "propertyMatchConfidence": record.property_match_confidence,
+        "classificationConfidence": record.classification_confidence,
+        "parser": {"name": record.parser_name, "version": record.parser_version},
+        "data": parsed,
+        "validation": validation,
+        "duplicateStatus": duplicate_status,
+        "createdAt": _json_timestamp(record.created_at),
+    }
+
+
+def _property_tax_annual_expense_payload(
+    db: Session,
+    prop: models.Property,
+    record: models.PropertyTaxRecord,
+    parsed: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Return the annual rows changed by one structured tax document."""
+    years = {
+        int(match.group(0))
+        for installment in parsed.get("installments") or []
+        if (match := re.match(
+            r"(?:19|20)\d{2}",
+            str(installment.get("payment_date") or installment.get("paid_date") or ""),
+        ))
+    }
+    if not years:
+        source_year = parsed.get("statement_year") or record.fiscal_period_start
+        match = re.search(r"(?:19|20)\d{2}", str(source_year or ""))
+        if match:
+            years.add(int(match.group(0)))
+    rows = (
+        db.query(models.AnnualExpense)
+        .filter(
+            models.AnnualExpense.property_id == prop.id,
+            models.AnnualExpense.year.in_(sorted(years)),
+        )
+        .order_by(models.AnnualExpense.year)
+        .all()
+        if years else []
+    )
+    annual_expenses = [_annual_expense_out(row) for row in rows]
+    return {
+        "annualExpenseApplied": bool(annual_expenses),
+        "annualExpenses": annual_expenses,
+        "annualExpense": annual_expenses[-1] if annual_expenses else None,
+    }
+
+
+async def _store_structured_property_tax_upload(
+    db: Session,
+    current_user: models.User,
+    selected_property: models.Property,
+    save_path: Path,
+    original_filename: str,
+    suffix: str,
+    file_size: int,
+    address_override: bool = False,
+    replace_document_id: Optional[int] = None,
+    document_type_hint: Optional[str] = None,
+    user_notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    content_hash = _file_hash(save_path)
+    if replace_document_id:
+        replaced = db.query(models.Document).filter(
+            models.Document.id == replace_document_id,
+            models.Document.owner_id == current_user.id,
+        ).first()
+        if not replaced:
+            _discard_uploaded_source(save_path)
+            raise HTTPException(status_code=404, detail="Replacement document not found")
+        _delete_document_and_dependents(db, replaced)
+        db.flush()
+    duplicate_doc = db.query(models.Document).filter(
+        models.Document.owner_id == current_user.id,
+        models.Document.content_hash == content_hash,
+    ).first()
+    reusable_document = None
+    if duplicate_doc:
+        record = db.query(models.PropertyTaxRecord).filter(
+            models.PropertyTaxRecord.document_id == duplicate_doc.id,
+        ).first()
+        if record:
+            _discard_uploaded_source(save_path)
+            property_tax_logger.info(
+                "property_tax_duplicate decision=exact document_id=%s property_id=%s checksum=%s",
+                duplicate_doc.id, duplicate_doc.property_id, content_hash)
+            result = _property_tax_record_out(record, "EXACT")
+            applied = (
+                record.property_id == selected_property.id
+                and record.status == "READY"
+                and record.document_type == "property_tax_bill"
+            )
+            if applied:
+                parsed = json.loads(record.structured_json or "{}")
+                rebuild_annual_expenses(db, selected_property)
+                db.flush()
+                result.update(_property_tax_annual_expense_payload(db, selected_property, record, parsed))
+                db.commit()
+            else:
+                result.update({"annualExpenseApplied": False, "annualExpenses": [], "annualExpense": None})
+            return result
+        if duplicate_doc.property_id not in {None, selected_property.id}:
+            _discard_uploaded_source(save_path)
+            raise HTTPException(status_code=409, detail="This property-tax document is already linked to another property.")
+        # A document first uploaded from the Documents tab may predate the
+        # structured tax record. Reuse and upgrade that canonical document
+        # rather than forcing the user to apply it manually or creating a copy.
+        reusable_document = duplicate_doc
+
+    converted = MarkItDownConverter().convert(save_path)
+    classification = classify_property_tax_document(converted)
+    if not classification["supported"]:
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail={
+            "message": "This PDF is not a supported property-tax document.",
+            "classification": classification,
+        })
+    parsed = parse_property_tax_document(converted)
+    if document_type_hint and document_type_hint != parsed["document_type"]:
+        parsed["extraction"]["warnings"].append(
+            f"Document type hint '{document_type_hint}' differed from backend classification")
+    if user_notes:
+        parsed["user_notes"] = user_notes
+    validation = validate_property_tax_document(parsed)
+    semantic_duplicate = db.query(models.PropertyTaxRecord).filter(
+        models.PropertyTaxRecord.owner_id == current_user.id,
+        models.PropertyTaxRecord.identity_key == parsed["identity_key"],
+    ).first()
+    if semantic_duplicate:
+        _discard_uploaded_source(save_path)
+        property_tax_logger.info(
+            "property_tax_duplicate decision=semantic record_id=%s property_id=%s checksum=%s",
+            semantic_duplicate.id, semantic_duplicate.property_id, content_hash)
+        result = _property_tax_record_out(semantic_duplicate, "SEMANTIC")
+        applied = (
+            semantic_duplicate.property_id == selected_property.id
+            and semantic_duplicate.status == "READY"
+            and semantic_duplicate.document_type == "property_tax_bill"
+        )
+        if applied:
+            existing_parsed = json.loads(semantic_duplicate.structured_json or "{}")
+            rebuild_annual_expenses(db, selected_property)
+            db.flush()
+            result.update(_property_tax_annual_expense_payload(
+                db, selected_property, semantic_duplicate, existing_parsed,
+            ))
+            db.commit()
+        else:
+            result.update({"annualExpenseApplied": False, "annualExpenses": [], "annualExpense": None})
+        return result
+
+    match = _property_tax_match(selected_property, parsed, db)
+    attach = match["status"] == "MATCHED" or address_override
+    match_status = "OVERRIDDEN" if address_override and match["status"] != "MATCHED" else match["status"]
+    markdown_name = f"{save_path.stem}.md"
+    (UPLOAD_DIR / markdown_name).write_text(converted.markdown)
+    display_prefix = (
+        "Supplemental Property Tax Bill"
+        if parsed["document_type"].startswith("supplemental")
+        else "Property Tax Bill"
+    )
+    display_name = f"{display_prefix} · {parsed['fiscal_year_label']}"
+    record_uuid = str(uuid.uuid4())
+    doc = reusable_document or models.Document(owner_id=current_user.id, filename=save_path.name, original_filename=original_filename)
+    doc.property_id = selected_property.id if attach else None
+    doc.filename = save_path.name
+    doc.original_filename = original_filename
+    doc.record_uuid = doc.record_uuid or record_uuid
+    doc.display_name = display_name
+    doc.file_type = suffix.lstrip(".")
+    doc.doc_category = "property_tax"
+    doc.module_tags = "EXPENSES,DOCUMENTS"
+    doc.document_type = parsed["document_type"]
+    doc.classification_confidence = classification["confidence"]
+    doc.file_size = file_size
+    doc.extracted_data = json.dumps(parsed)
+    doc.markdown_file = markdown_name
+    doc.normalized_text = converted.text
+    doc.parser_version = PROPERTY_TAX_PARSER_VERSION
+    doc.pipeline_status = "NEEDS_REVIEW" if not validation["valid"] or not attach else "COMPLETED"
+    doc.conversion_metadata = json.dumps(converted.metadata())
+    doc.content_hash = content_hash
+    doc.content_fingerprint = parsed["identity_key"]
+    doc.statement_year = parsed["statement_year"]
+    doc.period_type = "fiscal_year"
+    doc.period_start = parsed["fiscal_period_start"]
+    doc.period_end = parsed["fiscal_period_end"]
+    if reusable_document is None:
+        db.add(doc)
+    db.flush()
+    record = models.PropertyTaxRecord(
+        property_id=selected_property.id if attach else None,
+        candidate_property_id=selected_property.id,
+        owner_id=current_user.id,
+        document_id=doc.id,
+        document_type=parsed["document_type"],
+        tax_type=parsed["tax_type"],
+        issuer=parsed.get("issuer"),
+        property_address=parsed.get("property_address"),
+        parcel_number=parsed.get("parcel_number"),
+        tracer_number=parsed.get("tracer_number"),
+        tax_rate_area=parsed.get("tax_rate_area"),
+        fiscal_year_label=parsed.get("fiscal_year_label"),
+        fiscal_period_start=parsed.get("fiscal_period_start"),
+        fiscal_period_end=parsed.get("fiscal_period_end"),
+        event_type=parsed.get("event_type"),
+        event_date=parsed.get("event_date"),
+        supplemental_assessment=parsed.get("supplemental_assessment"),
+        total_tax_rate_percent=parsed.get("total_tax_rate_percent"),
+        proration_percent=parsed.get("proration_percent"),
+        tax_before_proration=parsed.get("tax_before_proration"),
+        total_amount_billed=parsed.get("total_amount_billed"),
+        payment_status=parsed.get("payment_status"),
+        identity_key=parsed["identity_key"],
+        related_event_key=parsed.get("related_event_key"),
+        structured_json=json.dumps(parsed),
+        validation_json=json.dumps(validation),
+        parser_name=PROPERTY_TAX_PARSER_NAME,
+        parser_version=PROPERTY_TAX_PARSER_VERSION,
+        classification_confidence=classification["confidence"],
+        property_match_confidence=match["confidence"],
+        property_match_status=match_status,
+        status="NEEDS_REVIEW" if not validation["valid"] or not attach else "READY",
+    )
+    db.add(record)
+    annual_expense_applied = False
+    if attach and validation["valid"] and parsed["document_type"] == "property_tax_bill":
+        rebuild_annual_expenses(db, selected_property)
+        annual_expense_applied = True
+    db.commit()
+    db.refresh(record)
+    result = _property_tax_record_out(record)
+    result["propertyMatch"] = match
+    result["sourceFileRetained"] = True
+    result["annualExpenseApplied"] = annual_expense_applied
+    if annual_expense_applied:
+        result.update(_property_tax_annual_expense_payload(db, selected_property, record, parsed))
+    else:
+        result.update({"annualExpenses": [], "annualExpense": None})
+    tax_record = dict(result)
+    result.update({
+        "document": {
+            "id": doc.id,
+            "filename": doc.original_filename,
+            "status": doc.pipeline_status.lower(),
+        },
+        "classification": parsed["classification"],
+        "property_match": {
+            "property_id": record.property_id,
+            "confidence": match["confidence"],
+            "method": "address_and_context" if attach else "manual_review",
+            **match,
+        },
+        "tax_record": tax_record,
+        "warnings": parsed.get("extraction", {}).get("warnings", []) + validation.get("warnings", []),
+        "requires_review": record.status == "NEEDS_REVIEW",
+        "pipeline": [
+            {"stage": stage, "status": "completed"}
+            for stage in ("uploaded", "converted", "classified", "parsed", "validated", "persisted")
+        ],
+    })
+    property_tax_logger.info(
+        "property_tax_persisted document_id=%s property_id=%s filename=%s checksum=%s converter=%s parser=%s classification=%s duration_ms=%s warnings=%s validation_failures=%s match=%s",
+        doc.id, record.property_id, original_filename, content_hash,
+        converted.converter_version, PROPERTY_TAX_PARSER_VERSION,
+        parsed["document_type"], converted.duration_ms,
+        len(result["warnings"]), len(validation.get("errors", [])), match_status)
+    return result
+
+
+@property_tax_router.post("/{property_id}/documents/property-tax")
+async def upload_structured_property_tax(
+    property_id: int,
+    file: UploadFile = File(...),
+    address_override: bool = Form(False),
+    document_type_hint: Optional[str] = Form(None),
+    replace_document_id: Optional[int] = Form(None),
+    user_notes: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    require_premium_user(current_user)
+    prop = db.query(models.Property).filter(
+        models.Property.id == property_id,
+        models.Property.owner_id == current_user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    save_path, _pending, suffix, file_size = await _save_pending_upload(file, current_user)
+    try:
+        return await _store_structured_property_tax_upload(
+            db, current_user, prop, save_path, file.filename, suffix, file_size,
+            address_override, replace_document_id, document_type_hint, user_notes)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail=f"Property-tax processing failed: {exc}") from exc
+
+
+@property_tax_router.get("/{property_id}/property-taxes")
+def list_structured_property_taxes(
+    property_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = db.query(models.Property).filter(
+        models.Property.id == property_id,
+        models.Property.owner_id == current_user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    records = db.query(models.PropertyTaxRecord).filter(
+        (
+            (models.PropertyTaxRecord.property_id == property_id)
+            | (models.PropertyTaxRecord.candidate_property_id == property_id)
+        ),
+        models.PropertyTaxRecord.owner_id == current_user.id,
+    ).order_by(
+        models.PropertyTaxRecord.fiscal_period_start,
+        models.PropertyTaxRecord.tracer_number,
+    ).all()
+    return {"propertyId": property_id, "items": [_property_tax_record_out(row) for row in records]}
+
+
+@property_tax_router.post("/{property_id}/property-taxes/{record_id}/corrections")
+def correct_structured_property_tax(
+    property_id: int,
+    record_id: str,
+    req: PropertyTaxCorrectionRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    record = db.query(models.PropertyTaxRecord).filter(
+        models.PropertyTaxRecord.id == record_id,
+        (
+            (models.PropertyTaxRecord.property_id == property_id)
+            | (models.PropertyTaxRecord.candidate_property_id == property_id)
+        ),
+        models.PropertyTaxRecord.owner_id == current_user.id,
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Property-tax record not found")
+    data = json.loads(record.structured_json or "{}")
+    target = data
+    parts = [part for part in req.field_path.split(".") if part]
+    if not parts:
+        raise HTTPException(status_code=422, detail="Correction field path is required")
+    for part in parts[:-1]:
+        if not isinstance(target.get(part), dict):
+            target[part] = {}
+        target = target[part]
+    original = target.get(parts[-1])
+    target[parts[-1]] = req.value
+    correction = models.PropertyTaxCorrection(
+        property_tax_record_id=record.id,
+        owner_id=current_user.id,
+        field_path=req.field_path,
+        original_value_json=json.dumps(original),
+        corrected_value_json=json.dumps(req.value),
+        reason=req.reason,
+    )
+    record.structured_json = json.dumps(data)
+    record.validation_json = json.dumps(validate_property_tax_document(data))
+    record.status = "CORRECTED"
+    db.add(correction)
+    db.commit()
+    db.refresh(record)
+    return _property_tax_record_out(record)
+
+
+@property_tax_router.post("/{property_id}/property-taxes/{record_id}/confirm-match")
+def confirm_structured_property_tax_match(
+    property_id: int,
+    record_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    record = db.query(models.PropertyTaxRecord).filter(
+        models.PropertyTaxRecord.id == record_id,
+        models.PropertyTaxRecord.candidate_property_id == property_id,
+        models.PropertyTaxRecord.owner_id == current_user.id,
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Property-tax review item not found")
+    record.property_id = property_id
+    record.property_match_status = "CONFIRMED"
+    record.status = "READY" if json.loads(record.validation_json or "{}").get("valid") else "NEEDS_REVIEW"
+    record.document.property_id = property_id
+    if record.status == "READY" and record.document_type == "property_tax_bill":
+        prop = db.query(models.Property).filter(
+            models.Property.id == property_id,
+            models.Property.owner_id == current_user.id,
+        ).first()
+        if prop:
+            rebuild_annual_expenses(db, prop)
+    db.commit()
+    db.refresh(record)
+    return _property_tax_record_out(record)
+
+
+@router.post("/upload/expense-document")
+async def upload_expense_document(
+    property_id: int = Form(...),
+    year: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Detect and apply escrow, property-tax, or insurance documents."""
+    require_premium_user(current_user)
+    prop = db.query(models.Property).filter(
+        models.Property.id == property_id,
+        models.Property.owner_id == current_user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    save_path, _pending_upload_id, suffix, file_size = await _save_pending_upload(file, current_user)
+    original_filename = file.filename
+    # Fiscal supplemental bills are retained as dedicated records and do not
+    # flow into the regular annual operating-expense updater below.
+    try:
+        converted_tax = MarkItDownConverter().convert(save_path)
+        tax_classification = classify_property_tax_document(converted_tax)
+    except Exception:
+        tax_classification = {"supported": False}
+    if tax_classification.get("supported"):
+        try:
+            result = await _store_structured_property_tax_upload(
+                db, current_user, prop, save_path, original_filename, suffix, file_size)
+            result["status"] = "applied"
+            is_supplemental = result.get("documentType", "").startswith("supplemental")
+            result["document"] = {
+                "id": result["documentId"],
+                "name": f"{'Supplemental Property Tax Bill' if is_supplemental else 'Property Tax Bill'} · {result['fiscalYear']}",
+                "category": "property_tax",
+            }
+            result["detectedField"] = "supplemental_property_tax" if is_supplemental else "property_tax"
+            return result
+        except Exception:
+            db.rollback()
+            _discard_uploaded_source(save_path)
+            raise
+    try:
+        category, extracted, markdown = parse_document(str(save_path), "auto")
+    except Exception as exc:
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail=f"Expense document parse failed: {exc}")
+
+    if category == 'escrow_analysis':
+        period_year = _expense_document_year(extracted, None)
+        extracted['expense_year'] = period_year
+        extracted.setdefault('statement_year', period_year)
+        return await _store_escrow_analysis_upload(
+            db,
+            current_user,
+            prop,
+            save_path,
+            original_filename,
+            suffix,
+            file_size,
+            category,
+            extracted,
+            markdown,
+        )
+
+    field_by_category = {
+        'property_tax': 'property_tax',
+        'insurance_declaration': 'insurance',
+    }
+    field = field_by_category.get(category)
+    if not field:
+        _discard_uploaded_source(save_path)
+        raise HTTPException(
+            status_code=422,
+            detail="This is not a supported escrow analysis, property-tax statement, or insurance declaration.",
+        )
+    expense_year = _expense_document_year(extracted, year)
+    amount = _expense_document_amount(extracted, field)
+    if amount is None:
+        _discard_uploaded_source(save_path)
+        raise HTTPException(status_code=422, detail=f"Could not find a reported annual {field.replace('_', ' ')} amount in this document.")
+
+    try:
+        content_hash = _file_hash(save_path)
+        doc = db.query(models.Document).filter(
+            models.Document.owner_id == current_user.id,
+            models.Document.content_hash == content_hash,
+        ).first()
+        reused_document = bool(doc)
+        if doc and doc.property_id not in {None, property_id}:
+            raise HTTPException(status_code=409, detail="This expense document is already linked to another property.")
+        if doc:
+            _discard_uploaded_source(save_path)
+            doc.property_id = property_id
+            doc.doc_category = category
+            doc.module_tags = "EXPENSES"
+            doc.extracted_data = json.dumps(extracted)
+            doc.statement_year = expense_year
+            doc.display_name = _build_display_name(category, extracted, expense_year)
+        else:
+            commit = await _commit_parsed_document(
+                db,
+                current_user,
+                save_path,
+                original_filename,
+                suffix,
+                file_size,
+                category,
+                extracted,
+                markdown,
+                property_id,
+                apply_extracted=False,
+            )
+            doc = db.query(models.Document).filter(models.Document.id == commit['id']).first()
+
+        doc.module_tags = "EXPENSES"
+
+        address_validation = _address_validation(prop, extracted)
+        if _expense_address_requires_review(address_validation):
+            db.commit()
+            return {
+                **_expense_address_review_response(doc, address_validation),
+                "detectedField": field,
+                "expenseYear": expense_year,
+            }
+
+        row = db.query(models.AnnualExpense).filter(
+            models.AnnualExpense.property_id == prop.id,
+            models.AnnualExpense.year == expense_year,
+        ).first()
+        preserved = bool(row and float(getattr(row, field, 0) or 0) > 0)
+        if not preserved:
+            row = _apply_expense_document_to_row(
+                db,
+                current_user,
+                prop,
+                doc,
+                expense_year,
+                field,
+                address_validation=address_validation,
+            )
+        db.flush()
+        rebuild_annual_expenses(db, prop)
+        db.commit()
+        if row:
+            db.refresh(row)
+        return {
+            "status": "reused" if reused_document else "applied",
+            "document": _expense_document_payload(doc),
+            "detectedField": field,
+            "expenseYear": expense_year,
+            "annualExpense": _annual_expense_out(row) if row else None,
+            "expenseApplication": {
+                "applied": [] if preserved else [field],
+                "preserved": [field] if preserved else [],
+            },
+            "addressValidation": address_validation,
+        }
+    except Exception:
+        db.rollback()
+        _discard_uploaded_source(save_path)
+        raise
+
+
+@router.get("/property/{property_id}/escrow-payments")
+def list_escrow_payments(
+    property_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = db.query(models.Property).filter(models.Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    if prop.owner_id != current_user.id:
+        share = db.query(models.UserSharing).filter(
+            models.UserSharing.owner_id == prop.owner_id,
+            models.UserSharing.shared_with_id == current_user.id,
+        ).first()
+        if not share:
+            raise HTTPException(status_code=403, detail="Access denied")
+    rows = db.query(models.EscrowPayment).filter(
+        models.EscrowPayment.property_id == property_id,
+    ).order_by(models.EscrowPayment.statement_date.desc()).all()
+    return [_escrow_payment_out(row) for row in rows]
+
+
 @router.post("/upload/expense-field")
 async def upload_expense_field_document(
     property_id: int = Form(...),
@@ -2210,6 +3371,7 @@ def list_all_documents(
             "display_name": d.display_name or d.original_filename,
             "file_type": d.file_type,
             "doc_category": d.doc_category,
+            "module_tags": [tag for tag in (d.module_tags or "").split(",") if tag],
             "file_size": d.file_size,
             "extracted_data": _safe_extracted_data(d),
             "document_config": config_as_dict(d.doc_category),
@@ -2316,15 +3478,36 @@ def apply_setup_import(
 
     address_validation = review["addressValidation"]
     address_status = address_validation["status"]
-    if address_status in {"mismatch", "document_address_missing"}:
+    if address_status == "mismatch":
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "ADDRESS_VALIDATION_BLOCKED",
-                "message": "Uploaded document appears to belong to a different property." if address_status == "mismatch" else "We could not find a property address in this document.",
+                "message": "Uploaded document appears to belong to a different property.",
                 "addressValidation": address_validation,
             },
         )
+    if address_status == "document_address_missing":
+        normalized_property = _address_parts(prop.address, prop.city, prop.state, prop.zip_code)
+        property_address_complete = all(normalized_property[key] for key in ["street", "city", "state", "zip"])
+        if not request.address_override or not property_address_complete:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "ADDRESS_VALIDATION_BLOCKED",
+                    "message": "We could not find a property address in this document.",
+                    "addressValidation": address_validation,
+                },
+            )
+        extracted = _safe_extracted_data(doc)
+        extracted["_address_override"] = {
+            "propertyId": prop.id,
+            "normalizedPropertyAddress": normalized_property["display"],
+            "appliedBy": current_user.email,
+            "appliedAt": datetime.utcnow().isoformat(),
+        }
+        doc.extracted_data = json.dumps(extracted)
+        address_validation = _closing_address_validation(doc, extracted)
     if address_status == "property_address_empty" and not (selected_property_fields & address_targets):
         raise HTTPException(
             status_code=409,
@@ -2370,16 +3553,35 @@ def apply_setup_import(
         "zip_code",
         "purchase_date",
         "purchase_price",
+        "settlement_total_amount",
+        "cash_to_close",
+        "deposit_paid_before_closing",
+        "total_due_from_borrower",
+        "total_paid_on_behalf_of_borrower",
+        "settlement_debit_total",
+        "settlement_credit_total",
         "market_value",
         "down_payment",
         "closing_costs",
         "market_value_updated",
     }
     for target in selected_property_fields & property_targets:
-        setattr(prop, target, property_field_values.get(target))
+        if target in property_field_values:
+            setattr(prop, target, property_field_values[target])
 
     if "market_value" in selected_property_fields:
         prop.market_value_source = "imported"
+    valuation_data = {
+        "purchase_price": prop.purchase_price,
+        "purchase_date": prop.purchase_date,
+        "market_value": prop.market_value,
+        "market_value_source": prop.market_value_source,
+        "market_value_updated": prop.market_value_updated,
+    }
+    apply_default_market_price(valuation_data, existing_source=prop.market_value_source)
+    prop.market_value = valuation_data["market_value"]
+    prop.market_value_source = valuation_data["market_value_source"]
+    prop.market_value_updated = valuation_data.get("market_value_updated")
     if "purchase_date" in selected_property_fields and not prop.market_value_updated:
         prop.market_value_updated = property_field_values.get("purchase_date")
     property_default_data = {
@@ -2396,12 +3598,6 @@ def apply_setup_import(
 
     selected_loan_fields = set(request.selected_loan_fields or [])
     for loan_draft in review["loanDrafts"]:
-        existing = db.query(models.Loan).filter(
-            models.Loan.property_id == prop.id,
-            models.Loan.source_document_id == doc.id,
-            models.Loan.import_status.in_(["review_required", "reviewed"]),
-        ).first()
-        loan = existing or models.Loan(property_id=prop.id)
         loan_field_values = {
             "lender_name": loan_draft.get("lender_name") or "",
             "loan_product": loan_draft.get("loan_product") or "",
@@ -2422,6 +3618,24 @@ def apply_setup_import(
             "escrow_included": bool(loan_draft.get("escrow_included")),
             "account_number": loan_draft.get("loan_id") or None,
         }
+        resolution_data = {
+            **_safe_extracted_data(doc),
+            **loan_field_values,
+            "transaction_purpose": "PURCHASE",
+        }
+        resolution = resolve_canonical_loan(
+            db,
+            prop,
+            resolution_data,
+            category=doc.doc_category,
+            document=doc,
+        )
+        loan = resolution.loan
+        if loan is None:
+            raise HTTPException(
+                status_code=422,
+                detail="The purchase loan could not be resolved from this document.",
+            )
         apply_loan_fields = selected_loan_fields or set(loan_field_values.keys())
         for target, value in loan_field_values.items():
             if target in apply_loan_fields:
@@ -2432,12 +3646,16 @@ def apply_setup_import(
         loan.current_balance_source = "closing_document_initial_balance"
         loan.current_balance_as_of = loan_draft.get("origination_date") or prop.purchase_date
         loan.current_balance_verified = False
-        if not existing:
-            db.add(loan)
 
+    tags = {tag.strip() for tag in (doc.module_tags or "").split(",") if tag.strip()}
+    tags.discard(SETUP_DELINKED_TAG)
+    doc.module_tags = ",".join(sorted(tags))
+    db.flush()
+    db.expire(prop, ["loans"])
+    resolve_property_lifecycle(db, prop)
     db.commit()
     db.refresh(prop)
-    address_validation = _address_validation(prop, _safe_extracted_data(doc))
+    address_validation = _closing_address_validation(doc, _safe_extracted_data(doc))
     return {
         "draft": {
             "property": _setup_property_payload(prop),
@@ -2451,6 +3669,107 @@ def apply_setup_import(
         "addressValidation": address_validation,
         "nextSection": "financing",
     }
+
+
+FINAL_LOAN_LIFECYCLE_CATEGORIES = {
+    "closing_statement", "loan_disclosure", "mortgage_statement", "1098",
+}
+
+
+def _lifecycle_property(db: Session, property_id: int, current_user: models.User) -> models.Property:
+    prop = db.query(models.Property).filter(models.Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    if prop.owner_id != current_user.id:
+        share = db.query(models.UserSharing).filter(
+            models.UserSharing.owner_id == prop.owner_id,
+            models.UserSharing.shared_with_id == current_user.id,
+        ).first()
+        if not share:
+            raise HTTPException(status_code=403, detail="Access denied")
+    return prop
+
+
+@router.get("/property/{property_id}/lifecycle")
+def get_property_lifecycle(
+    property_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    prop = _lifecycle_property(db, property_id, current_user)
+    return lifecycle_dto(prop)
+
+
+@router.post("/{doc_id}/delink-setup")
+def delink_document_from_setup(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Remove source associations while preserving accepted values and the stored document."""
+    require_premium_user(current_user)
+    document = db.query(models.Document).filter(
+        models.Document.id == doc_id,
+        models.Document.owner_id == current_user.id,
+    ).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not document.property_id:
+        raise HTTPException(status_code=409, detail="Document is not linked to a property setup.")
+    prop = _lifecycle_property(db, document.property_id, current_user)
+
+    transaction_ids = [
+        row.transaction_id
+        for row in db.query(models.TransactionDocumentLink).filter_by(document_id=document.id).all()
+    ]
+    db.query(models.TransactionDocumentLink).filter_by(document_id=document.id).delete(
+        synchronize_session=False,
+    )
+    db.query(models.LoanDocumentLink).filter_by(document_id=document.id).delete(
+        synchronize_session=False,
+    )
+    db.query(models.LoanBalanceSnapshot).filter_by(source_document_id=document.id).delete(
+        synchronize_session=False,
+    )
+    db.query(models.LoanServicerSegment).filter_by(source_document_id=document.id).delete(
+        synchronize_session=False,
+    )
+    for loan in prop.loans:
+        if loan.source_document_id == document.id:
+            loan.source_document_id = None
+
+    tags = {tag.strip() for tag in (document.module_tags or "").split(",") if tag.strip()}
+    tags.add(SETUP_DELINKED_TAG)
+    document.module_tags = ",".join(sorted(tags))
+    db.flush()
+    for transaction_id in transaction_ids:
+        transaction = db.get(models.PropertyTransaction, transaction_id)
+        if transaction:
+            transaction.status = "USER_CONFIRMED"
+    db.flush()
+    db.expire(prop, ["transactions", "loans", "documents"])
+    refreshed_draft = lifecycle_dto(prop)
+    db.commit()
+    return {
+        "status": "delinked",
+        "documentId": document.id,
+        "documentPreserved": True,
+        "draft": refreshed_draft,
+    }
+
+
+@router.post("/property/{property_id}/resolve-lifecycle")
+def resolve_property_lifecycle_endpoint(
+    property_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    require_premium_user(current_user)
+    prop = _lifecycle_property(db, property_id, current_user)
+    result = resolve_property_lifecycle(db, prop)
+    db.commit()
+    db.refresh(prop)
+    return result
 
 
 @router.get("/{doc_id}/loan-statement-review")
@@ -2467,10 +3786,10 @@ def get_loan_statement_review(
     ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if doc.doc_category not in {"mortgage_statement", "1098"}:
+    if not _is_supported_loan_document(doc.doc_category, _safe_extracted_data(doc)):
         raise HTTPException(
             status_code=400,
-            detail="This document does not appear to be a mortgage statement or 1098.",
+            detail="This document does not contain supported loan terms, a mortgage statement, or Form 1098 data.",
         )
     return _statement_setup_review_payload(doc)
 
@@ -2611,6 +3930,8 @@ def consolidated_loan_documents_review(
 ):
     require_premium_user(current_user)
     prop, docs = _owned_loan_docs(db, current_user, request)
+    for document in docs:
+        classify_document(document)
     rows = _consolidated_loan_document_rows(prop, docs)
     return {
         "schemaVersion": "loan-documents-consolidated-v1",
@@ -2630,6 +3951,8 @@ def apply_consolidated_loan_documents(
 ):
     require_premium_user(current_user)
     prop, docs = _owned_loan_docs(db, current_user, request)
+    for document in docs:
+        classify_document(document)
     rows = _consolidated_loan_document_rows(prop, docs)
     group_id = next((getattr(loan, "loan_group_id", None) for loan in prop.loans if getattr(loan, "loan_group_id", None)), None) or f"loan-chain-{uuid.uuid4()}"
     existing_original = next((
@@ -2643,20 +3966,26 @@ def apply_consolidated_loan_documents(
         if loan is None and row.get("sequence") == 1 and existing_original is not None:
             loan = existing_original
         if loan is None:
-            loan = models.Loan(
-                property_id=prop.id,
-                lender_name=row.get("lenderName") or "",
-                loan_type="FIXED",
-                original_amount=_to_float(row.get("originalAmount")),
-                current_balance=_to_float(row.get("currentBalance")),
-                interest_rate=_to_float(row.get("interestRate")),
-                monthly_payment=_to_float(row.get("monthlyPayment")),
-                loan_term_years=30,
-                origination_date=row.get("originationDate"),
-                account_number=account,
+            source_document = db.get(models.Document, (row.get("sourceDocumentIds") or [None])[-1])
+            source_data = _safe_extracted_data(source_document) if source_document else {}
+            resolution = resolve_canonical_loan(
+                db,
+                prop,
+                source_data,
+                category=source_document.doc_category if source_document else "",
+                document=source_document,
+                selected_loan_id=existing_original.id if existing_original else None,
+                allow_create=False,
             )
-            db.add(loan)
-            db.flush()
+            loan = resolution.loan
+        if loan is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CANONICAL_LOAN_REQUIRED",
+                    "message": "Select an existing loan before applying periodic loan documents.",
+                },
+            )
         loan.lender_name = row.get("lenderName") or loan.lender_name
         loan.account_number = account or loan.account_number
         loan.status = row.get("status") or loan.status or "OPEN"
@@ -2676,27 +4005,38 @@ def apply_consolidated_loan_documents(
         loan.monthly_insurance_escrow = _to_float(row.get("monthlyInsuranceEscrow")) or loan.monthly_insurance_escrow
         loan.monthly_mortgage_insurance = _to_float(row.get("monthlyMortgageInsurance")) or loan.monthly_mortgage_insurance
         loan.monthly_other_escrow = _to_float(row.get("monthlyOtherEscrow")) or loan.monthly_other_escrow
-        component_total = _escrow_component_total_from_mapping({
+        escrow_payload = {
             "monthly_property_tax_escrow": loan.monthly_property_tax_escrow,
             "monthly_insurance_escrow": loan.monthly_insurance_escrow,
             "monthly_mortgage_insurance": loan.monthly_mortgage_insurance,
             "monthly_other_escrow": loan.monthly_other_escrow,
-        })
-        latest_escrow_total = _to_float(row.get("escrowAmount")) or component_total
+            "escrow_amount": row.get("escrowAmount"),
+        }
+        latest_escrow_total = _normalized_monthly_escrow_total(escrow_payload)
         if latest_escrow_total > 0:
             loan.escrow_amount = latest_escrow_total
             loan.escrow_included = True
         if _to_float(row.get("estimatedTotalMonthlyPayment")) > 0:
             loan.estimated_total_monthly_payment = _to_float(row.get("estimatedTotalMonthlyPayment"))
         elif loan.monthly_payment and latest_escrow_total > 0:
-            loan.estimated_total_monthly_payment = round(float(loan.monthly_payment or 0) + latest_escrow_total, 2)
+            loan.estimated_total_monthly_payment = _normalized_total_monthly_payment(escrow_payload, loan.monthly_payment)
         loan.statement_date = row.get("statementDate") or loan.statement_date
         source_document_ids = row.get("sourceDocumentIds") or []
         if source_document_ids:
             loan.source_document_id = source_document_ids[-1]
         loan.source_type = "consolidated_loan_documents"
         loan.import_status = "reviewed"
-        applied_ids.append(loan.id)
+        for source_document_id in row.get("sourceDocumentIds") or []:
+            source_document = db.get(models.Document, source_document_id)
+            if source_document:
+                apply_periodic_loan_evidence(
+                    db,
+                    loan,
+                    source_document,
+                    _safe_extracted_data(source_document),
+                )
+        if loan.id not in applied_ids:
+            applied_ids.append(loan.id)
     ordered = sorted([loan for loan in prop.loans if loan.loan_group_id == group_id], key=lambda loan: loan.servicer_sequence or 99)
     for index, loan in enumerate(ordered[:-1]):
         loan.replacement_loan_id = ordered[index + 1].id
@@ -2736,10 +4076,10 @@ def apply_loan_statement(
     ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if doc.doc_category not in {"mortgage_statement", "1098"}:
+    if not _is_supported_loan_document(doc.doc_category, _safe_extracted_data(doc)):
         raise HTTPException(
             status_code=400,
-            detail="This document does not appear to be a mortgage statement or 1098.",
+            detail="This document does not contain supported loan terms, a mortgage statement, or Form 1098 data.",
         )
     prop = db.query(models.Property).filter(
         models.Property.id == request.property_id,
@@ -2753,8 +4093,8 @@ def apply_loan_statement(
         doc.property_id = prop.id
 
     extracted = _apply_loan_document_overrides(doc.doc_category, _safe_extracted_data(doc), request.field_overrides)
-    if request.field_overrides:
-        doc.extracted_data = json.dumps(extracted)
+    doc.extracted_data = json.dumps(extracted)
+    extracted = classify_document(doc)
     review = _statement_setup_review_payload(doc)
     address_validation = _address_validation(prop, extracted)
     if _expense_address_requires_review(address_validation) and not request.address_override:
@@ -2765,7 +4105,6 @@ def apply_loan_statement(
                 "addressValidation": address_validation,
             },
         )
-    loan = None
     selected_loan = None
     if request.loan_id:
         selected_loan = db.query(models.Loan).filter(
@@ -2773,12 +4112,12 @@ def apply_loan_statement(
             models.Loan.property_id == prop.id,
         ).first()
     account_number = (extracted.get("account_number") or "").strip()
-    matched_loan = next((item for item in prop.loans if account_number and (item.account_number or "").strip() == account_number), None)
     if (
         account_number
         and selected_loan is not None
         and (selected_loan.account_number or "").strip()
-        and (selected_loan.account_number or "").strip() != account_number
+        and not _account_numbers_match(selected_loan.account_number, account_number)
+        and str(extracted.get("transaction_purpose") or extracted.get("loan_purpose") or "").upper() != "REFINANCE"
         and not request.confirm_account_mismatch
     ):
         raise HTTPException(
@@ -2789,64 +4128,49 @@ def apply_loan_statement(
                 "loanMapping": _loan_statement_mapping_payload(prop, extracted, request.loan_id),
             },
         )
-    extracted_origination = _parse_date(extracted.get("origination_date"))
-    selected_origination = _parse_date(selected_loan.origination_date) if selected_loan is not None else None
-    is_original_loan_1098 = (
-        doc.doc_category == "1098"
-        and account_number
-        and extracted_origination
-        and not extracted.get("mortgage_acquisition_date")
+    is_periodic = doc.doc_category in {"mortgage_statement", "1098"}
+    resolution = resolve_canonical_loan(
+        db,
+        prop,
+        extracted,
+        category=doc.doc_category,
+        document=doc,
+        selected_loan_id=request.loan_id,
+        allow_create=not is_periodic,
     )
-    if matched_loan is not None:
-        loan = matched_loan
-    elif (
-        is_original_loan_1098
-        and selected_loan is not None
-        and selected_origination
-        and abs((extracted_origination - selected_origination).days) <= 7
-        and not getattr(selected_loan, "source_type", None) == "1098"
-    ):
-        loan = selected_loan
-    elif is_original_loan_1098:
-        original_loan = next((
-            item for item in prop.loans
-            if _parse_date(getattr(item, "origination_date", None))
-            and abs((extracted_origination - _parse_date(getattr(item, "origination_date", None))).days) <= 7
-            and getattr(item, "source_type", None) != "1098"
-            and not getattr(item, "servicer_start_date", None)
-        ), None)
-        if original_loan is not None:
-            loan = original_loan
-    elif selected_loan is not None and (not account_number or not (selected_loan.account_number or "").strip()):
-        loan = selected_loan
+    loan = resolution.loan
     if loan is None:
-        accountless_loans = [item for item in prop.loans if not (item.account_number or "").strip()]
-        if account_number and len(accountless_loans) == 1:
-            loan = accountless_loans[0]
-    created_loan = False
-    if loan is None:
-        loan = models.Loan(
-            property_id=prop.id,
-            lender_name=extracted.get("lender_name") or "",
-            loan_type=extracted.get("loan_type") or "FIXED",
-            status="OPEN",
-            original_amount=_to_float(extracted.get("original_amount") or extracted.get("current_balance")),
-            current_balance=_to_float(extracted.get("current_balance")),
-            interest_rate=_to_float(extracted.get("interest_rate")),
-            monthly_payment=_to_float(extracted.get("monthly_payment")),
-            estimated_total_monthly_payment=_to_float(extracted.get("estimated_total_monthly_payment") or extracted.get("monthly_payment")),
-            loan_term_years=_to_int(extracted.get("loan_term_years"), 30),
-            origination_date=extracted.get("origination_date") or prop.purchase_date,
-            account_number=account_number or None,
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CANONICAL_LOAN_REQUIRED",
+                "message": "Select the existing loan this document supports. A statement or Form 1098 cannot create a new loan.",
+                "loanMapping": _loan_statement_mapping_payload(prop, extracted, request.loan_id),
+            },
         )
-        db.add(loan)
-        created_loan = True
+    created_loan = resolution.created
+    if (
+        is_periodic
+        and resolution.action == "SERVICER_TRANSFER"
+        and str(loan.closure_reason or "").lower() == "servicing transfer"
+    ):
+        loan.status = "OPEN"
+        loan.closed_date = None
+        loan.closure_reason = None
+        loan.servicer_end_date = None
 
     selected_fields = set(request.selected_loan_fields or [])
     if not selected_fields:
         selected_fields = {field["targetKey"] for field in review["loanFields"]}
     field_values = {field["targetKey"]: field["value"] for field in review["loanFields"]}
     statement_targets = {
+        "lender_name",
+        "original_amount",
+        "interest_rate",
+        "loan_type",
+        "loan_product",
+        "loan_term_years",
+        "monthly_payment",
         "current_balance",
         "monthly_property_tax_escrow",
         "monthly_insurance_escrow",
@@ -2861,11 +4185,15 @@ def apply_loan_statement(
     }
     for target in selected_fields & statement_targets:
         value = field_values.get(target)
+        if is_periodic and target in {"current_balance", "statement_date"}:
+            continue
         if target in {"statement_date", "origination_date", "servicer_start_date"}:
             parsed_date = _parse_date(value)
             setattr(loan, target, parsed_date.isoformat() if parsed_date else value)
-        elif target == "account_number":
+        elif target in {"account_number", "lender_name", "loan_type", "loan_product"}:
             setattr(loan, target, value)
+        elif target == "loan_term_years":
+            setattr(loan, target, _to_int(value, 30))
         else:
             setattr(loan, target, _to_float(value))
 
@@ -2879,20 +4207,21 @@ def apply_loan_statement(
         for target in escrow_component_fields:
             if extracted.get(target) is not None:
                 setattr(loan, target, _to_float(extracted.get(target)))
-        component_total = _escrow_component_total_from_mapping({
+        escrow_payload = {
             "monthly_property_tax_escrow": loan.monthly_property_tax_escrow,
             "monthly_insurance_escrow": loan.monthly_insurance_escrow,
             "monthly_mortgage_insurance": loan.monthly_mortgage_insurance,
             "monthly_other_escrow": loan.monthly_other_escrow,
-        })
-        latest_escrow_total = _to_float(extracted.get("escrow_amount")) or component_total
+            "escrow_amount": extracted.get("escrow_amount"),
+        }
+        latest_escrow_total = _normalized_monthly_escrow_total(escrow_payload)
         if latest_escrow_total > 0:
             loan.escrow_amount = latest_escrow_total
             loan.escrow_included = True
         if extracted.get("estimated_total_monthly_payment") is not None:
             loan.estimated_total_monthly_payment = _to_float(extracted.get("estimated_total_monthly_payment"))
         elif loan.monthly_payment and latest_escrow_total > 0:
-            loan.estimated_total_monthly_payment = round(float(loan.monthly_payment or 0) + latest_escrow_total, 2)
+            loan.estimated_total_monthly_payment = _normalized_total_monthly_payment(escrow_payload, loan.monthly_payment)
 
     if selected_fields & {"monthly_property_tax_escrow", "monthly_insurance_escrow", "monthly_mortgage_insurance", "monthly_other_escrow", "escrow_amount"}:
         loan.escrow_included = True
@@ -2900,30 +4229,31 @@ def apply_loan_statement(
         loan.account_number = account_number
     if account_number:
         doc.loan_account_number = account_number
-    loan.source_document_id = doc.id
-    loan.source_type = doc.doc_category
     loan.import_status = "reviewed"
-    if "current_balance" in selected_fields:
-        loan.current_balance_source = "1098_box_2_reported_balance" if doc.doc_category == "1098" else "mortgage_statement_reported_balance"
-        loan.current_balance_as_of = extracted.get("statement_date") or loan.statement_date
-        loan.current_balance_verified = True
+    if not is_periodic:
+        loan.source_document_id = doc.id
+        loan.source_type = doc.doc_category
+        if "current_balance" in selected_fields:
+            loan.current_balance_source = "loan_disclosure_initial_balance"
+            loan.current_balance_as_of = extracted.get("origination_date") or loan.origination_date
+            loan.current_balance_verified = False
     if created_loan:
         db.flush()
-    transfer_result = None
-    account_matches_document = bool(account_number and (loan.account_number or "").strip() == account_number)
-    if account_matches_document or not account_number:
-        db.flush()
-        current_loans = db.query(models.Loan).filter(models.Loan.property_id == prop.id).all()
-        suggestions = [
-            suggestion for suggestion in _servicing_transfer_candidates(current_loans)
-            if suggestion.get("currentLoanId") == loan.id or suggestion.get("previousLoanId") == loan.id
-        ]
-        transfer_result = {
-            **_loan_statement_mapping_payload(prop, extracted, request.loan_id),
-            "requiresConfirmation": True,
-            "suggestions": suggestions,
-            "message": "Loan document applied. Review any servicing-transfer prompt before closing the old loan.",
-        }
+    if is_periodic:
+        apply_periodic_loan_evidence(
+            db,
+            loan,
+            doc,
+            extracted,
+            selected_fields=selected_fields,
+        )
+    transfer_result = {
+        **_loan_statement_mapping_payload(prop, extracted, request.loan_id),
+        "requiresConfirmation": False,
+        "suggestions": [],
+        "resolutionAction": resolution.action,
+        "message": "Periodic evidence was attached to the canonical loan." if is_periodic else "Loan origination was resolved.",
+    }
     expense_estimates = _apply_escrow_expense_estimates(
         prop,
         current_user.id,
@@ -2933,13 +4263,23 @@ def apply_loan_statement(
         db,
     )
 
+    refinance_applied = False
+    if not is_periodic:
+        db.flush()
+        db.expire(prop, ["documents", "loans", "transactions"])
+        lifecycle = resolve_property_lifecycle(db, prop)
+        refinance_applied = any(
+            item.get("purpose") == "REFINANCE" and item.get("status") == "OPEN"
+            for item in lifecycle.get("loans", [])
+        )
+
     db.commit()
     db.refresh(prop)
     processing_result = _completed_processing_result(
         loan_id=loan.id,
         document_id=doc.id,
         category=doc.doc_category,
-        statement_year=_statement_year(extracted, loan),
+        statement_year=doc.statement_year or _statement_year(extracted, loan),
         updated_at=datetime.utcnow(),
     )
     return {
@@ -2961,6 +4301,7 @@ def apply_loan_statement(
         },
         "document": review["document"],
         "expenseEstimates": expense_estimates,
+        "refinanceApplied": refinance_applied,
         "servicingTransfer": transfer_result,
         "nextSection": "financing",
         **processing_result,
@@ -3004,6 +4345,10 @@ async def reparse_document(
         extracted.get("period_start") or extracted.get("statement_date"),
         extracted.get("period_end") or extracted.get("statement_date"),
     )
+    # Keep the denormalized lifecycle columns synchronized with the newly
+    # extracted payload. Otherwise a reparsed Loan Estimate can retain stale
+    # Closing Disclosure semantics from its prior parser version.
+    extracted = classify_document(doc)
     if markdown:
         markdown_name = doc.markdown_file or f"{Path(doc.filename).stem}.md"
         (UPLOAD_DIR / markdown_name).write_text(markdown)
@@ -3050,6 +4395,8 @@ async def reprocess_all_documents(
     reprocessed, errors = 0, []
     categories = {}
     by_property = {}
+    escrow_reprocess = []
+    expense_properties = set()
     common_tax_returns = []  # (doc_id, path) for property-agnostic tax returns
     for doc in docs:
         path = UPLOAD_DIR / doc.filename
@@ -3087,6 +4434,11 @@ async def reprocess_all_documents(
         categories[category] = categories.get(category, 0) + 1
         if doc.property:
             by_property.setdefault(doc.property, []).append(extracted)
+            if category == "escrow_analysis":
+                escrow_reprocess.append((doc.property, doc, extracted))
+                expense_properties.add(doc.property)
+            elif category in {"property_tax", "insurance_declaration"}:
+                expense_properties.add(doc.property)
         elif category == "tax_return":
             common_tax_returns.append((doc.id, str(path)))
 
@@ -3097,6 +4449,11 @@ async def reprocess_all_documents(
         )
         for data in extracted_list:
             _apply_extracted(db, prop, data)
+
+    for prop, doc, extracted in escrow_reprocess:
+        _apply_escrow_analysis(db, current_user, prop, doc, extracted)
+    for prop in expense_properties:
+        rebuild_annual_expenses(db, prop)
 
     db.commit()
 
@@ -3194,6 +4551,7 @@ def list_documents(
             "display_name": d.display_name or d.original_filename,
             "file_type": d.file_type,
             "doc_category": d.doc_category,
+            "module_tags": [tag for tag in (d.module_tags or "").split(",") if tag],
             "file_size": d.file_size,
             "extracted_data": _safe_extracted_data(d),
             "document_config": config_as_dict(d.doc_category),
@@ -3227,6 +4585,21 @@ def _delete_document_and_dependents(db: Session, doc: models.Document):
     db.query(models.TaxReturnEntry).filter(
         models.TaxReturnEntry.document_id == doc.id
     ).delete()
+    property_record = doc.property
+    db.query(models.EscrowActivity).filter(
+        models.EscrowActivity.document_id == doc.id
+    ).delete(synchronize_session=False)
+    db.query(models.EscrowPayment).filter(
+        models.EscrowPayment.document_id == doc.id
+    ).delete(synchronize_session=False)
+    tax_records = db.query(models.PropertyTaxRecord).filter(
+        models.PropertyTaxRecord.document_id == doc.id
+    ).all()
+    for tax_record in tax_records:
+        db.query(models.PropertyTaxCorrection).filter(
+            models.PropertyTaxCorrection.property_tax_record_id == tax_record.id
+        ).delete(synchronize_session=False)
+        db.delete(tax_record)
     db.query(models.Loan).filter(
         models.Loan.source_document_id == doc.id
     ).update({
@@ -3235,6 +4608,9 @@ def _delete_document_and_dependents(db: Session, doc: models.Document):
         models.Loan.import_status: None,
     }, synchronize_session=False)
     db.delete(doc)
+    db.flush()
+    if property_record:
+        rebuild_annual_expenses(db, property_record)
 
 
 @router.post("/delete-batch")

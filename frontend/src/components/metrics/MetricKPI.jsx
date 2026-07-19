@@ -31,9 +31,9 @@ function metricDisplay(metric) {
   return metric?.displayValue ?? metric?.display
 }
 
-export default function MetricKPI({ metric, label, fallbackValue, subLabel, action, backendOwned = false }) {
+export default function MetricKPI({ metric, label, fallbackValue, subLabel, action, backendOwned = false, displayValue }) {
   const title = label || metric?.label || 'Metric'
-  const display = backendOwned && metric ? (metricDisplay(metric) ?? '—') : (metricDisplay(metric) ?? fallbackValue ?? '—')
+  const display = displayValue ?? (backendOwned && metric ? (metricDisplay(metric) ?? '—') : (metricDisplay(metric) ?? fallbackValue ?? '—'))
   const tooltip = hasUsefulTooltip(metric)
   const supportingText = subLabel ?? metric?.subtitle
 

@@ -27,6 +27,40 @@ export const propertySetupSections = [
 
 export const propertySetupSectionIds = propertySetupSections.map((section) => section.id)
 
+export function selectBackendAcquisitionDocument(documents, lifecycle) {
+  const selectedDocumentId = lifecycle?.acquisition?.selectedDocumentId
+  if (!selectedDocumentId) return null
+  return (documents || []).find((document) => document.id === selectedDocumentId) || null
+}
+
+const acquisitionSourceTargets = {
+  closing_date: 'purchase_date',
+  purchase_price: 'purchase_price',
+  borrower_paid_closing_costs: 'closing_costs',
+  down_payment: 'down_payment',
+  settlement_accounting_total: 'settlement_accounting_total',
+}
+
+export function acquisitionFieldSources(lifecycle) {
+  return (lifecycle?.acquisition?.selectedFields || []).reduce((sources, field) => {
+    const targetKey = acquisitionSourceTargets[field.key || field.field]
+    if (!targetKey || !field.documentId) return sources
+    const sourceLabel = field.sourceLabel || 'Source document'
+    sources[targetKey] = {
+      label: `from ${sourceLabel}`,
+      tone: 'reported',
+      title: `${sourceLabel} source details`,
+      documentId: field.documentId,
+      documentName: field.sourceDocument,
+      page: field.page,
+      confidence: field.confidence,
+      selectionType: field.selectionType,
+      sourceField: field.field,
+    }
+    return sources
+  }, {})
+}
+
 export const propertySetupFlagRows = [
   {
     id: 'hasFinancing',
@@ -71,10 +105,10 @@ export const propertySetupFieldPresentation = {
   },
   market_value: {
     emphasis: true,
-    helper: 'Used for equity and LTV calculations.',
+    helper: 'Backend estimate using 6% annual appreciation, or a manual override.',
   },
   market_value_source: {
-    helper: 'Manual, appraisal, or imported estimate.',
+    helper: 'Automatic 6% estimate, manual, appraisal, or imported value.',
   },
 }
 

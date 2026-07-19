@@ -239,13 +239,13 @@ function MetricBlock({ label, value, suffix }) {
 function PrimaryResidenceSection({ records }) {
   if (!records.length) return null
   return (
-    <details className="rounded-lg border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-900/70 dark:bg-amber-950/10">
-      <summary className="flex cursor-pointer items-center gap-2 text-sm font-bold uppercase tracking-wide text-amber-800 dark:text-amber-200">
+    <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-900/70 dark:bg-amber-950/10">
+      <div className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-amber-800 dark:text-amber-200">
         <Home className="h-4 w-4" aria-hidden="true" />
-        Primary Residence
+        Primary Home
         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs dark:bg-amber-900/40">{records.length}</span>
-      </summary>
-      <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">Excluded from rental portfolio metrics.</p>
+      </div>
+      <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">Tracked separately from rental portfolio income and expense metrics.</p>
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {records.map((record) => (
           <Link key={record.id} to={`/properties/${record.id}`} className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm dark:border-amber-900/60 dark:bg-gray-800">
@@ -260,7 +260,7 @@ function PrimaryResidenceSection({ records }) {
           </Link>
         ))}
       </div>
-    </details>
+    </section>
   )
 }
 
@@ -269,7 +269,7 @@ export default function PropertiesPage() {
   const [loading, setLoading] = useState(true)
   const [checklistSummary, setChecklistSummary] = useState(null)
   const [dashboardData, setDashboardData] = useState(null)
-  const [viewMode, setViewMode] = useState('cards')
+  const [viewMode, setViewMode] = useState('table')
   const [groupBy, setGroupBy] = useState('state')
   const [healthFilter, setHealthFilter] = useState('All health')
   const [query, setQuery] = useState('')
@@ -391,7 +391,7 @@ export default function PropertiesPage() {
     <PropertiesShell>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Portfolio Manager</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Portfolio Manager</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             {rentalRecords.length} rental {rentalRecords.length === 1 ? 'property' : 'properties'}
             {primaryRecords.length > 0 ? ` · ${primaryRecords.length} primary residence${primaryRecords.length === 1 ? '' : 's'}` : ''}
@@ -484,12 +484,15 @@ export default function PropertiesPage() {
         <div className="space-y-8">
           <PrimaryResidenceSection records={primaryRecords} />
 
-          <section className="space-y-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-2">
-                <Shield className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-                <h2 className="text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">Rental Properties</h2>
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">{filteredRentalRecords.length}</span>
+          <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex flex-col gap-4 border-b border-gray-200 px-5 py-4 dark:border-gray-800 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                  <h2 className="text-base font-semibold text-gray-950 dark:text-white">Rental portfolio</h2>
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300">{filteredRentalRecords.length}</span>
+                </div>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Review cash flow, equity, leverage, and data health in one list.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <label className="relative">
@@ -513,23 +516,34 @@ export default function PropertiesPage() {
                     {HEALTH_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </label>
-                <label>
-                  <span className="sr-only">Group properties</span>
-                  <select
-                    value={groupBy}
-                    onChange={(event) => setGroupBy(event.target.value)}
-                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  >
-                    {GROUP_OPTIONS.map((option) => <option key={option.key} value={option.key}>Group by {option.label}</option>)}
-                  </select>
-                </label>
+                {viewMode === 'cards' ? (
+                  <label>
+                    <span className="sr-only">Organize property grid</span>
+                    <select
+                      value={groupBy}
+                      onChange={(event) => setGroupBy(event.target.value)}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                    >
+                      {GROUP_OPTIONS.map((option) => <option key={option.key} value={option.key}>Group by {option.label}</option>)}
+                    </select>
+                  </label>
+                ) : null}
               </div>
             </div>
 
-            {groupedRecords.length === 0 ? (
-              <div className="card py-8 text-center text-sm text-gray-400">No rental properties match the current filters.</div>
+            {filteredRentalRecords.length === 0 ? (
+              <div className="py-10 text-center text-sm text-gray-400">No rental properties match the current filters.</div>
+            ) : viewMode === 'table' ? (
+              <div className="p-3 sm:p-4">
+                <DataTable
+                  columns={tableColumns}
+                  rows={filteredRentalRecords}
+                  getRowKey={(record) => record.id}
+                  emptyMessage="No rental properties match the current filters."
+                />
+              </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-6 p-5">
                 {groupedRecords.map((group) => (
                   <div key={group.label} className="space-y-3">
                     <div className="flex items-center gap-2 border-b border-gray-100 pb-2 dark:border-gray-700">
@@ -537,18 +551,9 @@ export default function PropertiesPage() {
                       <h3 className="text-base font-semibold text-gray-900 dark:text-white">{group.label}</h3>
                       <span className="text-sm text-gray-400">({group.items.length})</span>
                     </div>
-                    {viewMode === 'cards' ? (
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {group.items.map((record) => <PropertyCard key={record.id} record={record} onDelete={handleDeleteProperty} />)}
-                      </div>
-                    ) : (
-                      <DataTable
-                        columns={tableColumns}
-                        rows={group.items}
-                        getRowKey={(record) => record.id}
-                        emptyMessage="No properties in this group."
-                      />
-                    )}
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {group.items.map((record) => <PropertyCard key={record.id} record={record} onDelete={handleDeleteProperty} />)}
+                    </div>
                   </div>
                 ))}
               </div>

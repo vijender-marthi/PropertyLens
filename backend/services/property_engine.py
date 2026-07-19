@@ -40,7 +40,74 @@ def monthly_principal_interest(amount: float, annual_rate: float, years: int) ->
     return principal * monthly_rate / (1 - (1 + monthly_rate) ** (-term_months))
 
 
+def _normalized_account(value: Any) -> str:
+    return "".join(character for character in str(value or "").upper() if character.isalnum())
+
+
+def _account_numbers_match(left: Any, right: Any) -> bool:
+    left_account = _normalized_account(left)
+    right_account = _normalized_account(right)
+    if not left_account or not right_account:
+        return False
+    if left_account == right_account:
+        return True
+    shorter, longer = sorted((left_account, right_account), key=len)
+    return len(shorter) >= 8 and longer.startswith(shorter)
+
+
+def _latest_statement_pi(loan: Any) -> float:
+    """Return the latest account-matched statement's explicit P&I split."""
+    prop = getattr(loan, "property", None)
+    documents = getattr(prop, "documents", []) or []
+    loan_account = _normalized_account(getattr(loan, "account_number", None))
+    if not loan_account and len(getattr(prop, "loans", []) or []) > 1:
+        return 0.0
+    candidates = []
+
+    for document in documents:
+        if getattr(document, "doc_category", None) != "mortgage_statement":
+            continue
+        try:
+            data = json.loads(getattr(document, "extracted_data", None) or "{}")
+        except (TypeError, ValueError):
+            continue
+
+        document_account = _normalized_account(
+            getattr(document, "loan_account_number", None)
+            or data.get("account_number")
+            or data.get("loan_account_number")
+        )
+        if loan_account and not _account_numbers_match(document_account, loan_account):
+            continue
+
+        principal = data.get("principal_due")
+        interest = data.get("interest_due")
+        if principal is None or interest is None:
+            continue
+        try:
+            payment = float(principal) + float(interest)
+        except (TypeError, ValueError):
+            continue
+        if payment <= 0:
+            continue
+
+        statement_date = parse_date(
+            data.get("statement_date")
+            or getattr(document, "period_end", None)
+            or getattr(document, "period_start", None)
+        ) or date.min
+        candidates.append((statement_date, getattr(document, "id", 0) or 0, payment))
+
+    if not candidates:
+        return 0.0
+    return max(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
+
+
 def loan_monthly_pi(loan: Any) -> float:
+    statement_split = _latest_statement_pi(loan)
+    if statement_split > 0:
+        return statement_split
+
     explicit_split = float(getattr(loan, "principal_due", 0) or 0) + float(getattr(loan, "interest_due", 0) or 0)
     if explicit_split > 0:
         return explicit_split
@@ -104,7 +171,12 @@ class PropertyEngine:
             except Exception:
                 continue
             doc_account = getattr(doc, "loan_account_number", None) or data.get("account_number")
-            if loan_account and doc_account and str(loan_account) != str(doc_account):
+            if (
+                loan_account
+                and doc_account
+                and not _account_numbers_match(loan_account, doc_account)
+                and len(getattr(self.prop, "loans", []) or []) > 1
+            ):
                 continue
             statement_date = parse_date(data.get("statement_date") or getattr(doc, "period_end", None) or getattr(doc, "period_start", None))
             if not statement_date:
@@ -118,6 +190,56 @@ class PropertyEngine:
                 "principal": float(principal or 0),
             }
         return reports
+
+    def _latest_reported_statement_balance(self, loan: Any) -> Optional[float]:
+        """Resolve the newest account-safe mortgage-statement balance.
+
+        A single-loan property may retain an older setup account number while
+        its canonical statement account is being reconciled. Multi-loan
+        properties always require an account match to avoid cross-loan data.
+        """
+        loan_account = getattr(loan, "account_number", None)
+        multiple_loans = len(getattr(self.prop, "loans", []) or []) > 1
+        candidates = []
+        for document in getattr(self.prop, "documents", []) or []:
+            if getattr(document, "doc_category", None) != "mortgage_statement":
+                continue
+            try:
+                data = json.loads(getattr(document, "extracted_data", None) or "{}")
+            except (TypeError, ValueError):
+                continue
+            document_account = (
+                getattr(document, "loan_account_number", None)
+                or data.get("account_number")
+                or data.get("loan_account_number")
+            )
+            if (
+                loan_account
+                and document_account
+                and not _account_numbers_match(loan_account, document_account)
+                and multiple_loans
+            ):
+                continue
+            balance = data.get("current_balance")
+            if balance is None:
+                balance = data.get("balance")
+            if balance is None:
+                balance = data.get("outstanding_principal")
+            try:
+                balance = float(balance)
+            except (TypeError, ValueError):
+                continue
+            if balance < 0:
+                continue
+            statement_date = parse_date(
+                data.get("statement_date")
+                or getattr(document, "period_end", None)
+                or getattr(document, "period_start", None)
+            ) or date.min
+            candidates.append((statement_date, int(getattr(document, "id", 0) or 0), balance))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2]
 
     def build_schedule(self, loan: Any) -> List[EngineRow]:
         loan_id = int(getattr(loan, "id", 0) or id(loan))
@@ -185,6 +307,9 @@ class PropertyEngine:
         return [self._round_money_row(buckets[year]) for year in sorted(buckets)]
 
     def balance_today(self, loan: Any) -> float:
+        reported = self._latest_reported_statement_balance(loan)
+        if reported is not None:
+            return reported
         entered = float(getattr(loan, "current_balance", 0) or 0)
         if entered > 0:
             return entered

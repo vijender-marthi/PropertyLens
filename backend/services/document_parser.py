@@ -322,9 +322,21 @@ def extract_excel_data(filepath: str) -> Dict[str, Any]:
 def detect_category(text: str) -> str:
     """Guess the document category from its text content."""
     t = text.lower()
+    if re.search(r'annual\s+escrow\s+account|escrow\s+account\s+(?:analysis|disclosure)|closer\s+look\s+at\s+your\s+escrow|statement\s+of\s+activity\s+in\s+your\s+escrow\s+account', t):
+        return 'escrow_analysis'
+    # CFPB Loan Estimates routinely say "compare with your Closing
+    # Disclosure." That reference must not reclassify the estimate as a final
+    # Closing Disclosure. Prefer an exact document-title line.
+    if re.search(r'^\s*loan\s+estimate\s*$', text, re.IGNORECASE | re.MULTILINE):
+        return 'loan_disclosure'
     # All closing / settlement documents → closing_statement
     # This covers: CFPB Closing Disclosure, ALTA Settlement Statement, HUD-1
-    if re.search(r'closing\s+disclosure', t):
+    if re.search(r'^\s*closing\s+disclosure\s*$', text, re.IGNORECASE | re.MULTILINE):
+        # A refinance Closing Disclosure establishes a new debt and belongs in
+        # Loan Setup. Purchase Closing Disclosures continue through Property
+        # Setup because they also establish purchase price and closing costs.
+        if re.search(r'\bpurpose\s+refinance\b', t):
+            return 'loan_disclosure'
         return 'closing_statement'
     if re.search(r'alta\s+settlement\s+statement|hud-1\s+settlement\s+statement', t):
         return 'closing_statement'
@@ -346,7 +358,262 @@ def detect_category(text: str) -> str:
         return 'bank_statement'
     if re.search(r'property\s+tax\s+statement|property\s+taxes?\s+for|assessed\s+value|parcel\s+#|full\s+cash\s+value|limited\s+value', t):
         return 'property_tax'
+    if re.search(r'(?:homeowners?|hazard)\s+insurance|insurance\s+(?:declarations?|policy)|declarations?\s+page', t):
+        return 'insurance_declaration'
     return 'other'
+
+
+def parse_escrow_analysis(text: str) -> Dict[str, Any]:
+    """Parse an escrow analysis as an auditable ledger, not one annual value."""
+    from datetime import datetime
+
+    data: Dict[str, Any] = parse_property_address(text)
+
+    def amount(label: str, source: str = text) -> Optional[float]:
+        match = re.search(label + r'[^\n$]*\$\s*([\d,]+\.\d{2})', source, re.IGNORECASE)
+        return float(match.group(1).replace(',', '')) if match else None
+
+    def labeled_date(label: str) -> Optional[str]:
+        match = re.search(label + r'\s*:?\s*([A-Za-z]+\s+\d{1,2},\s*\d{4}|\d{1,2}/\d{1,2}/\d{4})', text, re.IGNORECASE)
+        return _normalize_date(match.group(1)) if match else None
+
+    def month_date(value: str, end: bool = False) -> str:
+        value = value.strip()
+        for fmt in ('%B %Y', '%b %Y', '%m/%Y'):
+            try:
+                parsed = datetime.strptime(value, fmt)
+                if end:
+                    import calendar
+                    return parsed.replace(day=calendar.monthrange(parsed.year, parsed.month)[1]).strftime('%Y-%m-%d')
+                return parsed.replace(day=1).strftime('%Y-%m-%d')
+            except ValueError:
+                continue
+        return _normalize_date(value) or value
+
+    def category(description: str) -> str:
+        normalized = re.sub(r'[^A-Z0-9]+', ' ', description.upper()).strip()
+        if 'COUNTY TAX' in normalized or 'PROPERTY TAX' in normalized:
+            return 'PROPERTY_TAX'
+        if 'HOMEOWNERS INS' in normalized or 'HAZ INS' in normalized or 'HAZARD INS' in normalized:
+            return 'HOMEOWNERS_INSURANCE'
+        if 'BEGINNING BALANCE' in normalized:
+            return 'BEGINNING_BALANCE'
+        if 'TRANSFER BAL' in normalized:
+            return 'ESCROW_TRANSFER'
+        if 'SHORTAGE' in normalized:
+            return 'SHORTAGE_PAYMENT'
+        if 'OVERAGE' in normalized or 'REFUND' in normalized:
+            return 'OVERAGE_REFUND'
+        if 'DEPOSIT' in normalized:
+            return 'ESCROW_DEPOSIT'
+        return 'OTHER'
+
+    loan_match = re.search(r'Loan\s+Number\s*:\s*([A-Z0-9X*\-]+)', text, re.IGNORECASE)
+    if loan_match:
+        data['loan_number'] = data['account_number'] = loan_match.group(1).strip()
+    data['servicer'] = (
+        'Rocket Mortgage' if re.search(r'Rocket\s+Mortgage', text, re.IGNORECASE)
+        else 'LoanCare' if re.search(r'LoanCare|lakeviewloanservicing', text, re.IGNORECASE)
+        else None
+    )
+
+    address_match = re.search(r'Property\s+Address\s*:\s*([^\n]+)\n\s*([^\n]+)', text, re.IGNORECASE)
+    if address_match:
+        data['property_address'] = address_match.group(1).strip()
+        locality = re.search(r'([^\n,]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?', address_match.group(2))
+        if locality:
+            data['property_city'], data['property_state'], data['property_zip'] = (part.strip() for part in locality.groups())
+
+    data['statement_date'] = labeled_date(r'Statement\s+Date')
+    data['effective_date'] = labeled_date(r'(?:New\s+Payment\s+)?Effective\s+Date')
+    if not data.get('statement_date'):
+        header_date = re.search(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b', text, re.IGNORECASE)
+        if header_date:
+            data['statement_date'] = _normalize_date(header_date.group(0))
+    data['projected_minimum_balance'] = amount(r'Projected\s+Minimum\s+Balance')
+    data['required_minimum_balance'] = amount(r'Required\s+Minimum\s+Balance')
+    cushion = re.search(r'(?:selected\s+minimum\s+allowed\s+balance|cushion)\s+is\s+\$\s*([\d,]+\.\d{2})', text, re.IGNORECASE)
+    data['escrow_cushion'] = float(cushion.group(1).replace(',', '')) if cushion else None
+    data['shortage_amount'] = amount(r'Shortage\s+Amount')
+    data['overage_amount'] = amount(r'Overage\s+Amount')
+    refund = re.search(r'(?:refund|check)[^\n$]{0,80}\$\s*([\d,]+\.\d{2})', text, re.IGNORECASE)
+    data['refund_amount'] = float(refund.group(1).replace(',', '')) if refund else data.get('overage_amount')
+
+    decision = re.search(
+        r'Principal\s*&\s*Interest:\s*([^\n]+)\n\s*Escrow\s+Payment:\s*([^\n]+)(?:\n\s*Shortage:\s*([^\n]+))?\n\s*Monthly\s+Payment:\s*([^\n]+)',
+        text, re.IGNORECASE,
+    )
+    if decision:
+        rows = [[float(item.replace(',', '')) for item in re.findall(r'\$\s*([\d,]+\.\d{2})', group)] for group in decision.groups()]
+        if rows[0]: data['principal_interest_payment'] = rows[0][0]
+        if rows[1]:
+            data['current_escrow_payment'] = rows[1][0]
+            data['new_escrow_payment'] = rows[1][-1]
+        if rows[3]:
+            data['current_total_payment'] = rows[3][0]
+            data['new_total_payment'] = rows[3][-1]
+        if len(rows[1]) >= 3 and len(rows[2]) >= 2 and rows[2][-1] > 0:
+            data['selected_payment_option'] = 'OPTION_B_WITH_SHORTAGE'
+    if data.get('current_escrow_payment') is None:
+        escrow_line = re.search(r'^\s*Escrow\s+Payment:\s*([^\n]+)', text, re.IGNORECASE | re.MULTILINE)
+        escrow_values = [float(item.replace(',', '')) for item in re.findall(r'\$\s*([\d,]+\.\d{2})', escrow_line.group(1))] if escrow_line else []
+        if escrow_values:
+            data['current_escrow_payment'] = escrow_values[0]
+            data['new_escrow_payment'] = escrow_values[-1]
+    if data.get('current_escrow_payment') is None:
+        data['current_escrow_payment'] = amount(r'Current\s+Escrow\s+Payment')
+    if data.get('current_escrow_payment') is None:
+        legacy_payment = re.search(r'monthly\s+mortgage\s+payment[^$]*\$\s*([\d,]+\.\d{2})[^$]*\$\s*([\d,]+\.\d{2})\s+was\s+for\s+principal\s+and\s+interest[^$]*\$\s*([\d,]+\.\d{2})\s+went\s+into\s+your\s+escrow', text, re.IGNORECASE | re.DOTALL)
+        if legacy_payment:
+            data['current_total_payment'] = float(legacy_payment.group(1).replace(',', ''))
+            data['principal_interest_payment'] = float(legacy_payment.group(2).replace(',', ''))
+            data['current_escrow_payment'] = float(legacy_payment.group(3).replace(',', ''))
+    if data.get('new_escrow_payment') is None:
+        data['new_escrow_payment'] = amount(r'New\s+Escrow\s+Payment')
+    if data.get('principal_interest_payment') is None:
+        data['principal_interest_payment'] = amount(r'Principal\s*&\s*Interest')
+    monthly_line = re.search(r'^\s*Monthly\s+Payment:\s*([^\n]+)', text, re.IGNORECASE | re.MULTILINE)
+    monthly_values = [float(item.replace(',', '')) for item in re.findall(r'\$\s*([\d,]+\.\d{2})', monthly_line.group(1))] if monthly_line else []
+    if monthly_values:
+        data['current_total_payment'] = monthly_values[0]
+        data['new_total_payment'] = monthly_values[-1]
+    shortage_line = re.search(r'^\s*Shortage:\s*([^\n]+)', text, re.IGNORECASE | re.MULTILINE)
+    shortage_values = [float(item.replace(',', '')) for item in re.findall(r'\$\s*([\d,]+\.\d{2})', shortage_line.group(1))] if shortage_line else []
+    if shortage_values and shortage_values[-1] > 0:
+        data['selected_payment_option'] = 'OPTION_B_WITH_SHORTAGE'
+
+    history_range = re.search(r'Escrow\s+Account\s+Disbursement\s+From\s+([A-Za-z]+\s+\d{4})\s+To\s+([A-Za-z]+\s+\d{4})', text, re.IGNORECASE)
+    projection_range = re.search(r'Future\s+Escrow\s+Account\s+Activity\s+For\s+([A-Za-z]+\s+\d{4})\s+To\s+([A-Za-z]+\s+\d{4})', text, re.IGNORECASE)
+    if history_range:
+        data['history_period_start'] = month_date(history_range.group(1))
+        data['history_period_end'] = month_date(history_range.group(2), end=True)
+    if projection_range:
+        data['projection_period_start'] = month_date(projection_range.group(1))
+        data['projection_period_end'] = month_date(projection_range.group(2), end=True)
+    if not data.get('history_period_start'):
+        explicit_history = re.search(r'Escrow\s+Account\s+History\s+(\d{2}/\d{2}/\d{4})\s+(?:through|to)\s+(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
+        if explicit_history:
+            data['history_period_start'] = _normalize_date(explicit_history.group(1))
+            data['history_period_end'] = _normalize_date(explicit_history.group(2))
+    if not data.get('projection_period_start'):
+        explicit_projection = re.search(r'Escrow\s+Account\s+Projection\s+(\d{2}/\d{2}/\d{4})\s+(?:through|to)\s+(\d{2}/\d{2}/\d{4})', text, re.IGNORECASE)
+        if explicit_projection:
+            data['projection_period_start'] = _normalize_date(explicit_projection.group(1))
+            data['projection_period_end'] = _normalize_date(explicit_projection.group(2))
+    legacy_activity_range = re.search(r'activity\s+in\s+your\s+Escrow\s+Account\s+from\s+(\d{2}-\d{2}-\d{4})\s+through\s+(\d{2}-\d{2}-\d{4})', text, re.IGNORECASE)
+    if legacy_activity_range and not data.get('history_period_start'):
+        data['history_period_start'] = _normalize_date(legacy_activity_range.group(1))
+        data['history_period_end'] = _normalize_date(legacy_activity_range.group(2))
+
+    history_start = text.lower().find('escrow account activity history for')
+    projection_start = text.lower().find('future escrow account activity for')
+    history_block = text[history_start:projection_start if projection_start > history_start else len(text)] if history_start >= 0 else ''
+    projection_block = text[projection_start:] if projection_start >= 0 else ''
+    summary_block = text[text.lower().find('escrow account disbursement from'):history_start] if history_start >= 0 else text
+    data['estimated_tax'] = amount(r'Estimated\s+Tax', summary_block)
+    data['actual_tax'] = amount(r'Actual\s+Tax', summary_block)
+    data['estimated_insurance'] = amount(r'Estimated\s+Insurance', summary_block)
+    data['actual_insurance'] = amount(r'Actual\s+Insurance', summary_block)
+    data['estimated_total_disbursement'] = amount(r'Estimated\s+Total', summary_block)
+    data['actual_total_disbursement'] = amount(r'Actual\s+Total', summary_block)
+
+    projection_summary = text[text.lower().find('escrow account projection'):projection_start] if projection_start >= 0 else text
+    data['projected_tax'] = amount(r'(?:COUNTY\s+TAX(?:ES)?|PROPERTY\s+TAX(?:ES)?)', projection_summary)
+    data['projected_insurance'] = amount(r'(?:HOMEOWNERS\s+INS(?:URANCE)?|HAZARD\s+INSURANCE)', projection_summary)
+    data['projected_total'] = amount(r'(?:Total\s+Annual\s+Taxes\s+And\s+Insurance|Total\s+Escrow)', projection_summary)
+    data['projected_monthly_escrow'] = amount(r'New\s+Monthly\s+Escrow\s+Payment', projection_summary)
+    if data.get('new_escrow_payment') is None:
+        data['new_escrow_payment'] = data.get('projected_monthly_escrow')
+
+    activities = []
+    row_pattern = re.compile(r'^\s*(\d{2}/\d{4})\s+(.+?)\s*$', re.MULTILINE)
+    for block, phase in ((history_block, 'HISTORICAL'), (projection_block, 'PROJECTED')):
+        for match in row_pattern.finditer(block):
+            line = match.group(0).strip()
+            description_part = match.group(2)
+            if description_part.lower().startswith(('totals', 'this amount')):
+                continue
+            values = [float(value.replace(',', '')) for value in re.findall(r'\$\s*([\d,]+\.\d{2})', line)]
+            source_description = re.split(r'\s+\$\s*[\d,]+\.\d{2}', description_part, maxsplit=1)[0].strip()
+            item = {
+                'activity_date': month_date(match.group(1)),
+                'activity_type': category(source_description),
+                'source_description': source_description,
+                'phase': 'PARTIALLY_PROJECTED' if phase == 'HISTORICAL' and '**' in line else phase,
+                'value_status': 'NOT_REMITTED' if '**' in line else ('ACTUAL' if phase == 'HISTORICAL' else 'PROJECTED'),
+            }
+            if phase == 'HISTORICAL':
+                if item['activity_type'] == 'BEGINNING_BALANCE' and len(values) >= 2:
+                    item['estimated_balance'], item['actual_balance'] = values[-2:]
+                elif len(values) >= 6:
+                    item.update(dict(zip(
+                        ('estimated_deposit', 'actual_deposit', 'estimated_disbursement', 'actual_disbursement', 'estimated_balance', 'actual_balance'),
+                        values[-6:],
+                    )))
+                    if item['value_status'] == 'NOT_REMITTED':
+                        item['actual_deposit'] = item['actual_disbursement'] = item['actual_balance'] = None
+            else:
+                if item['activity_type'] == 'BEGINNING_BALANCE' and len(values) >= 2:
+                    item['estimated_balance'], item['required_balance'] = values[-2:]
+                elif len(values) >= 4:
+                    item.update(dict(zip(
+                        ('estimated_deposit', 'estimated_disbursement', 'estimated_balance', 'required_balance'),
+                        values[-4:],
+                    )))
+            activities.append(item)
+    if not activities and legacy_activity_range:
+        from datetime import datetime as _dt
+        history_end = _dt.strptime(data['history_period_end'], '%Y-%m-%d')
+        cursor_year = int(data['history_period_start'][:4])
+        previous_month = int(data['history_period_start'][5:7]) - 1
+        legacy_rows = []
+        for match in re.finditer(r'^\s*(\d{2})\s+([^\n]+)$', text, re.MULTILINE):
+            month = int(match.group(1))
+            if month < 1 or month > 12:
+                continue
+            if previous_month and month < previous_month:
+                cursor_year += 1
+            previous_month = month
+            line = match.group(2)
+            activity_date = f'{cursor_year:04d}-{month:02d}-01'
+            phase = 'HISTORICAL' if (cursor_year, month) <= (history_end.year, history_end.month) else 'PROJECTED'
+            description_match = re.search(r'(TRANSFER\s+BAL|COUNTY\s+TAXES|HAZ\s+INSURANC\w*)', line, re.IGNORECASE)
+            description = description_match.group(1) if description_match else 'Deposit'
+            numbers = [float(value) for value in re.findall(r'(?<!\d)(\d{1,7}(?:\.\d{2}))(?!\d)', line)]
+            item = {
+                'activity_date': activity_date,
+                'activity_type': category(description),
+                'source_description': description,
+                'phase': phase,
+                'value_status': 'ACTUAL' if phase == 'HISTORICAL' else 'PROJECTED',
+            }
+            if item['activity_type'] in {'PROPERTY_TAX', 'HOMEOWNERS_INSURANCE'} and numbers:
+                before_description = line[:description_match.start()] if description_match else line
+                disbursement_values = [float(value) for value in re.findall(r'(?<!\d)(\d{1,7}(?:\.\d{2}))(?!\d)', before_description)]
+                item['estimated_disbursement'] = disbursement_values[-1] if disbursement_values else numbers[-1]
+            elif item['activity_type'] == 'ESCROW_TRANSFER' and numbers:
+                item['actual_disbursement'] = numbers[-1]
+            elif numbers:
+                item['estimated_deposit'] = numbers[0]
+                if phase == 'HISTORICAL' and len(numbers) > 1:
+                    item['actual_deposit'] = numbers[1]
+            legacy_rows.append(item)
+        activities = legacy_rows
+        projected_dates = [item['activity_date'] for item in activities if item['phase'] == 'PROJECTED']
+        if projected_dates:
+            data['projection_period_start'] = min(projected_dates)
+            last = _dt.strptime(max(projected_dates), '%Y-%m-%d')
+            import calendar
+            data['projection_period_end'] = last.replace(day=calendar.monthrange(last.year, last.month)[1]).strftime('%Y-%m-%d')
+    data['activities'] = activities
+
+    year_source = data.get('statement_date') or data.get('effective_date')
+    if year_source:
+        data['statement_year'] = int(str(year_source)[:4])
+    if data.get('projection_period_start'):
+        data['expense_year'] = int(data['projection_period_start'][:4])
+    data['period_type'] = 'yearly'
+    return {key: value for key, value in data.items() if value is not None}
 
 
 def detect_period_type(data: Dict[str, Any]) -> str:
@@ -427,6 +694,7 @@ def parse_property_address(text: str) -> Dict[str, Any]:
     # number — coupon stubs sometimes repeat the label with other text after it.
     data = {}
     line1 = line2 = ''
+    address_context = ''
     for mm in re.finditer(r'property\s*address[:\s]*([^\n]*)\n?([^\n]*)?', text, re.IGNORECASE):
         cand1 = (mm.group(1) or '').strip()
         cand2 = (mm.group(2) or '').strip()
@@ -434,9 +702,11 @@ def parse_property_address(text: str) -> Dict[str, Any]:
             cand1, cand2 = cand2, ''
         if re.match(r'^\d', cand1):  # value begins with a house number
             line1, line2 = cand1, cand2
+            address_context = text[mm.start():mm.end() + 600]
             break
         if not line1:
             line1, line2 = cand1, cand2
+            address_context = text[mm.start():mm.end() + 600]
     if not line1:
         return {}
 
@@ -461,6 +731,20 @@ def parse_property_address(text: str) -> Dict[str, Any]:
     # ZIP wrapped to the start of the next line (multi-column layouts)
     elif (zm := re.match(r'^(\d{5})(?:-\d{4})?\b', line2)):
         data['property_zip'] = zm.group(1)
+
+    # Multi-column PDFs can insert payment-table rows between the street and
+    # city/state line. Search only the nearby address block so we recover the
+    # locality without accidentally using the servicer's mailing address.
+    if not all(data.get(key) for key in ('property_city', 'property_state', 'property_zip')):
+        nearby_csz = re.search(
+            r'^\s*([A-Za-z][A-Za-z .\-]*?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b',
+            address_context,
+            re.MULTILINE,
+        )
+        if nearby_csz:
+            data.setdefault('property_city', nearby_csz.group(1).strip())
+            data.setdefault('property_state', nearby_csz.group(2))
+            data.setdefault('property_zip', nearby_csz.group(3))
 
     parts = [p for p in (s.strip() for s in blob.split(',')) if p]
     if not parts:
@@ -530,6 +814,16 @@ def _find_amount(text: str, label_patterns: list) -> Optional[float]:
     return None
 
 
+def _money_values(text: str) -> list:
+    values = []
+    for raw in re.findall(r'\$?\s*([\d,]+\.\d{2})', text or ''):
+        try:
+            values.append(float(raw.replace(',', '')))
+        except ValueError:
+            continue
+    return values
+
+
 _MONTH_NAMES = {m.lower(): i for i, m in enumerate(
     ['January', 'February', 'March', 'April', 'May', 'June', 'July',
      'August', 'September', 'October', 'November', 'December'], 1)}
@@ -569,6 +863,16 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
         names = parse_borrowers_block(text)
     for i, name in enumerate(names[:4], 1):
         data[f'borrower_{i}'] = name
+
+    # Servicer identity is often presented as a logo, while the legal lender
+    # name appears only in the disclosures. Keep both values for matching and
+    # display rather than relying on the uploaded filename.
+    if re.search(r'JPMorgan\s+Chase\s+Bank\s*,?\s*N\.?A\.?', text, re.IGNORECASE):
+        data['lender_name'] = 'JPMorgan Chase Bank, N.A.'
+        data['servicer_name'] = 'Chase'
+    elif re.search(r'\bCHASE\b', text) and re.search(r'chase\.com/(?:MyMortgage|Statement)', text, re.IGNORECASE):
+        data['lender_name'] = 'JPMorgan Chase Bank, N.A.'
+        data['servicer_name'] = 'Chase'
 
     acct_m = re.search(
         r'(?:mortgage\s+)?(?:account|loan)\s+(?:number|no\.?|#)[:|\s]*([\dXx*\-]{4,})',
@@ -666,6 +970,50 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
         elif round(float(data.get('escrow_amount') or 0), 2) > round(component_total, 2):
             data['monthly_other_escrow'] = round(float(data.get('escrow_amount') or 0) - component_total, 2)
         data['escrow_included'] = True
+
+    ytd_m = re.search(
+        r'paid\s+year\s+to\s+date(?P<body>.*?)(?:total\s+paid\s+year\s+to\s+date|escrow\s+disbursements|phone:|page\s+\d)',
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if ytd_m:
+        ytd_body = ytd_m.group('body')
+        ytd_values = _money_values(ytd_body)
+        principal_ytd = _find_amount(ytd_body, [r'principal:'])
+        interest_ytd = _find_amount(ytd_body, [r'interest:'])
+        escrow_ytd = _find_amount(ytd_body, [r'escrow\s+amount\s*\(taxes\s*&\s*insurance\):', r'escrow:'])
+        if principal_ytd is None and len(ytd_values) >= 1:
+            principal_ytd = ytd_values[0]
+        if interest_ytd is None and len(ytd_values) >= 2:
+            interest_ytd = ytd_values[1]
+        if escrow_ytd is None and len(ytd_values) >= 3:
+            escrow_ytd = ytd_values[2]
+        if principal_ytd is not None:
+            data['principal_paid_ytd'] = principal_ytd
+        if interest_ytd is not None:
+            data['interest_paid_ytd'] = interest_ytd
+        if escrow_ytd is not None:
+            data['escrow_paid_ytd'] = escrow_ytd
+
+    # Chase and similar statements render "Paid since last statement" and
+    # "Paid year-to-date" as adjacent columns. MarkItDown preserves each data
+    # row but can move the headers elsewhere, so parse rows containing exactly
+    # the two reported amounts. This is source data, not an amortization
+    # estimate; do not derive either amount from balances.
+    if re.search(r'paid\s+since\s+.*?paid\s+.*?year[\s-]*to[\s-]*date', text, re.IGNORECASE | re.DOTALL):
+        two_amount_row = r'\$\s*([\d,]+\.\d{2})\s+\$\s*([\d,]+\.\d{2})'
+        principal_row = re.search(r'^\s*Principal\s+' + two_amount_row + r'\s*$', text, re.IGNORECASE | re.MULTILINE)
+        interest_row = re.search(r'^\s*Interest\s+' + two_amount_row + r'\s*$', text, re.IGNORECASE | re.MULTILINE)
+        total_row = re.search(r'^\s*Total\s+' + two_amount_row + r'\s*$', text, re.IGNORECASE | re.MULTILINE)
+        if principal_row:
+            data['principal_paid_last_statement'] = float(principal_row.group(1).replace(',', ''))
+            data['principal_paid_ytd'] = float(principal_row.group(2).replace(',', ''))
+        if interest_row:
+            data['interest_paid_last_statement'] = float(interest_row.group(1).replace(',', ''))
+            data['interest_paid_ytd'] = float(interest_row.group(2).replace(',', ''))
+        if total_row:
+            data['total_paid_last_statement'] = float(total_row.group(1).replace(',', ''))
+            data['total_paid_ytd'] = float(total_row.group(2).replace(',', ''))
 
     # "principal:" (colon) catches the bare "Principal: $531.46" payment-
     # breakdown label without matching "principal balance:" (no colon there).
@@ -1452,24 +1800,178 @@ def parse_property_tax(text: str) -> Dict[str, Any]:
     return data
 
 
+def parse_insurance_declaration(text: str) -> Dict[str, Any]:
+    """Extract the annual premium and coverage period from an insurance declaration."""
+    data: Dict[str, Any] = parse_property_address(text)
+
+    effective = re.search(
+        r'(?:policy\s+)?effective\s+date\s*:?[\s$]*([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})',
+        text,
+        re.IGNORECASE,
+    )
+    expiration = re.search(
+        r'(?:policy\s+)?expiration\s+date\s*:?[\s$]*([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})',
+        text,
+        re.IGNORECASE,
+    )
+    period = re.search(
+        r'policy\s+period\s*:?[\s$]*([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})\s+(?:to|through|-)\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})',
+        text,
+        re.IGNORECASE,
+    )
+    if period:
+        data['period_start'] = _normalize_date(period.group(1))
+        data['period_end'] = _normalize_date(period.group(2))
+    else:
+        if effective:
+            data['period_start'] = _normalize_date(effective.group(1))
+        if expiration:
+            data['period_end'] = _normalize_date(expiration.group(1))
+
+    premium = _find_amount(text, [
+        r'total\s+(?:annual\s+)?policy\s+premium',
+        r'annual\s+(?:homeowners?\s+|hazard\s+)?insurance\s+premium',
+        r'total\s+premium',
+        r'policy\s+premium',
+    ])
+    if premium is None:
+        monthly = _find_amount(text, [r'monthly\s+(?:insurance\s+)?premium'])
+        if monthly is not None:
+            premium = round(monthly * 12, 2)
+    if premium is not None:
+        data['annual_insurance'] = round(premium, 2)
+
+    year_source = data.get('period_start') or data.get('period_end')
+    if not year_source:
+        statement = re.search(
+            r'(?:statement|issue)\s+date\s*:?[\s$]*([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})',
+            text,
+            re.IGNORECASE,
+        )
+        if statement:
+            data['statement_date'] = _normalize_date(statement.group(1))
+            year_source = data['statement_date']
+    if year_source:
+        year_match = re.search(r'(?:19|20)\d{2}', str(year_source))
+        if year_match:
+            data['statement_year'] = int(year_match.group(0))
+    data['period_type'] = 'yearly'
+    return data
+
+
 def parse_loan_disclosure(text: str) -> Dict[str, Any]:
-    """Extract loan terms from Loan Estimate / Closing Disclosure."""
-    data = parse_property_address(text)
+    """Extract opening loan terms from a Loan Estimate or refinance disclosure.
+
+    A disclosure establishes debt terms. It does not report YTD activity or a
+    current verified statement balance, so those fields remain the domain of
+    1098 forms and monthly mortgage statements.
+    """
+    is_closing_disclosure = bool(re.search(
+        r'^\s*closing\s+disclosure\s*$',
+        text,
+        re.IGNORECASE | re.MULTILINE,
+    ))
+    data = parse_closing_statement(text) if is_closing_disclosure else parse_property_address(text)
+    if re.search(r'^\s*loan\s+estimate\s*$', text, re.IGNORECASE | re.MULTILINE):
+        data['document_type'] = 'LOAN_ESTIMATE'
+        data['classification_confidence'] = 0.99
+
+    # CFPB transaction tables often use "Property" without a colon and may
+    # include checkbox artifacts after the street on the same line.
+    property_m = re.search(
+        r'^\s*Property\s*:?[ \t]*'
+        r'(\d+[^\n]*?\b' + _STREET_SUFFIX + r'\.?)[^\n]*\n\s*'
+        r'([^,\n]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b',
+        text,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if property_m:
+        data['property_address'] = property_m.group(1).strip()
+        data['property_city'] = property_m.group(2).strip()
+        data['property_state'] = property_m.group(3).upper()
+        data['property_zip'] = property_m.group(4)
+
+    # Full identifier, including hyphenated suffixes. The older closing parser
+    # intentionally accepted numeric IDs only and truncated this value.
+    account_candidates = []
+    for account_line in re.findall(r'^.*loan\s*id\s*#?.*$', text, re.IGNORECASE | re.MULTILINE):
+        tail = re.split(r'loan\s*id\s*#?', account_line, maxsplit=1, flags=re.IGNORECASE)[-1]
+        account_m = re.match(r'\s*([A-Z0-9-]+(?:\s+(?=\d)\d+)*)', tail, re.IGNORECASE)
+        if account_m:
+            account_candidates.append(re.sub(r'\s+', '', account_m.group(1)))
+    if account_candidates:
+        data['account_number'] = max(account_candidates, key=len)
+        data['loan_id'] = data['account_number']
+
+    purpose_m = re.search(r'\bPurpose\s+(Purchase|Refinance|Construction|Home\s+Equity)\b', text, re.IGNORECASE)
+    if purpose_m:
+        data['loan_purpose'] = purpose_m.group(1).strip().title()
+        data['transaction_purpose'] = data['loan_purpose'].upper()
+
+    product_m = re.search(r'\bLoan\s+Type\b[^\n]*?\b(Conventional|FHA|VA|USDA)\b', text, re.IGNORECASE)
+    if product_m:
+        data['loan_product'] = product_m.group(1).upper() if product_m.group(1).upper() in {'FHA', 'VA', 'USDA'} else product_m.group(1).title()
+    elif re.search(r'C\s*o\s*n\s*v\s*e\s*n\s*t\s*i\s*o\s*n\s*a\s*l', text, re.IGNORECASE):
+        data['loan_product'] = 'Conventional'
+
+    # Prefer the transaction-information lender. Some PDF extractors place the
+    # lender label on the following line after both settlement-agent and lender
+    # names have been flattened together.
+    transaction_lender = re.search(
+        r'\bLender[ \t]+(.+?)[ \t]+MIC\s*#',
+        text,
+        re.IGNORECASE,
+    )
+    lender_m = re.search(r'^\s*Lender[ \t]*:?[ \t]+(?!Credits\b)([^\n]+)', text, re.IGNORECASE | re.MULTILINE)
+    lender = transaction_lender.group(1).strip() if transaction_lender else (lender_m.group(1).strip() if lender_m else '')
+    if not lender:
+        stacked_lender = re.search(r'^([^\n]+)\n\s*Lender\s*$', text, re.IGNORECASE | re.MULTILINE)
+        previous_line = stacked_lender.group(1).strip() if stacked_lender else ''
+        split_agent = re.search(
+            r'(?:Inc\.?|LLC|Ltd\.?|Company|Corporation)\s+(.+)$',
+            previous_line,
+            re.IGNORECASE,
+        )
+        if split_agent:
+            lender = split_agent.group(1).strip()
+    if lender and not lender.lower().startswith('credits'):
+        data['lender_name'] = lender.rstrip('.')
 
     # Loan amount
     loan_m = re.search(
         r'loan\s+amount[:\s]+\$?([\d,]+\.?\d*)', text, re.IGNORECASE
     )
+    if not loan_m:
+        loan_m = re.search(
+            r'\$?([\d,]+\.?\d*)\s*\n?\s*Loan\s+Amount\b',
+            text,
+            re.IGNORECASE,
+        )
     if loan_m:
-        data['original_amount'] = float(loan_m.group(1).replace(',', ''))
+        original_amount = float(loan_m.group(1).replace(',', ''))
+        if original_amount >= 10000:
+            data['original_amount'] = original_amount
+            data['current_balance'] = original_amount
+            data['current_balance_source'] = 'loan_disclosure_initial_balance'
+            data['current_balance_verified'] = False
 
     # Rate
     rate_m = re.search(r'interest\s+rate[:\s]+([\d.]+)\s*%', text, re.IGNORECASE)
+    if not rate_m:
+        # Some CFPB PDFs flatten the value before its label:
+        # "4.125% NO" followed by "Interest Rate".
+        rate_m = re.search(
+            r'([\d.]+)\s*%\s*(?:NO|YES)?\s*\n?\s*Interest\s+Rate\b',
+            text,
+            re.IGNORECASE,
+        )
     if rate_m:
         data['interest_rate'] = float(rate_m.group(1))
 
     # Loan term
     term_m = re.search(r'loan\s+term[:\s]+(\d+)\s*years?', text, re.IGNORECASE)
+    if not term_m:
+        term_m = re.search(r'(\d+)\s*years?\s*\n\s*loan\s+term\b', text, re.IGNORECASE)
     if term_m:
         data['loan_term_years'] = int(term_m.group(1))
 
@@ -1487,6 +1989,84 @@ def parse_loan_disclosure(text: str) -> Dict[str, Any]:
     if payment_m:
         data['monthly_payment'] = float(payment_m.group(1).replace(',', ''))
 
+    if data.get('loan_type') == 'ARM':
+        if re.search(r'beginning\s+of\s+121st\s+month', text, re.IGNORECASE):
+            data['arm_first_change_month'] = 121
+            data['arm_product'] = '10/6 ARM'
+        frequency_m = re.search(r'every\s+(\d+)\s+months?\s+after\s+first\s+change', text, re.IGNORECASE)
+        if frequency_m:
+            data['arm_adjustment_frequency_months'] = int(frequency_m.group(1))
+        margin_m = re.search(r'index\s*\+\s*margin\s+.+?\+\s*([\d.]+)\s*%', text, re.IGNORECASE)
+        if margin_m:
+            data['arm_margin'] = float(margin_m.group(1))
+        limits_m = re.search(r'minimum/maximum\s+interest\s+rate\s+([\d.]+)%\s*/\s*([\d.]+)%', text, re.IGNORECASE)
+        if limits_m:
+            data['minimum_interest_rate'] = float(limits_m.group(1))
+            data['maximum_interest_rate'] = float(limits_m.group(2))
+
+    issued_m = re.search(r'date\s+issued\s+(\d{1,2}/\d{1,2}/\d{2,4})', text, re.IGNORECASE)
+    if issued_m:
+        data['issued_date'] = _normalize_date(issued_m.group(1))
+
+    sale_price = _find_amount(text, [r'sale\s+price'])
+    if sale_price is not None:
+        data['purchase_price'] = sale_price
+        data['sale_price'] = sale_price
+    estimated_closing = _find_amount(text, [r'estimated\s+closing\s+costs'])
+    if estimated_closing is None:
+        estimated_closing_m = re.search(
+            r'\$\s*([\d,]+(?:\.\d{1,2})?)\s+[^\n]*(?:\n\s*)?estimated\s+closing\s+costs',
+            text,
+            re.IGNORECASE,
+        )
+        if estimated_closing_m:
+            estimated_closing = float(estimated_closing_m.group(1).replace(',', ''))
+    if estimated_closing is not None:
+        data['closing_costs'] = estimated_closing
+    estimated_cash = _find_amount(text, [r'estimated\s+cash\s+to\s+close'])
+    if estimated_cash is None:
+        estimated_cash_m = re.search(
+            r'\$\s*([\d,]+(?:\.\d{1,2})?)\s+[^\n]*(?:\n\s*)?estimated\s+cash\s+to\s+close',
+            text,
+            re.IGNORECASE,
+        )
+        if estimated_cash_m:
+            estimated_cash = float(estimated_cash_m.group(1).replace(',', ''))
+    if estimated_cash is not None:
+        data['cash_to_close'] = estimated_cash
+
+    # Derive the down payment only when financing and cash-to-close math
+    # independently reconcile to the same value.
+    if not data.get('down_payment') and data.get('purchase_price') and data.get('original_amount'):
+        financing_down = round(float(data['purchase_price']) - float(data['original_amount']), 2)
+        cash_down = None
+        if data.get('cash_to_close') is not None and data.get('closing_costs') is not None:
+            cash_down = round(float(data['cash_to_close']) - float(data['closing_costs']), 2)
+        if financing_down >= 0 and cash_down is not None and abs(financing_down - cash_down) <= 1:
+            data['down_payment'] = financing_down
+            data['down_payment_source'] = 'purchase_price_minus_loan_amount_reconciled_to_cash_to_close'
+
+    property_costs = _find_amount(text, [r'estimated\s+taxes\s*,?\s*insurance\s*&\s*assessments'])
+    if property_costs is None:
+        property_costs_m = re.search(
+            r'estimated\s+taxes\s*,?\s*insurance(?:\s*&\s*assessments)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)',
+            text,
+            re.IGNORECASE,
+        )
+        if property_costs_m:
+            property_costs = float(property_costs_m.group(1).replace(',', ''))
+    if property_costs is not None:
+        data['estimated_non_escrow_property_costs_monthly'] = property_costs
+    if re.search(r'estimated\s+escrow\s+\+?\s*0\b', text, re.IGNORECASE):
+        data['escrow_included'] = False
+
+    closing_m = re.search(r'closing\s+date\s*:?\s*(\d{1,2}/\d{1,2}/\d{2,4})', text, re.IGNORECASE)
+    if closing_m:
+        data['origination_date'] = _normalize_date(closing_m.group(1))
+
+    if data.get('monthly_payment') and data.get('estimated_total_monthly_payment') is None:
+        data['estimated_total_monthly_payment'] = data['monthly_payment']
+
     return data
 
 
@@ -1494,7 +2074,7 @@ def _normalize_date(s: str) -> Optional[str]:
     """Convert human-readable date strings to YYYY-MM-DD; return as-is if not parseable."""
     from datetime import datetime
     for fmt in ("%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b %d %Y",
-                "%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+                "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y", "%Y-%m-%d"):
         try:
             return datetime.strptime(s.strip(), fmt).strftime("%Y-%m-%d")
         except ValueError:
@@ -1510,15 +2090,33 @@ def _parse_amount(s: str) -> Optional[float]:
         return None
 
 
-def _line_after_label_amount(text: str, label_pattern: str) -> Optional[float]:
+def _line_after_label_amount(
+    text: str,
+    label_pattern: str,
+    *,
+    min_value: Optional[float] = None,
+    prefer_last_on_line: bool = False,
+) -> Optional[float]:
     m = re.search(label_pattern, text, re.IGNORECASE | re.MULTILINE)
     if not m:
         return None
-    rest = text[m.end(): m.end() + 160]
-    amount = re.search(r'\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)', rest)
-    if not amount:
+    line_start = text.rfind('\n', 0, m.start()) + 1
+    line_end = text.find('\n', m.end())
+    if line_end == -1:
+        line_end = len(text)
+    line_rest = text[m.end():line_end]
+    rest = line_rest if line_rest.strip() else text[m.end(): m.end() + 160]
+
+    # Prefer comma-formatted money first. This avoids reading dates or rates
+    # such as "4/12" or "4.12%" as a mortgage principal.
+    matches = re.findall(r'\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)', rest)
+    if not matches and min_value is None:
+        matches = re.findall(r'\$?\s*(\d+(?:\.\d{1,2})?)', rest)
+    amounts = [_parse_amount(match) for match in matches]
+    amounts = [amount for amount in amounts if amount is not None and (min_value is None or amount >= min_value)]
+    if not amounts:
         return None
-    return _parse_amount(amount.group(1))
+    return amounts[-1] if prefer_last_on_line else amounts[0]
 
 
 def _extract_alta_settlement_calculations(text: str) -> Dict[str, Any]:
@@ -1532,6 +2130,19 @@ def _extract_alta_settlement_calculations(text: str) -> Dict[str, Any]:
     data: Dict[str, Any] = {}
     compact = re.sub(r'\s+', ' ', text)
     lines = [line.strip() for line in text.splitlines()]
+
+    payoff_match = re.search(
+        r'\bPayoff\(s\)\s+(?:to\s+)?(.+?)\s+\$\s*([\d,]+(?:\.\d{1,2})?)\b',
+        compact,
+        re.IGNORECASE,
+    )
+    if payoff_match:
+        payoff_lender = re.sub(r'\s+', ' ', payoff_match.group(1)).strip(' :-')
+        payoff_amount = _parse_amount(payoff_match.group(2))
+        if payoff_lender:
+            data["prior_loan_payoff_lender"] = payoff_lender
+        if payoff_amount is not None:
+            data["prior_loan_payoff_amount"] = payoff_amount
 
     def numeric_line_values(start_index: int, stop_patterns: tuple[str, ...] = ()) -> list[float]:
         values = []
@@ -1579,6 +2190,7 @@ def _extract_alta_settlement_calculations(text: str) -> Dict[str, Any]:
             "settlement_debit_total": debit_total,
             "settlement_credit_total": credit_total,
             "settlement_total_amount": credit_total or debit_total or credit_subtotal,
+            "settlement_total_source": "document_totals_last_line",
         })
     elif "Subtotals" in text and "Due To Buyer" in text and "Totals" in text:
         subtotal_index = next((index for index, line in enumerate(lines) if re.fullmatch(r'Subtotals', line, re.IGNORECASE)), -1)
@@ -1595,7 +2207,76 @@ def _extract_alta_settlement_calculations(text: str) -> Dict[str, Any]:
                     "settlement_debit_total": settlement_total,
                     "settlement_credit_total": settlement_total,
                     "settlement_total_amount": settlement_total,
+                    "settlement_total_source": "document_totals_last_line",
                 })
+
+    # Settlement forms can flatten the final balancing row to a single
+    # ``TOTALS`` line without the preceding labels. On settlement/ALTA/HUD
+    # documents, the final amount in the last TOTALS row is the authoritative
+    # final settlement total.
+    if not data.get("settlement_total_amount") and re.search(
+        r'final\s+settlement\s+statement|alta\s+settlement\s+statement|hud-?1\s+settlement\s+statement',
+        text,
+        re.IGNORECASE,
+    ):
+        totals_indexes = [
+            index for index, line in enumerate(lines)
+            if re.match(r'^totals\b', line, re.IGNORECASE)
+        ]
+        if totals_indexes:
+            totals_index = totals_indexes[-1]
+            totals_line = lines[totals_index]
+            total_values = [
+                amount for amount in (
+                    _parse_amount(value)
+                    for value in re.findall(r'\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?)', totals_line)
+                )
+                if amount is not None
+            ]
+            if not total_values:
+                total_values = numeric_line_values(totals_index + 1, (r'^Copyright', r'^Page\s+\d+\b'))[:4]
+            if total_values:
+                settlement_total = total_values[-1]
+                data["settlement_total_amount"] = settlement_total
+                data["settlement_total_source"] = "document_totals_last_line"
+                if len(total_values) >= 2:
+                    data.setdefault("settlement_debit_total", total_values[-2])
+                    data.setdefault("settlement_credit_total", settlement_total)
+
+    # Layout-preserving PDF extraction commonly keeps the final balancing row
+    # on one line. Capture each accounting column explicitly. These amounts
+    # are retained for audit and are not treated as purchase price or costs.
+    totals_lines = [line for line in lines if re.match(r'^TOTALS\b', line, re.IGNORECASE)]
+    if totals_lines:
+        total_values = [
+            amount for amount in (
+                _parse_amount(value)
+                for value in re.findall(r'([\d,]+\.\d{2})', totals_lines[-1])
+            )
+            if amount is not None
+        ]
+        if len(total_values) >= 2:
+            data['settlement_debit_total'] = total_values[-2]
+            data['settlement_credit_total'] = total_values[-1]
+            data['settlement_total_amount'] = total_values[-1]
+            data['settlement_total_source'] = 'settlement_credit_total'
+
+    balance_due_match = re.search(
+        r'(?:Balance\s+)?Due\s+FROM\s+Buyer[^\n\d]*([\d,]+\.\d{2})',
+        text,
+        re.IGNORECASE,
+    )
+    if not balance_due_match:
+        balance_due_match = re.search(
+            r'Due\s+From\s+Borrower[^\n\d]*([\d,]+\.\d{2})',
+            text,
+            re.IGNORECASE,
+        )
+    if balance_due_match:
+        balance_due = _parse_amount(balance_due_match.group(1))
+        data['cash_to_close'] = balance_due
+        data['balance_due_from_buyer'] = balance_due
+        data['total_due_from_borrower_cash'] = balance_due
 
     important_fields = [
         ("sale_price", "Sale Price", r'\bSale\s+Price\b'),
@@ -1624,11 +2305,20 @@ def _extract_alta_settlement_calculations(text: str) -> Dict[str, Any]:
         ("natural_hazard_disclosure_fee", "Natural Hazard Disclosure Fee", r'\bFAN\s+HD\s+Lot\s+Report\s+Fee\b'),
     ]
     line_items = []
+    if data.get("prior_loan_payoff_amount") is not None:
+        line_items.append({
+            "key": "prior_loan_payoff_amount",
+            "label": f"Prior loan payoff to {data.get('prior_loan_payoff_lender') or 'lender'}",
+            "amount": data["prior_loan_payoff_amount"],
+        })
     for key, label, pattern in important_fields:
         if key in data:
             line_items.append({"key": key, "label": label, "amount": data[key]})
             continue
-        value = _line_after_label_amount(text, pattern)
+        if key == "loan_amount":
+            value = _line_after_label_amount(text, pattern, min_value=10000, prefer_last_on_line=True)
+        else:
+            value = _line_after_label_amount(text, pattern)
         if value is not None:
             line_items.append({"key": key, "label": label, "amount": value})
             data.setdefault(key, value)
@@ -1650,6 +2340,65 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
     Loan / Property model conventions so _apply_extracted() works unchanged.
     """
     data = parse_property_address(text)  # general address extraction first
+    # Document role is derived from the document itself, not from which UI
+    # button initiated the upload. Settlement-style statements establish final
+    # buyer totals; a Closing Disclosure can also establish loan terms.
+    if re.search(
+        r'alta\s+settlement\s+statement|hud-?1\s+settlement\s+statement|'
+        r'estimated\s+buyer[\'’]?s\s+statement|\bsettlement\s+statement\b',
+        text,
+        re.IGNORECASE,
+    ):
+        data['setup_import_role'] = 'settlement_document'
+    else:
+        data['setup_import_role'] = 'closing_document'
+
+    purpose_match = re.search(r'\bPurpose\s*:?\s*(Purchase|Refinance|Modification)\b', text, re.IGNORECASE)
+    if purpose_match:
+        transaction_purpose = purpose_match.group(1).upper()
+    elif re.search(r'\bPayoff\(s\)|TOTAL\s+PAYOFFS\s+AND\s+PAYMENTS', text, re.IGNORECASE):
+        transaction_purpose = 'REFINANCE'
+    elif re.search(r'^\s*Sale\s+Price(?:\s+of\s+Property)?\b', text, re.IGNORECASE | re.MULTILINE):
+        transaction_purpose = 'PURCHASE'
+    else:
+        transaction_purpose = 'UNKNOWN'
+    data['transaction_purpose'] = transaction_purpose
+    data['loan_purpose'] = transaction_purpose.title() if transaction_purpose != 'UNKNOWN' else data.get('loan_purpose')
+    data['document_type'] = 'SETTLEMENT_STATEMENT' if data['setup_import_role'] == 'settlement_document' else 'CLOSING_DISCLOSURE'
+    data['transaction_role'] = (
+        'ACQUISITION_SOURCE' if transaction_purpose == 'PURCHASE'
+        else 'REFINANCE_SOURCE' if transaction_purpose == 'REFINANCE'
+        else 'SUPPORTING_SOURCE'
+    )
+    data['classification_confidence'] = 0.99 if purpose_match else (0.94 if transaction_purpose != 'UNKNOWN' else 0.6)
+
+    issued_match = re.search(r'Date\s+Issued\s*:?\s*(\d{1,2}/\d{1,2}/\d{2,4})', text, re.IGNORECASE)
+    if issued_match:
+        data['issued_date'] = _normalize_date(issued_match.group(1))
+    disbursement_match = re.search(
+        r'Disbursement\s+Date\s*:?\s*([A-Za-z]+\s+\d{1,2},?\s*\d{4}|\d{1,2}/\d{1,2}/\d{2,4})',
+        text,
+        re.IGNORECASE,
+    )
+    if disbursement_match:
+        data['disbursement_date'] = _normalize_date(disbursement_match.group(1))
+
+    # Title-company buyer/settlement statements commonly use a compact
+    # "Property:" or "Property Location:" label rather than "Property Address".
+    # Keep this closing-specific and line-anchored so phrases such as
+    # "Sale Price of Property" cannot be mistaken for the subject address.
+    m = re.search(
+        r'^\s*Property(?:\s+Location)?\s*:\s*'
+        r'(\d+[^\n,]*?)(?:,\s*|\n\s*)'
+        r'([^,\n]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b',
+        text,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        data['property_address'] = m.group(1).strip()
+        data['property_city'] = m.group(2).strip()
+        data['property_state'] = m.group(3).upper()
+        data['property_zip'] = m.group(4)
 
     # ── Property address — CFPB "Security Interest" section is most reliable ──
     # "You are granting a security interest in\n10575 East Mission Lane, Scottsdale, AZ 85258"
@@ -1728,9 +2477,12 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
     if m:
         normed = _normalize_date(m.group(1).strip())
         data['settlement_date']  = normed
-        data['purchase_date']    = normed
+        data['closing_date'] = normed
+        if data.get('transaction_purpose') == 'PURCHASE':
+            data['purchase_date'] = normed
         data['origination_date'] = normed
-        data['purchase_date_source'] = 'closing_or_settlement_date'
+        if data.get('transaction_purpose') == 'PURCHASE':
+            data['purchase_date_source'] = 'closing_or_settlement_date'
 
     if not data.get('purchase_date') and re.search(r'\bpurpose\s+purchase\b', text, re.IGNORECASE):
         m = re.search(
@@ -1773,7 +2525,7 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
     m = re.search(r'^\s*loan\s+amount\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE | re.MULTILINE)
     if m:
         v = _parse_amount(m.group(1))
-        if v:
+        if v and v >= 10000:
             data['original_amount'] = v
     # CFPB two-column layout: "Loan Amount" on its own line; value appears as a
     # standalone "$NNN,NNN" line several lines later (right-column flush).
@@ -1794,6 +2546,17 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
         v = _parse_amount(m.group(1))
         if v:
             data['down_payment'] = v
+    if (
+        not data.get('original_amount')
+        and data.get('purchase_price')
+        and data.get('down_payment')
+        and float(data.get('purchase_price') or 0) > float(data.get('down_payment') or 0)
+    ):
+        derived_original = round(float(data['purchase_price']) - float(data['down_payment']), 2)
+        if derived_original >= 10000:
+            data['original_amount'] = derived_original
+            data['loan_amount'] = derived_original
+            data['loan_amount_source'] = 'purchase_price_minus_down_payment'
     # ── Deposit / earnest money (ALTA) ────────────────────────────────────────
     m = re.search(r'^deposit\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE | re.MULTILINE)
     if m:
@@ -1812,11 +2575,51 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
 
     # ── Cash to close ─────────────────────────────────────────────────────────
     # CFPB page 3 "Summary of Transactions" has the definitive number
-    m = re.search(r'cash\s+to\s+close\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE)
-    if m:
-        v = _parse_amount(m.group(1))
+    cash_lines = re.findall(r'^.*cash\s+to\s+close.*$', text, re.IGNORECASE | re.MULTILINE)
+    cash_values = [
+        amount for line in cash_lines for amount in (
+            _parse_amount(value) for value in re.findall(r'\$\s*([\d,]+(?:\.\d{1,2})?)', line)
+        ) if amount is not None
+    ]
+    if cash_values:
+        v = cash_values[-1]
         if v:
             data['cash_to_close'] = v
+
+    total_due_matches = re.findall(
+        r'(?:Total\s+)?Due\s+from\s+Borrower(?:\s+at\s+Closing)?[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+        text,
+        re.IGNORECASE,
+    )
+    if total_due_matches:
+        data['total_due_from_borrower'] = _parse_amount(total_due_matches[-1])
+    total_paid_matches = re.findall(
+        r'Total\s+Paid\s+Already\s+by\s+or\s+on\s+Behalf\s+of\s+Borrower[^\n$-]*-?\$?\s*([\d,]+(?:\.\d{1,2})?)',
+        text,
+        re.IGNORECASE,
+    )
+    if total_paid_matches:
+        data['total_paid_on_behalf_of_borrower'] = _parse_amount(total_paid_matches[-1])
+    paid_before_matches = re.findall(
+        r'Closing\s+Costs\s+Paid\s+Before\s+Closing[^\n$-]*-?\$?\s*([\d,]+(?:\.\d{1,2})?)',
+        text,
+        re.IGNORECASE,
+    )
+    if paid_before_matches:
+        data['deposit_paid_before_closing'] = _parse_amount(paid_before_matches[-1])
+
+    payoff_total_lines = re.findall(
+        r'^.*(?:K\.\s*)?TOTAL\s+PAYOFFS\s+AND\s+PAYMENTS.*$',
+        text,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    payoff_total_values = [
+        amount for line in payoff_total_lines for amount in (
+            _parse_amount(value) for value in re.findall(r'\$\s*([\d,]+(?:\.\d{1,2})?)', line)
+        ) if amount is not None
+    ]
+    if payoff_total_values:
+        data['total_payoffs_and_payments'] = payoff_total_values[-1]
 
     # ── Borrower-paid closing costs ───────────────────────────────────────────
     # CFPB forms often show "Borrower-Paid Closing Costs" or "Closing Costs
@@ -1825,24 +2628,19 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
     for pat in [
         r'borrower[\s-]*paid\s+closing\s+costs?[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
         r'total\s+closing\s+costs?[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
+        r'^\s*closing\s+costs?\s*\$?\s*([\d,]+(?:\.\d{1,2})?)\s*$',
         r'closing\s+costs?[^\n$]{0,60}borrower[\s-]*paid[^\n$]*\$?\s*([\d,]+(?:\.\d{1,2})?)',
     ]:
-        m = re.search(pat, text, re.IGNORECASE)
+        m = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
         if m:
             v = _parse_amount(m.group(1))
             if v:
                 data['closing_costs'] = v
                 break
 
-    if data.get('settlement_total_amount') and data.get('purchase_price'):
-        derived_closing_costs = round(
-            float(data['settlement_total_amount']) - float(data['purchase_price']),
-            2,
-        )
-        if derived_closing_costs >= 0:
-            data['settlement_purchase_price_adjustment'] = derived_closing_costs
-            data['closing_costs'] = derived_closing_costs
-            data['closing_costs_source'] = 'settlement_total_minus_purchase_price'
+    # Settlement debit/credit totals are accounting controls, not closing
+    # costs. Keep these semantic values independent and never derive one from
+    # the other.
 
     # ── Interest rate ─────────────────────────────────────────────────────────
     # CFPB inline: "Interest Rate 3.625%" on same line
@@ -1964,6 +2762,7 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
 
 
 CATEGORY_TITLES = {
+    'escrow_analysis': 'Annual Escrow Analysis',
     'mortgage_statement': 'Mortgage Statement',
     'tax_return': 'Tax Return',
     '1098': 'Form 1098 - Mortgage Interest Statement',
@@ -2048,6 +2847,26 @@ def to_markdown(category: str, data: Dict[str, Any]) -> str:
             ('interest_due', 'Interest Portion'),
         ])
 
+    if category == 'escrow_analysis':
+        section(data, 'Escrow Payment', [
+            ('loan_number', 'Loan Number'),
+            ('property_address', 'Property Address'),
+            ('statement_date', 'Statement Date'),
+            ('effective_date', 'New Payment Effective Date'),
+            ('current_escrow_payment', 'Current Escrow Payment'),
+            ('new_escrow_payment', 'New Escrow Payment'),
+        ])
+        section(data, 'Annual Tax And Insurance', [
+            ('history_period_start', 'History Period Start'),
+            ('history_period_end', 'History Period End'),
+            ('estimated_tax', 'Estimated Tax'),
+            ('actual_tax', 'Actual Tax'),
+            ('estimated_insurance', 'Estimated Insurance'),
+            ('actual_insurance', 'Actual Insurance'),
+            ('projected_tax', 'Projected Tax'),
+            ('projected_insurance', 'Projected Insurance'),
+            ('projected_total', 'Projected Total'),
+        ])
     if category == 'closing_statement':
         display = dict(data)
         full_addr = data.get('property_address', '')
@@ -2162,7 +2981,9 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
         if category == 'auto':
             category = detect_category(text)
 
-        if category == 'mortgage_statement':
+        if category == 'escrow_analysis':
+            raw_data = parse_escrow_analysis(text)
+        elif category == 'mortgage_statement':
             raw_data = parse_mortgage_statement(text)
             _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
         elif category == 'tax_return':
@@ -2198,13 +3019,22 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
         elif category == '1099':
             raw_data = parse_1099(text)
         elif category == 'closing_statement':
-            raw_data = parse_closing_statement(text)
+            # Purchase Closing Disclosures serve two workflows: Property Setup
+            # uses sale/closing values, while Loan Setup uses their debt terms.
+            # Keep the category stable and enrich the extracted payload.
+            raw_data = (
+                parse_loan_disclosure(text)
+                if re.search(r'closing\s+disclosure', text, re.IGNORECASE)
+                else parse_closing_statement(text)
+            )
         elif category == 'loan_disclosure':
             raw_data = parse_loan_disclosure(text)
         elif category == 'bank_statement':
             raw_data = parse_bank_statement(text)
         elif category == 'property_tax':
             raw_data = parse_property_tax(text)
+        elif category == 'insurance_declaration':
+            raw_data = parse_insurance_declaration(text)
         else:
             raw_data = {'raw_text_preview': text[:500]}
 

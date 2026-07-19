@@ -12,8 +12,10 @@ from pathlib import Path
 from database import SessionLocal
 import models
 from services.document_parser import parse_document
-from routers.documents import _apply_extracted, _parse_date
+from routers.documents import _apply_extracted, _apply_escrow_analysis, _parse_date
 from routers.properties import import_tax_return
+from services.expense_source_engine import rebuild_annual_expenses
+from services.loan_lifecycle import classify_document, resolve_property_lifecycle
 import json
 
 UPLOAD_DIR = Path(__file__).parent / "uploads"
@@ -21,6 +23,7 @@ UPLOAD_DIR = Path(__file__).parent / "uploads"
 
 async def main():
     db = SessionLocal()
+    source_archive = Path(os.environ["PROPERTYLENS_SOURCE_ARCHIVE"]) if os.environ.get("PROPERTYLENS_SOURCE_ARCHIVE") else None
 
     try:
         users = db.query(models.User).all()
@@ -38,11 +41,20 @@ async def main():
             categories: dict[str, int] = {}
             by_property: dict = {}
             common_tax_returns = []
+            escrow_docs = []
+            expense_properties = set()
+            lifecycle_properties = set()
 
             for doc in docs:
                 path = UPLOAD_DIR / doc.filename
+                archived_path = source_archive / doc.original_filename if source_archive else None
+                if not path.exists() and archived_path and archived_path.exists():
+                    path = archived_path
                 if not path.exists():
                     errors.append(f"  MISSING FILE: doc_id={doc.id} file={doc.original_filename}")
+                    if doc.property:
+                        classify_document(doc)
+                        lifecycle_properties.add(doc.property)
                     continue
                 try:
                     category, extracted, markdown = parse_document(str(path), "auto")
@@ -67,7 +79,15 @@ async def main():
                 categories[category] = categories.get(category, 0) + 1
 
                 if doc.property:
+                    lifecycle_properties.add(doc.property)
                     by_property.setdefault(doc.property, []).append(extracted)
+                    if category == "escrow_analysis":
+                        escrow_docs.append((doc.property, doc, extracted))
+                        expense_properties.add(doc.property)
+                        doc.module_tags = "EXPENSES"
+                    elif category in {"property_tax", "insurance_declaration"}:
+                        expense_properties.add(doc.property)
+                        doc.module_tags = "EXPENSES"
                 elif category == "tax_return":
                     common_tax_returns.append((doc.id, str(path)))
 
@@ -78,6 +98,20 @@ async def main():
                 )
                 for data in extracted_list:
                     _apply_extracted(db, prop, data)
+
+            for prop, doc, extracted in escrow_docs:
+                _apply_escrow_analysis(db, user, prop, doc, extracted)
+            for prop in expense_properties:
+                metrics = rebuild_annual_expenses(db, prop)
+                print(f"  Expense migration: property={prop.id} metrics={len(metrics)}")
+
+            for prop in lifecycle_properties:
+                result = resolve_property_lifecycle(db, prop)
+                print(
+                    f"  Loan lifecycle migration: property={prop.id} "
+                    f"transactions={len(result.get('documentGroups', []))} "
+                    f"loans={len(result.get('loans', []))}"
+                )
 
             db.commit()
 

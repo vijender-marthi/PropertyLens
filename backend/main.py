@@ -84,6 +84,15 @@ MIGRATIONS = {
         "down_payment": "FLOAT DEFAULT 0.0",
         "settlement_total_amount": "FLOAT DEFAULT 0.0",
 "closing_costs": "FLOAT DEFAULT 0.0",
+        "cash_to_close": "FLOAT DEFAULT 0.0",
+        "deposit_paid_before_closing": "FLOAT DEFAULT 0.0",
+        "total_due_from_borrower": "FLOAT DEFAULT 0.0",
+        "total_paid_on_behalf_of_borrower": "FLOAT DEFAULT 0.0",
+        "settlement_debit_total": "FLOAT DEFAULT 0.0",
+        "settlement_credit_total": "FLOAT DEFAULT 0.0",
+        "seller_credits": "FLOAT DEFAULT 0.0",
+        "tax_prorations": "FLOAT DEFAULT 0.0",
+        "hoa_prorations": "FLOAT DEFAULT 0.0",
 "hoa_flag": "BOOLEAN DEFAULT 0",
 "hoa_history": "TEXT DEFAULT '[]'",
         "hoa_special_assessment": "FLOAT DEFAULT 0.0",
@@ -106,6 +115,18 @@ MIGRATIONS = {
         "display_name": "VARCHAR",
         "content_hash": "VARCHAR",
         "content_fingerprint": "VARCHAR",
+        "module_tags": "VARCHAR DEFAULT ''",
+        "document_type": "VARCHAR",
+        "transaction_purpose": "VARCHAR",
+        "transaction_role": "VARCHAR",
+        "classification_confidence": "FLOAT DEFAULT 0.0",
+        "normalized_text": "TEXT",
+        "parser_version": "VARCHAR",
+        "pipeline_status": "VARCHAR",
+        "conversion_metadata": "TEXT DEFAULT '{}'",
+    },
+    "property_tax_records": {
+        "candidate_property_id": "INTEGER",
     },
     "tax_return_entries": {
         "record_uuid": "VARCHAR",
@@ -126,7 +147,7 @@ MIGRATIONS = {
 "years_remaining": "FLOAT DEFAULT 0.0",
 "annual_straight_line_depreciation": "FLOAT DEFAULT 0.0",
 },
-"loans": {
+    "loans": {
         "loan_product": "VARCHAR",
         "rate_note": "VARCHAR",
         "status": "VARCHAR DEFAULT 'OPEN'",
@@ -164,14 +185,273 @@ MIGRATIONS = {
 	"current_balance_source": "VARCHAR",
 	"current_balance_as_of": "VARCHAR",
 	"current_balance_verified": "BOOLEAN DEFAULT 1",
+        "purpose": "VARCHAR",
+        "disbursement_date": "VARCHAR",
+        "balance_as_of": "VARCHAR",
+        "lender_at_origination": "VARCHAR",
+        "current_servicer": "VARCHAR",
+        "refinanced_into_loan_id": "INTEGER",
+        "refinanced_from_loan_id": "INTEGER",
+        "resolution_confidence": "FLOAT DEFAULT 0.0",
 	},
+    "property_transactions": {
+        "resolution_key": "VARCHAR",
+    },
     "annual_expenses": {
         "property_tax_source": "VARCHAR DEFAULT 'manual'",
         "insurance_source": "VARCHAR DEFAULT 'manual'",
     },
+    "escrow_payments": {
+        "servicer": "VARCHAR",
+        "principal_interest_payment": "FLOAT",
+        "current_total_payment": "FLOAT",
+        "new_total_payment": "FLOAT",
+        "projected_monthly_escrow": "FLOAT",
+        "refund_amount": "FLOAT",
+        "projected_minimum_balance": "FLOAT",
+        "required_minimum_balance": "FLOAT",
+        "escrow_cushion": "FLOAT",
+        "selected_payment_option": "VARCHAR",
+        "estimated_total_disbursement": "FLOAT",
+        "actual_total_disbursement": "FLOAT",
+    },
 	}
 
 TABLE_MIGRATIONS = [
+    """
+    CREATE TABLE IF NOT EXISTS property_tax_records (
+        id VARCHAR PRIMARY KEY,
+        property_id INTEGER,
+        candidate_property_id INTEGER,
+        owner_id INTEGER NOT NULL,
+        document_id INTEGER NOT NULL UNIQUE,
+        document_type VARCHAR NOT NULL,
+        tax_type VARCHAR NOT NULL,
+        issuer VARCHAR,
+        property_address VARCHAR,
+        parcel_number VARCHAR,
+        tracer_number VARCHAR,
+        tax_rate_area VARCHAR,
+        fiscal_year_label VARCHAR,
+        fiscal_period_start VARCHAR,
+        fiscal_period_end VARCHAR,
+        event_type VARCHAR,
+        event_date VARCHAR,
+        supplemental_assessment NUMERIC(18,2),
+        total_tax_rate_percent NUMERIC(12,6),
+        proration_percent NUMERIC(12,6),
+        tax_before_proration NUMERIC(18,2),
+        total_amount_billed NUMERIC(18,2),
+        payment_status VARCHAR,
+        identity_key VARCHAR NOT NULL,
+        related_event_key VARCHAR,
+        structured_json TEXT NOT NULL DEFAULT '{}',
+        validation_json TEXT NOT NULL DEFAULT '{}',
+        parser_name VARCHAR,
+        parser_version VARCHAR,
+        classification_confidence FLOAT DEFAULT 0.0,
+        property_match_confidence FLOAT DEFAULT 0.0,
+        property_match_status VARCHAR DEFAULT 'MATCHED',
+        status VARCHAR DEFAULT 'READY',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        FOREIGN KEY(property_id) REFERENCES properties(id),
+        FOREIGN KEY(candidate_property_id) REFERENCES properties(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id),
+        FOREIGN KEY(document_id) REFERENCES documents(id),
+        UNIQUE(owner_id, identity_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS property_tax_corrections (
+        id VARCHAR PRIMARY KEY,
+        property_tax_record_id VARCHAR NOT NULL,
+        owner_id INTEGER NOT NULL,
+        field_path VARCHAR NOT NULL,
+        original_value_json TEXT,
+        corrected_value_json TEXT,
+        reason TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(property_tax_record_id) REFERENCES property_tax_records(id),
+        FOREIGN KEY(owner_id) REFERENCES users(id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS property_transactions (
+        id VARCHAR PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        owner_id INTEGER NOT NULL,
+        resolution_key VARCHAR,
+        transaction_type VARCHAR NOT NULL,
+        purpose VARCHAR NOT NULL,
+        closing_date VARCHAR,
+        disbursement_date VARCHAR,
+        purchase_price FLOAT,
+        appraised_value FLOAT,
+        borrower_paid_closing_costs FLOAT,
+        down_payment FLOAT,
+        cash_to_close FLOAT,
+        deposit_paid_before_closing FLOAT,
+        total_due_from_borrower FLOAT,
+        total_paid_on_behalf_of_borrower FLOAT,
+        settlement_debit_total FLOAT,
+        settlement_credit_total FLOAT,
+        seller_credits FLOAT,
+        tax_prorations FLOAT,
+        hoa_prorations FLOAT,
+        confidence FLOAT DEFAULT 0.0,
+        status VARCHAR DEFAULT 'RESOLVED',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        FOREIGN KEY(property_id) REFERENCES properties (id),
+        FOREIGN KEY(owner_id) REFERENCES users (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS transaction_document_links (
+        id VARCHAR PRIMARY KEY,
+        transaction_id VARCHAR NOT NULL,
+        document_id INTEGER NOT NULL,
+        source_role VARCHAR,
+        source_priority INTEGER DEFAULT 99,
+        fields_used TEXT DEFAULT '[]',
+        match_confidence FLOAT DEFAULT 0.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(transaction_id) REFERENCES property_transactions (id),
+        FOREIGN KEY(document_id) REFERENCES documents (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS transaction_loan_links (
+        id VARCHAR PRIMARY KEY,
+        transaction_id VARCHAR NOT NULL,
+        loan_id INTEGER NOT NULL,
+        role VARCHAR DEFAULT 'ORIGINATED_DEBT',
+        lien_position INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(transaction_id) REFERENCES property_transactions (id),
+        FOREIGN KEY(loan_id) REFERENCES loans (id),
+        UNIQUE(transaction_id, loan_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS loan_servicer_segments (
+        id VARCHAR PRIMARY KEY,
+        loan_id INTEGER NOT NULL,
+        servicer VARCHAR,
+        account_number VARCHAR,
+        normalized_account_number VARCHAR NOT NULL DEFAULT '',
+        from_date VARCHAR NOT NULL DEFAULT '',
+        to_date VARCHAR,
+        is_current BOOLEAN DEFAULT 1,
+        source_document_id INTEGER,
+        confidence FLOAT DEFAULT 0.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        FOREIGN KEY(loan_id) REFERENCES loans (id),
+        FOREIGN KEY(source_document_id) REFERENCES documents (id),
+        UNIQUE(loan_id, normalized_account_number, from_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS loan_document_links (
+        id VARCHAR PRIMARY KEY,
+        loan_id INTEGER NOT NULL,
+        document_id INTEGER NOT NULL,
+        source_role VARCHAR,
+        fields_used TEXT DEFAULT '[]',
+        priority INTEGER DEFAULT 99,
+        confidence FLOAT DEFAULT 0.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(loan_id) REFERENCES loans (id),
+        FOREIGN KEY(document_id) REFERENCES documents (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS loan_balance_snapshots (
+        id VARCHAR PRIMARY KEY,
+        loan_id INTEGER NOT NULL,
+        property_id INTEGER NOT NULL,
+        as_of_date VARCHAR NOT NULL,
+        balance FLOAT,
+        principal_paid_ytd FLOAT,
+        interest_paid_ytd FLOAT,
+        payment FLOAT,
+        source_document_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(loan_id) REFERENCES loans (id),
+        FOREIGN KEY(property_id) REFERENCES properties (id),
+        FOREIGN KEY(source_document_id) REFERENCES documents (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS loan_resolution_discrepancies (
+        id VARCHAR PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        loan_id INTEGER,
+        transaction_id VARCHAR,
+        field_name VARCHAR NOT NULL,
+        selected_value TEXT,
+        conflicting_value TEXT,
+        selected_document_id INTEGER,
+        conflicting_document_id INTEGER,
+        difference FLOAT,
+        status VARCHAR DEFAULT 'OPEN',
+        reason TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(property_id) REFERENCES properties (id),
+        FOREIGN KEY(loan_id) REFERENCES loans (id),
+        FOREIGN KEY(transaction_id) REFERENCES property_transactions (id),
+        FOREIGN KEY(selected_document_id) REFERENCES documents (id),
+        FOREIGN KEY(conflicting_document_id) REFERENCES documents (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS loan_resolution_aliases (
+        id VARCHAR PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        old_loan_id INTEGER NOT NULL,
+        canonical_loan_id INTEGER NOT NULL,
+        reason VARCHAR,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(property_id) REFERENCES properties (id),
+        FOREIGN KEY(canonical_loan_id) REFERENCES loans (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS escrow_payments (
+        id VARCHAR PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        owner_id INTEGER NOT NULL,
+        loan_id INTEGER,
+        document_id INTEGER NOT NULL UNIQUE,
+        loan_number VARCHAR,
+        property_address VARCHAR,
+        statement_date VARCHAR,
+        effective_date VARCHAR,
+        history_period_start VARCHAR,
+        history_period_end VARCHAR,
+        projection_period_start VARCHAR,
+        projection_period_end VARCHAR,
+        expense_year INTEGER,
+        current_escrow_payment FLOAT,
+        new_escrow_payment FLOAT,
+        estimated_tax FLOAT,
+        actual_tax FLOAT,
+        estimated_insurance FLOAT,
+        actual_insurance FLOAT,
+        projected_tax FLOAT,
+        projected_insurance FLOAT,
+        projected_total FLOAT,
+        shortage_amount FLOAT,
+        overage_amount FLOAT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        FOREIGN KEY(property_id) REFERENCES properties (id),
+        FOREIGN KEY(loan_id) REFERENCES loans (id),
+        FOREIGN KEY(document_id) REFERENCES documents (id)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS annual_expenses (
         id INTEGER PRIMARY KEY,
@@ -191,6 +471,58 @@ TABLE_MIGRATIONS = [
         insurance_source VARCHAR DEFAULT 'manual',
         source_status VARCHAR DEFAULT 'manual',
         notes TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        FOREIGN KEY(property_id) REFERENCES properties (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS escrow_activities (
+        id VARCHAR PRIMARY KEY,
+        escrow_payment_id VARCHAR NOT NULL,
+        property_id INTEGER NOT NULL,
+        owner_id INTEGER NOT NULL,
+        document_id INTEGER NOT NULL,
+        activity_date VARCHAR,
+        activity_type VARCHAR,
+        source_description VARCHAR,
+        phase VARCHAR,
+        value_status VARCHAR,
+        estimated_deposit FLOAT,
+        actual_deposit FLOAT,
+        estimated_disbursement FLOAT,
+        actual_disbursement FLOAT,
+        estimated_balance FLOAT,
+        actual_balance FLOAT,
+        required_balance FLOAT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(escrow_payment_id) REFERENCES escrow_payments (id),
+        FOREIGN KEY(property_id) REFERENCES properties (id),
+        FOREIGN KEY(document_id) REFERENCES documents (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS annual_expense_metrics (
+        id VARCHAR PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        owner_id INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        expense_type VARCHAR NOT NULL,
+        value FLOAT,
+        status VARCHAR,
+        completeness VARCHAR,
+        source_type VARCHAR,
+        source_label VARCHAR,
+        allocation_method VARCHAR,
+        coverage_json TEXT DEFAULT '{}',
+        formula TEXT,
+        inputs_json TEXT DEFAULT '[]',
+        computation TEXT,
+        document_ids_json TEXT DEFAULT '[]',
+        supporting_document_ids_json TEXT DEFAULT '[]',
+        discrepancies_json TEXT DEFAULT '[]',
+        excluded_rows_json TEXT DEFAULT '[]',
+        confidence FLOAT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME,
         FOREIGN KEY(property_id) REFERENCES properties (id)
@@ -239,6 +571,32 @@ with engine.connect() as conn:
         for col, ddl in columns.items():
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+    conn.commit()
+
+# Refinance describes why a debt closed; it is not a separate lifecycle state.
+# Keep this idempotent so legacy databases are normalized on every deployment.
+with engine.connect() as conn:
+    conn.execute(text("""
+        UPDATE loans
+        SET status = 'CLOSED',
+            closure_reason = CASE
+                WHEN upper(status) = 'REFINANCED'
+                  OR refinanced_into_loan_id IS NOT NULL
+                  OR lower(coalesce(transfer_reason, '')) = 'refinanced'
+                THEN 'Refinanced'
+                WHEN closure_reason IS NULL OR trim(closure_reason) = '' THEN 'Closed'
+                ELSE closure_reason
+            END
+        WHERE upper(status) = 'REFINANCED'
+           OR (
+                upper(status) = 'CLOSED'
+                AND (
+                    refinanced_into_loan_id IS NOT NULL
+                    OR lower(coalesce(transfer_reason, '')) = 'refinanced'
+                )
+                AND lower(coalesce(closure_reason, '')) <> 'servicing transfer'
+           )
+    """))
     conn.commit()
 
 with engine.connect() as conn:
@@ -366,6 +724,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(properties.router)
 app.include_router(documents.router)
+app.include_router(documents.property_tax_router)
 app.include_router(sharing.router)
 app.include_router(help_router.router)
 

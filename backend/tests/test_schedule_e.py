@@ -109,7 +109,22 @@ class TestScheduleECaptureEndpoint:
         assert data["assertions"]["depreciationPresentForFullRentalYears"] is True
         assert data["assertions"]["selectedYearStripMatchesHistory"] is True
 
-    def test_partial_year_depreciation_is_less_than_full_rental_year(self, client, user, prop):
+    def test_schedule_e_history_includes_accumulated_total_row(self, client, user, prop):
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year=2023",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        total = data["history"][-1]
+        source_rows = data["history"][:-1]
+        assert total["kind"] == "total"
+        assert total["label"] == "Total"
+        assert total["sourceLabel"] == "Accumulated"
+        assert total["netScheduleE"]["value"] == round(sum(row["netScheduleE"]["value"] for row in source_rows), 2)
+
+    def test_current_year_projected_depreciation_is_full_year_and_splits_into_details(self, client, user, prop):
         current_year = date.today().year
 
         resp = client.get(
@@ -122,8 +137,19 @@ class TestScheduleECaptureEndpoint:
         history = {row["year"]: row for row in data["history"]}
         full_year = current_year - 1
         assert history[full_year]["depreciation"]["value"] > 0
-        assert history[current_year]["depreciation"]["value"] < history[full_year]["depreciation"]["value"]
-        assert data["assertions"]["partialYearDepreciationBelowFullYear"] is True
+        assert history[current_year]["label"] == f"{current_year} Projected *"
+        assert history[current_year]["kind"] == "projected_current_year"
+        assert len(history[current_year]["detailRows"]) == 2
+        detail_total = sum(
+            row["metrics"]["depreciation"]["value"]
+            for row in history[current_year]["detailRows"]
+        )
+        assert history[current_year]["depreciation"]["value"] == pytest.approx(detail_total, abs=0.01)
+        assert history[current_year]["depreciation"]["value"] == pytest.approx(
+            history[full_year]["depreciation"]["value"],
+            abs=0.01,
+        )
+        assert data["assertions"]["currentYearDepreciationSplitMatchesProjectedTotal"] is True
 
     def test_current_year_breakdown_splits_reported_and_projected_rows(self, client, db, user, prop):
         current_year = date.today().year
@@ -186,6 +212,34 @@ class TestScheduleECaptureEndpoint:
         assert detail["reported"]["metrics"]["mortgageInterest"]["value"] == 0.0
         assert detail["reported"]["metrics"]["netScheduleE"]["value"] == 0.0
         assert detail["projected"]["metrics"]["mortgageInterest"]["value"] == breakdown["rows"][0]["metrics"]["mortgageInterest"]["value"]
+
+    def test_current_year_rental_period_splits_amortized_interest_without_statement(self, client, db, user, prop):
+        current_year = date.today().year
+        db.add(models.RentalPeriod(
+            property_id=prop.id,
+            tenant_name="Current tenant",
+            start_year=current_year,
+            start_month=1,
+            monthly_rent=3_200,
+        ))
+        db.commit()
+
+        resp = client.get(
+            f"/api/properties/{prop.id}/taxes/schedule-e?year={current_year}",
+            headers=auth_headers(user.email),
+        )
+
+        assert resp.status_code == 200, resp.text
+        breakdown = resp.json()["currentYearBreakdown"]
+        detail = {row["kind"]: row for row in breakdown["detailRows"]}
+        total_interest = breakdown["rows"][0]["metrics"]["mortgageInterest"]["value"]
+        reported_interest = detail["reported"]["metrics"]["mortgageInterest"]["value"]
+        projected_interest = detail["projected"]["metrics"]["mortgageInterest"]["value"]
+
+        assert breakdown["monthsReported"] == date.today().month
+        assert reported_interest > 0
+        assert projected_interest > 0
+        assert total_interest == pytest.approx(reported_interest + projected_interest, abs=0.01)
 
     def test_filed_schedule_e_values_reconcile_by_line(self, client, db, user, prop):
         doc = models.Document(

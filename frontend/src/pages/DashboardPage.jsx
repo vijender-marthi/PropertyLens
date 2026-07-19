@@ -1,27 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import {
   AlertCircle,
   ArrowRight,
-  BookOpen,
-  Building2,
-  CheckCircle,
+  BarChart3,
+  CalendarDays,
+  CheckCircle2,
   ChevronDown,
-  DollarSign,
   Home,
   Landmark,
-  Shield,
+  RefreshCw,
+  ShieldCheck,
   Sparkles,
   TrendingUp,
+  WalletCards,
 } from 'lucide-react'
-import toast from 'react-hot-toast'
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -30,312 +26,384 @@ import {
   YAxis,
 } from 'recharts'
 import PageContainer from '../components/PageContainer'
-import DataTable from '../components/DataTable'
 import { propAPI } from '../services/api'
+import { formatCurrencyCompact, formatCurrency, formatPercent, formatRatio } from '../utils/formatters'
 import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
 
-const storyAccent = 'text-blue-700'
-
-const severityClass = {
-  critical: 'border-red-200 bg-red-50 text-red-950',
-  warning: 'border-amber-200 bg-amber-50 text-amber-950',
-  info: 'border-blue-200 bg-blue-50 text-blue-950',
+const KPI_ICONS = {
+  portfolioValue: Home,
+  totalEquity: Landmark,
+  monthlyNetCashFlow: WalletCards,
+  portfolioLtv: ShieldCheck,
+  annualNoi: BarChart3,
+  propertiesNeedingAttention: AlertCircle,
 }
 
-function metricText(metric) {
-  return metric?.display ?? metric?.fullDisplay ?? '—'
+function num(value, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function metricFullText(metric) {
-  return metric?.fullDisplay ?? metricText(metric)
+function money(value) {
+  return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 1, mDigits: 2 })
 }
 
-function DashboardShell({ children }) {
-  return <PageContainer>{children}</PageContainer>
+function metricValue(metric) {
+  if (!metric) return '—'
+  if (metric.unit === 'percent') return formatPercent(metric.value)
+  if (metric.unit === 'ratio') return formatRatio(metric.value)
+  if (metric.unit === 'count') return String(metric.value ?? 0)
+  return metric.display || metric.fullDisplay || money(metric.value)
 }
 
-function MetricEvidence({ metric, large = false }) {
+function metricTone(metric) {
+  if (metric?.status === 'data_issue') return 'text-amber-700 bg-amber-50 ring-amber-100'
+  if (num(metric?.value) < 0) return 'text-red-700 bg-red-50 ring-red-100'
+  return 'text-blue-700 bg-blue-50 ring-blue-100'
+}
+
+function DashboardCard({ children, className = '' }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{metric?.label || 'Metric'}</p>
-      <p className={`${large ? 'text-3xl' : 'text-xl'} mt-2 font-semibold text-slate-950`}>{metricText(metric)}</p>
-      {metric?.reason ? <p className="mt-2 text-xs text-amber-700">{metric.reason}</p> : null}
-    </div>
-  )
-}
-
-function HeroCover({ dashboard }) {
-  const overview = dashboard.overview || []
-  const portfolioValue = overview.find((metric) => metric.key === 'portfolioValue') || overview[0]
-  const netWorth = overview.find((metric) => metric.key === 'totalEquity') || overview[1]
-  const cashFlow = overview.find((metric) => metric.key === 'monthlyNetCashFlow') || overview[2]
-  const health = overview.find((metric) => metric.key === 'propertiesNeedingAttention') || overview[5]
-  const summary = dashboard.stories?.[0]?.chart?.insight || dashboard.stories?.[0]?.explanation || 'Backend portfolio story is unavailable.'
-
-  return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 shadow-sm">
-      <div className="grid gap-8 p-6 lg:grid-cols-[1.15fr_0.85fr] lg:p-8">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">PropertyLens Portfolio Review</p>
-          <h1 className="mt-5 max-w-3xl text-4xl font-semibold tracking-tight text-slate-950 lg:text-5xl">Your rental portfolio, explained like an investment brief.</h1>
-          <p className="mt-5 max-w-2xl text-base leading-7 text-slate-600">{summary}</p>
-          <div className="mt-6 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500">
-            <span>{dashboard.scope?.includedRentalProperties ?? 0} rental properties included</span>
-            <span>{dashboard.scope?.excludedProperties ?? 0} excluded</span>
-            <span>As of {dashboard.asOfDate || '—'}</span>
-            <span>Last refresh {dashboard.lastRefresh || '—'}</span>
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{dashboard.dataQualityStatus || '—'}</span>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <MetricEvidence metric={portfolioValue} large />
-          <MetricEvidence metric={netWorth} large />
-          <MetricEvidence metric={cashFlow} />
-          <MetricEvidence metric={{ label: 'Overall Health', display: dashboard.dataQualityStatus || metricText(health), reason: health?.reason }} />
-        </div>
-      </div>
+    <section className={`rounded-xl border border-gray-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900 ${className}`}>
+      {children}
     </section>
   )
 }
 
-function ChangeStrip({ dashboard }) {
-  const changes = dashboard.changes || (dashboard.overview || []).slice(0, 4).map((metric) => ({
-    key: metric.key,
-    label: metric.label,
-    display: metric.display,
-    direction: metric.status === 'data_issue' ? 'needs review' : 'current',
-    description: metric.description || 'Backend change comparison unavailable.',
-  }))
+function KpiCard({ metric }) {
+  const Icon = KPI_ICONS[metric?.key] || BarChart3
   return (
-    <section className="space-y-4">
-      <EditorialHeader eyebrow="What changed since last review" title="Current movement signals" subtitle="These cards render backend change DTOs when available; otherwise they show current backend signals." />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {changes.map((item) => (
-          <div key={item.key || item.label} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</p>
-            <p className="mt-3 text-2xl font-semibold text-slate-950">{item.display || '—'}</p>
-            <p className="mt-2 text-sm text-slate-500">{item.direction || item.description}</p>
+    <DashboardCard className="p-4">
+      <div className="flex items-start gap-3">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1 ${metricTone(metric)}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-gray-500 dark:text-neutral-400">{metric?.label || 'Metric'}</p>
+          <p className="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{metricValue(metric)}</p>
+          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-500">{metric?.reason || metric?.description || 'Current portfolio signal'}</p>
+        </div>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function FilterBar({ properties, excludedIds, setExcludedIds }) {
+  const includedCount = properties.filter((property) => !excludedIds.has(property.id)).length
+  const toggle = (id) => {
+    setExcludedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  return (
+    <DashboardCard className="p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-neutral-400">Property Filter</p>
+          <p className="mt-1 text-sm text-gray-600 dark:text-neutral-300">{includedCount} of {properties.length} properties included in this executive view</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary text-xs" onClick={() => setExcludedIds(new Set())}>Select all</button>
+          {properties.map((property) => {
+            const selected = !excludedIds.has(property.id)
+            return (
+              <button
+                key={property.id}
+                type="button"
+                onClick={() => toggle(property.id)}
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  selected
+                    ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200'
+                    : 'border-gray-200 bg-white text-gray-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400'
+                }`}
+              >
+                <span className={`h-3.5 w-3.5 rounded border ${selected ? 'border-blue-600 bg-blue-600' : 'border-gray-300'}`} />
+                {property.address || property.name || `Property ${property.id}`}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function HealthGauge({ dashboard }) {
+  const checks = dashboard.dataQuality?.checks || []
+  const healthRows = dashboard.propertyHealth || []
+  const stable = healthRows.filter((row) => row.status === 'Stable').length
+  const score = healthRows.length ? Math.round((stable / healthRows.length) * 10 * 10) / 10 : dashboard.dataQualityStatus === 'Complete' ? 9 : 7
+  const pct = Math.max(0, Math.min(100, score * 10))
+  const label = score >= 8 ? 'Strong' : score >= 6 ? 'Watch' : 'Needs Review'
+
+  return (
+    <DashboardCard className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Portfolio Health</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Executive readiness score</p>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${score >= 8 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{label}</span>
+      </div>
+      <div className="mt-5 flex items-center gap-5">
+        <div
+          className="grid h-32 w-32 shrink-0 place-items-center rounded-full"
+          style={{ background: `conic-gradient(${score >= 8 ? '#10b981' : '#f59e0b'} ${pct}%, #e5e7eb ${pct}%)` }}
+        >
+          <div className="grid h-24 w-24 place-items-center rounded-full bg-white dark:bg-neutral-900">
+            <div className="text-center">
+              <p className="text-3xl font-semibold text-gray-950 dark:text-white">{score}</p>
+              <p className="text-xs text-gray-500">/10</p>
+            </div>
+          </div>
+        </div>
+        <div className="min-w-0 flex-1 space-y-2">
+          {[
+            ['Cash Flow', dashboard.overview?.find((metric) => metric.key === 'monthlyNetCashFlow')?.display],
+            ['Data Quality', dashboard.dataQualityStatus],
+            ['Properties', `${dashboard.scope?.includedRentalProperties || 0} rentals`],
+            ['Validation', checks[0]?.display || checks[0]?.reason || 'Current'],
+          ].map(([labelText, value]) => (
+            <div key={labelText} className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-gray-500 dark:text-neutral-400">{labelText}</span>
+              <span className="font-semibold text-gray-800 dark:text-neutral-100">{value || '—'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function StorySummary({ dashboard }) {
+  const stories = dashboard.stories || []
+  const cashFlow = stories.find((story) => story.key === 'cashFlow') || stories[0]
+  const firstAction = (dashboard.attention?.groups || []).flatMap((group) => group.actions || [])[0]
+  const headline = cashFlow?.chart?.insight || cashFlow?.explanation || 'Portfolio summary is available from backend metrics.'
+  const why = firstAction?.whyItMatters || cashFlow?.chart?.recommendation || 'The dashboard is showing current portfolio movement from rent, operating expenses, and debt service.'
+
+  return (
+    <DashboardCard className="p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-700 ring-1 ring-blue-100">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">AI Story</p>
+          <h2 className="mt-1 text-lg font-semibold text-gray-950 dark:text-white">Tell me what’s happening.</h2>
+          <p className="mt-2 text-sm leading-6 text-gray-700 dark:text-neutral-200">{headline}</p>
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-neutral-800 dark:bg-neutral-950">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-neutral-400">Tell me why it’s happening.</p>
+            <p className="mt-1 text-sm leading-6 text-gray-700 dark:text-neutral-200">{why}</p>
+          </div>
+        </div>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function Waterfall({ dashboard }) {
+  const nodes = dashboard.stories?.find((story) => story.key === 'cashFlow')?.chart?.nodes || []
+  const max = Math.max(...nodes.map((node) => Math.abs(num(node.value || node.runningTotal))), 1)
+  if (!nodes.length) return <EmptyBlock label="Cash flow story unavailable" />
+  return (
+    <DashboardCard className="p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Cash Flow</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Monthly path from rent to net cash flow</p>
+        </div>
+        <Link to="/analytics" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-300">
+          Analyze
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <div className="space-y-3">
+        {nodes.map((node) => {
+          const negative = node.tone === 'negative'
+          const width = Math.max(6, Math.abs(num(node.value || node.runningTotal)) / max * 100)
+          return (
+            <div key={node.key || node.label} className={`grid grid-cols-[8.5rem_1fr_5rem] items-center gap-3 text-xs ${node.total ? 'border-t border-gray-100 pt-3 font-semibold dark:border-neutral-800' : ''}`}>
+              <span className="text-gray-600 dark:text-neutral-300">{node.label}</span>
+              <div className="h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-neutral-800">
+                <div className={`h-full rounded-full ${negative ? 'bg-red-500' : node.total ? 'bg-blue-500' : 'bg-emerald-500'}`} style={{ width: `${width}%` }} />
+              </div>
+              <span className={`text-right font-semibold ${negative ? 'text-red-600' : 'text-gray-950 dark:text-white'}`}>{node.display || node.runningDisplay}</span>
+            </div>
+          )
+        })}
+      </div>
+    </DashboardCard>
+  )
+}
+
+function PropertyRanking({ rows }) {
+  const sorted = (rows || []).slice().sort((a, b) => num(b.monthlyCashFlow?.value) - num(a.monthlyCashFlow?.value))
+  return (
+    <DashboardCard className="p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Property Performance Ranking</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Fast scan for daily attention</p>
+        </div>
+        <Link to="/properties" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-300">View all <ArrowRight className="h-3.5 w-3.5" /></Link>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-neutral-800">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-xs text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
+            <tr>
+              <th className="px-3 py-2 text-left font-semibold">Property</th>
+              <th className="px-3 py-2 text-right font-semibold">Cash Flow</th>
+              <th className="px-3 py-2 text-right font-semibold">DSCR</th>
+              <th className="px-3 py-2 text-right font-semibold">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-neutral-800">
+            {sorted.map((row, index) => (
+              <tr key={row.id || row.property}>
+                <td className="px-3 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`grid h-6 w-6 place-items-center rounded-full text-xs font-semibold ${index < 3 ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{index + 1}</span>
+                    <span className="font-medium text-gray-900 dark:text-neutral-100">{row.property}</span>
+                  </div>
+                </td>
+                <td className={`px-3 py-3 text-right font-semibold ${num(row.monthlyCashFlow?.value) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{row.monthlyCashFlow?.display || '—'}</td>
+                <td className="px-3 py-3 text-right text-gray-700 dark:text-neutral-300">{metricValue(row.dscr)}</td>
+                <td className="px-3 py-3 text-right">
+                  <span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'Stable' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{row.status}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function AllocationBars({ properties }) {
+  const total = properties.reduce((sum, property) => sum + num(property.market_value), 0)
+  if (!properties.length) return <EmptyBlock label="No property allocation data" />
+  return (
+    <DashboardCard className="p-5">
+      <h2 className="text-base font-semibold text-gray-950 dark:text-white">Portfolio Allocation</h2>
+      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">By property value, shown without pie charts</p>
+      <div className="mt-4 space-y-3">
+        {properties.slice().sort((a, b) => num(b.market_value) - num(a.market_value)).map((property) => {
+          const pct = total ? num(property.market_value) / total * 100 : 0
+          return (
+            <div key={property.id || property.name} className="space-y-1.5">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="truncate font-medium text-gray-700 dark:text-neutral-200">{property.name || property.address || `Property ${property.id}`}</span>
+                <span className="text-gray-500">{pct.toFixed(1)}% · {money(property.market_value)}</span>
+              </div>
+              <div className="h-2 rounded-full bg-gray-100 dark:bg-neutral-800">
+                <div className="h-2 rounded-full bg-blue-500" style={{ width: `${Math.max(3, pct)}%` }} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </DashboardCard>
+  )
+}
+
+function CashFlowTrend({ trends }) {
+  const rows = (trends || []).map((row) => ({ year: row.year, cashFlow: num(row.net_income), income: num(row.rental_income) }))
+  if (!rows.length) return <EmptyBlock label="No trend data available" />
+  return (
+    <DashboardCard className="p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Cash Flow Trend</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Yearly net rental income trend</p>
+        </div>
+        <Link to="/analytics" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-300">Deep analysis <ArrowRight className="h-3.5 w-3.5" /></Link>
+      </div>
+      <div className="h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={rows} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+            <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+            <YAxis tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} tickFormatter={(value) => formatCurrencyCompact(value)} />
+            <Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} />
+            <Line type="monotone" dataKey="cashFlow" name="Net Income" stroke={chartColors.primary} strokeWidth={2.5} dot={{ r: 3 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function AttentionPanel({ dashboard }) {
+  const actions = (dashboard.attention?.groups || []).flatMap((group) => group.actions || [])
+  return (
+    <DashboardCard className="p-5">
+      <h2 className="text-base font-semibold text-gray-950 dark:text-white">What Needs Attention</h2>
+      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Prioritized backend recommendations</p>
+      <div className="mt-4 space-y-3">
+        {actions.length ? actions.slice(0, 4).map((action) => (
+          <div key={action.id} className={`rounded-lg border p-3 ${action.severity === 'critical' ? 'border-red-200 bg-red-50 text-red-950' : action.severity === 'warning' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-blue-200 bg-blue-50 text-blue-950'}`}>
+            <p className="text-sm font-semibold">{action.title}</p>
+            <p className="mt-1 text-xs opacity-80">{action.scope} · {action.financialImpact}</p>
+            {action.primaryAction?.href ? <Link to={action.primaryAction.href} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold">Review <ArrowRight className="h-3.5 w-3.5" /></Link> : null}
+          </div>
+        )) : (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+            <CheckCircle2 className="mb-2 h-4 w-4" />
+            No urgent actions in the selected portfolio scope.
+          </div>
+        )}
+      </div>
+    </DashboardCard>
+  )
+}
+
+function ScenarioPanel() {
+  const assumptions = [
+    ['Interest Rate', '5.50%'],
+    ['Rent Increase', '5%'],
+    ['Vacancy Rate', '3%'],
+    ['Maintenance', '10%'],
+    ['Property Tax', '4%'],
+  ]
+  return (
+    <DashboardCard className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-gray-950 dark:text-white">Scenario Snapshot</h2>
+        <Link to="/analytics" className="text-xs font-semibold text-blue-700 dark:text-blue-300">Open</Link>
+      </div>
+      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Fast what-if controls. Deep scenario work lives in Analytics.</p>
+      <div className="mt-4 space-y-2">
+        {assumptions.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2 text-sm dark:border-neutral-800">
+            <span className="text-gray-500 dark:text-neutral-400">{label}</span>
+            <span className="font-semibold text-gray-900 dark:text-neutral-100">{value}</span>
           </div>
         ))}
       </div>
-    </section>
+      <Link to="/analytics" className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
+        Run Analysis
+        <ArrowRight className="h-4 w-4" />
+      </Link>
+    </DashboardCard>
   )
 }
 
-function EditorialHeader({ eyebrow, title, subtitle }) {
-  return (
-    <div className="max-w-3xl">
-      <p className={`text-xs font-semibold uppercase tracking-[0.18em] ${storyAccent}`}>{eyebrow}</p>
-      <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{title}</h2>
-      {subtitle ? <p className="mt-2 text-sm leading-6 text-slate-600">{subtitle}</p> : null}
-    </div>
-  )
-}
-
-function WaterfallVisual({ chart }) {
-  const nodes = chart?.nodes || []
-  if (!nodes.length) return <EmptyVisual />
-  return (
-    <div className="space-y-3">
-      {nodes.map((node) => (
-        <div key={node.key || node.label} className="grid grid-cols-[9rem_1fr_5rem] items-center gap-3 text-sm">
-          <span className="font-medium text-slate-600">{node.label}</span>
-          <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-            <div className={`h-full rounded-full ${node.tone === 'negative' ? 'bg-red-500' : node.tone === 'tax' ? 'bg-purple-500' : 'bg-emerald-500'}`} style={{ width: `${Math.max(8, Math.min(100, Math.abs(Number(node.runningTotal || node.value || 0)) / Math.max(...nodes.map((item) => Math.abs(Number(item.runningTotal || item.value || 0))), 1) * 100))}%` }} />
-          </div>
-          <span className="text-right font-semibold text-slate-950">{node.runningDisplay || node.display}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function StackedEquityVisual({ chart }) {
-  const rows = chart?.series || []
-  if (!rows.length) return <EmptyVisual />
-  return (
-    <div className="space-y-4">
-      {rows.map((row) => (
-        <div key={row.id || row.label}>
-          <div className="mb-1 flex items-center justify-between text-sm">
-            <span className="font-medium text-slate-700">{row.label}</span>
-            <span className="font-semibold text-slate-950">{row.totalDisplay}</span>
-          </div>
-          <div className="flex h-3 overflow-hidden rounded-full bg-slate-100">
-            {(row.segments || []).map((segment) => (
-              <span key={segment.key} className={segment.key === 'appreciation' ? 'bg-emerald-500' : segment.key === 'principalPaydown' ? 'bg-blue-500' : 'bg-slate-400'} style={{ width: `${Math.max(4, Math.min(100, Number(segment.value || 0) / Math.max(Number(row.total || 1), 1) * 100))}%` }} title={`${segment.label}: ${segment.display}`} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function DebtSpectrumVisual({ chart }) {
-  const loans = chart?.loans || []
-  if (!loans.length) return <EmptyVisual />
-  return (
-    <div className="space-y-3">
-      {loans.map((loan) => (
-        <div key={loan.id} className="rounded-lg border border-slate-200 bg-white p-3">
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <div>
-              <p className="font-semibold text-slate-950">{loan.property}</p>
-              <p className="text-xs text-slate-500">{loan.lender} · {loan.balanceDisplay}</p>
-            </div>
-            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${loan.tone === 'negative' ? 'bg-red-50 text-red-700' : loan.tone === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{loan.rateDisplay}</span>
-          </div>
-          {loan.refinanceCandidate ? <p className="mt-2 text-xs font-medium text-red-700">Refinance candidate</p> : null}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function TrendVisual({ chart }) {
-  const series = chart?.series || chart || []
-  if (!Array.isArray(series) || !series.length) return <EmptyVisual />
-  return (
-    <div className="h-60">
-      <ResponsiveContainer width="100%" height="100%">
-        {chart?.type === 'portfolio_area' ? (
-          <AreaChart data={series}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-            <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} />
-            <Tooltip contentStyle={chartTooltipStyle(false)} />
-            <Area type="monotone" dataKey="portfolioValue" name="Portfolio Value" fill={chartColors.primarySoft} stroke={chartColors.primary} />
-            <Line type="monotone" dataKey="equity" name="Equity" stroke={chartColors.success} dot={false} />
-          </AreaChart>
-        ) : (
-          <BarChart data={series}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-            <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} />
-            <Tooltip contentStyle={chartTooltipStyle(false)} />
-            <Bar dataKey="rentalIncome" name="Rental Income" fill={chartColors.positiveSoft} radius={[3, 3, 0, 0]} />
-            <Bar dataKey="netIncome" name="Net Income" fill={chartColors.primary} radius={[3, 3, 0, 0]} />
-            <Bar dataKey="depreciation" name="Depreciation" fill={chartColors.purple} radius={[3, 3, 0, 0]} />
-          </BarChart>
-        )}
-      </ResponsiveContainer>
-    </div>
-  )
-}
-
-function RankingVisual({ rows }) {
-  if (!rows?.length) return <EmptyVisual />
-  return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" margin={{ left: 12, right: 20 }}>
-          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={chartColors.gridLight} />
-          <XAxis type="number" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-          <YAxis type="category" dataKey="property" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={110} />
-          <Tooltip contentStyle={chartTooltipStyle(false)} />
-          <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-            {rows.map((row) => <Cell key={row.id || row.property} fill={row.tone === 'negative' ? chartColors.negative : chartColors.primary} />)}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
-
-function EmptyVisual() {
-  return <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">Backend chart unavailable</div>
-}
-
-function StoryChart({ story }) {
-  const chart = story.chart
-  if (chart?.type === 'waterfall') return <WaterfallVisual chart={chart} />
-  if (chart?.type === 'stacked_equity') return <StackedEquityVisual chart={chart} />
-  if (chart?.type === 'debt_spectrum') return <DebtSpectrumVisual chart={chart} />
-  if (chart?.type === 'tax_grouped' || chart?.type === 'portfolio_area') return <TrendVisual chart={chart} />
-  if (Array.isArray(chart)) return <RankingVisual rows={chart} />
-  return <EmptyVisual />
-}
-
-function StoryChapter({ story }) {
-  const chart = story.chart || {}
-  return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">{story.question || story.title}</p>
-          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{chart.title || story.title}</h3>
-          <p className="mt-3 text-sm leading-6 text-slate-600">{chart.narrative || story.explanation}</p>
-          <blockquote className="mt-5 border-l-4 border-blue-600 pl-4 text-sm font-medium leading-6 text-slate-800">{chart.insight || story.explanation}</blockquote>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {(story.metrics || []).slice(0, 4).map((metric) => <MetricEvidence key={metric.key || metric.label} metric={metric} />)}
-          </div>
-          <div className="mt-5 rounded-lg bg-blue-50 p-4 text-sm text-blue-950">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Recommendation</p>
-            <p className="mt-1">{chart.recommendation || 'Backend recommendation unavailable.'}</p>
-          </div>
-        </div>
-        <div className="rounded-xl bg-slate-50 p-4">
-          <p className="mb-4 text-sm font-semibold text-slate-700">{chart.subtitle || 'Backend chart'}</p>
-          <StoryChart story={story} />
-        </div>
-      </div>
-    </article>
-  )
-}
-
-function ActionGroup({ group }) {
-  if (!group?.actions?.length) return null
-  return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-slate-950">{group.label}</h3>
-      {group.actions.map((action) => (
-        <div key={action.id} className={`rounded-xl border p-4 ${severityClass[action.severity] || severityClass.info}`}>
-          <p className="text-sm font-semibold">{action.title}</p>
-          <p className="mt-1 text-xs opacity-80">{action.scope} · {action.financialImpact}</p>
-          <p className="mt-2 text-sm opacity-90">{action.whyItMatters}</p>
-          {action.primaryAction?.href ? (
-            <Link className="mt-3 inline-flex items-center gap-1 text-xs font-semibold underline-offset-4 hover:underline" to={action.primaryAction.href}>
-              {action.primaryAction.label}
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function PortfolioCoach({ dashboard }) {
-  const firstAction = (dashboard.attention?.groups || []).flatMap((group) => group.actions || [])[0]
-  return (
-    <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6">
-      <div className="flex items-start gap-4">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
-          <Sparkles className="h-5 w-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">AI Portfolio Coach</p>
-          <h2 className="mt-2 text-2xl font-semibold text-slate-950">{firstAction?.title || 'No urgent portfolio action is currently prioritized.'}</h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-700">{firstAction?.whyItMatters || 'Backend recommendations will appear here when the portfolio has a prioritized action.'}</p>
-          <div className="mt-4 flex flex-wrap gap-3 text-sm">
-            <span className="rounded-full bg-white px-3 py-1 font-semibold text-slate-700">Impact: {firstAction?.financialImpact || '—'}</span>
-            <span className="rounded-full bg-white px-3 py-1 font-semibold text-slate-700">Confidence: backend-prioritized</span>
-            {firstAction?.primaryAction?.href ? <Link className="rounded-full bg-blue-700 px-3 py-1 font-semibold text-white" to={firstAction.primaryAction.href}>{firstAction.primaryAction.label}</Link> : null}
-          </div>
-        </div>
-      </div>
-    </section>
-  )
+function EmptyBlock({ label }) {
+  return <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400 dark:border-neutral-700">{label}</div>
 }
 
 export default function DashboardPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [excludedIds, setExcludedIds] = useState(new Set())
-  const [filtersOpen, setFiltersOpen] = useState(false)
 
-  const excludedKey = Array.from(excludedIds).sort((a, b) => a - b).join(',')
+  const excludedKey = useMemo(() => Array.from(excludedIds).sort((a, b) => a - b).join(','), [excludedIds])
 
   useEffect(() => {
     setLoading(true)
@@ -346,128 +414,81 @@ export default function DashboardPage() {
   }, [excludedKey])
 
   const dashboard = data?.executive_dashboard
-  const filterProperties = data?.dashboard?.filter_properties || []
+  const portfolio = data?.dashboard || {}
+  const filterProperties = portfolio.filter_properties || []
 
-  const healthColumns = [
-    { id: 'property', header: 'Property', accessor: 'property', cellClassName: 'font-medium text-slate-950' },
-    { id: 'cashFlow', header: 'Monthly Cash Flow', align: 'right', render: (row) => metricFullText(row.monthlyCashFlow) },
-    { id: 'dscr', header: 'DSCR', align: 'right', render: (row) => metricText(row.dscr) },
-    { id: 'ltv', header: 'LTV', align: 'right', render: (row) => metricText(row.ltv) },
-    { id: 'equity', header: 'Equity', align: 'right', render: (row) => metricFullText(row.equity) },
-    { id: 'status', header: 'Status', accessor: 'status' },
-    { id: 'action', header: 'Action', render: (row) => row.id ? <Link className="text-sm font-medium text-blue-700" to={`/properties/${row.id}`}>{row.action}</Link> : row.action },
-  ]
-
-  if (loading) {
+  if (loading && !data) {
     return (
-      <DashboardShell>
+      <PageContainer>
         <div className="flex h-64 items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
         </div>
-      </DashboardShell>
+      </PageContainer>
     )
   }
 
   if (!dashboard) {
     return (
-      <DashboardShell>
+      <PageContainer>
         <div className="rounded-xl border border-amber-200 bg-amber-50 py-12 text-center text-amber-950">
           <AlertCircle className="mx-auto h-10 w-10 text-amber-500" />
           <h1 className="mt-3 text-lg font-semibold">Dashboard unavailable</h1>
           <p className="mt-1 text-sm">The backend dashboard view model could not be loaded.</p>
         </div>
-      </DashboardShell>
+      </PageContainer>
     )
   }
 
   return (
-    <DashboardShell>
-      <div className="space-y-10">
-        <div className="flex justify-end print:hidden">
-          <div className="relative">
-            <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={() => setFiltersOpen((open) => !open)}>
-              <Building2 className="h-4 w-4" />
-              Properties
+    <PageContainer className="max-w-[112rem]">
+      <div className="space-y-5">
+        <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-neutral-800 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Portfolio Dashboard</h1>
+            <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">30-second executive summary: what happened, why it happened, and what needs attention.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm">
+              <CalendarDays className="h-4 w-4" />
+              {dashboard.asOfDate || 'Current'}
               <ChevronDown className="h-4 w-4" />
             </button>
-            {filtersOpen ? (
-              <div className="absolute right-0 z-20 mt-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
-                <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Included properties</span>
-                  <button type="button" className="text-xs font-medium text-blue-700" onClick={() => setExcludedIds(new Set())}>Show all</button>
-                </div>
-                <div className="max-h-80 overflow-auto py-1">
-                  {filterProperties.map((property) => {
-                    const excluded = excludedIds.has(property.id)
-                    return (
-                      <label key={property.id} className="flex cursor-pointer items-start gap-2 px-3 py-2 text-sm hover:bg-slate-50">
-                        <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={!excluded}
-                          onChange={() => setExcludedIds((current) => {
-                            const next = new Set(current)
-                            if (next.has(property.id)) next.delete(property.id)
-                            else next.add(property.id)
-                            return next
-                          })}
-                        />
-                        <span>
-                          <span className="block font-medium text-slate-950">{property.address || `Property ${property.id}`}</span>
-                          <span className="block text-xs text-slate-500">{property.city}, {property.state}</span>
-                        </span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-            ) : null}
+            <Link to="/analytics" className="btn-primary inline-flex items-center gap-2 text-sm">
+              <TrendingUp className="h-4 w-4" />
+              Deep Analysis
+            </Link>
           </div>
+        </header>
+
+        <FilterBar properties={filterProperties} excludedIds={excludedIds} setExcludedIds={setExcludedIds} />
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          {(dashboard.overview || []).map((metric) => <KpiCard key={metric.key || metric.label} metric={metric} />)}
         </div>
 
-        <HeroCover dashboard={dashboard} />
-        <ChangeStrip dashboard={dashboard} />
-
-        <section className="space-y-5">
-          <EditorialHeader eyebrow="Investment stories" title="The five questions every investor should ask" subtitle="Each chapter is built from backend-generated narratives, chart DTOs, recommendations, and metrics." />
-          <div className="space-y-5">
-            {(dashboard.stories || []).map((story) => <StoryChapter key={story.key} story={story} />)}
-          </div>
-        </section>
-
-        <section className="space-y-5">
-          <EditorialHeader eyebrow="Property leaders" title="Which properties are leading, and which are dragging?" subtitle="Backend property health rows provide the supporting evidence." />
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <DataTable columns={healthColumns} rows={dashboard.propertyHealth || []} getRowKey={(row) => row.id || row.property} emptyMessage="No rental properties in scope." />
-          </div>
-        </section>
-
-        <PortfolioCoach dashboard={dashboard} />
-
-        <details className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <summary className="flex cursor-pointer items-center gap-2 font-semibold text-slate-950">
-            <Home className="h-4 w-4 text-amber-500" />
-            {dashboard.primaryResidence?.title || 'Primary Residence'}
-          </summary>
-          <p className="mt-2 text-sm text-slate-500">{dashboard.primaryResidence?.description}</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {(dashboard.primaryResidence?.metrics || []).map((metric) => <MetricEvidence key={metric.key} metric={metric} />)}
-          </div>
-        </details>
-
-        <section className="space-y-4">
-          <EditorialHeader eyebrow="Data quality" title="Can I trust the report?" subtitle="Backend validation status for dashboard metrics." />
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2">
-              {dashboard.dataQuality?.status === 'Complete' ? <CheckCircle className="h-5 w-5 text-green-600" /> : <AlertCircle className="h-5 w-5 text-amber-500" />}
-              <p className="font-semibold text-slate-950">{dashboard.dataQuality?.status || '—'}</p>
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
+          <main className="space-y-5">
+            <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr_1fr]">
+              <HealthGauge dashboard={dashboard} />
+              <StorySummary dashboard={dashboard} />
+              <Waterfall dashboard={dashboard} />
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {(dashboard.dataQuality?.checks || []).map((metric) => <MetricEvidence key={metric.key} metric={metric} />)}
+            <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+              <PropertyRanking rows={dashboard.propertyHealth || []} />
+              <AllocationBars properties={portfolio.properties || []} />
             </div>
-          </div>
-        </section>
+            <CashFlowTrend trends={data?.yearly_trends || []} />
+          </main>
+          <aside className="space-y-5">
+            <AttentionPanel dashboard={dashboard} />
+            <ScenarioPanel />
+          </aside>
+        </div>
+
+        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-100">
+          <span className="font-semibold">Dashboard vs Analytics:</span> Dashboard is the executive summary for daily use. Analytics is the investigation page for interactive charting, comparisons, and deeper monthly review.
+        </div>
       </div>
-    </DashboardShell>
+    </PageContainer>
   )
 }

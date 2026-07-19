@@ -79,19 +79,36 @@ def _add_1098_with_box_aliases(db, prop, owner_id, year, interest, balance, acco
     return doc
 
 
-def _add_mortgage_statement(db, prop, owner_id, year, balance, account="ACCT-1", statement_date="06/11/2026", ytd_principal=None, ytd_interest=None):
+def _add_mortgage_statement(
+    db,
+    prop,
+    owner_id,
+    year,
+    balance,
+    account="ACCT-1",
+    statement_date="06/11/2026",
+    ytd_principal=None,
+    ytd_interest=None,
+    principal_due=None,
+    interest_due=None,
+):
+    extracted_data = {
+        "statement_year": year,
+        "statement_date": statement_date,
+        "current_balance": balance,
+        "account_number": account,
+        "principal_paid_ytd": ytd_principal,
+        "interest_paid_ytd": ytd_interest,
+    }
+    if principal_due is not None:
+        extracted_data["principal_due"] = principal_due
+    if interest_due is not None:
+        extracted_data["interest_due"] = interest_due
     doc = models.Document(
         property_id=prop.id, owner_id=owner_id,
         filename=f"statement_{year}_{account}.pdf", original_filename=f"statement_{year}_{account}.pdf",
         file_type="pdf", doc_category="mortgage_statement", statement_year=year,
-        extracted_data=json.dumps({
-            "statement_year": year,
-            "statement_date": statement_date,
-            "current_balance": balance,
-            "account_number": account,
-            "principal_paid_ytd": ytd_principal,
-            "interest_paid_ytd": ytd_interest,
-        }),
+        extracted_data=json.dumps(extracted_data),
         loan_account_number=account, file_size=1024,
     )
     db.add(doc)
@@ -117,6 +134,89 @@ class TestSingleLoanNoDocuments:
         assert loan_debt["accumulated_interest"] > 0
         assert data["rollup"]["total_current_balance"] == pytest.approx(loan_debt["current_balance"])
         assert data["rollup"]["total_accumulated_interest"] == pytest.approx(loan_debt["accumulated_interest"])
+
+
+class TestPaymentHistory:
+    def test_debt_returns_only_persisted_mortgage_statement_snapshots(self, client, db, user, prop):
+        loan = prop.loans[0]
+        loan.account_number = "ACCT-1"
+        document = _add_mortgage_statement(
+            db, prop, user.id, 2026, 275_000,
+            statement_date="06/11/2026",
+            ytd_principal=4_250,
+            ytd_interest=7_600,
+        )
+        snapshot = models.LoanBalanceSnapshot(
+            id=str(uuid.uuid4()),
+            loan_id=loan.id,
+            property_id=prop.id,
+            as_of_date="2026-06-11",
+            balance=275_000,
+            principal_paid_ytd=4_250,
+            interest_paid_ytd=7_600,
+            payment=1_800,
+            source_document_id=document.id,
+        )
+        db.add(snapshot)
+        db.commit()
+
+        response = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert response.status_code == 200
+        assert response.json()["paymentHistoryRows"] == [{
+            "rowKey": snapshot.id,
+            "loanId": loan.id,
+            "lenderName": loan.lender_name or "Loan",
+            "accountNumber": "ACCT-1",
+            "statementDate": "2026-06-11",
+            "payment": 1_800,
+            "principalYtd": 4_250,
+            "interestYtd": 7_600,
+            "balance": 275_000,
+            "documentId": document.id,
+            "sourceLabel": document.original_filename,
+            "sourceType": "Mortgage statement",
+        }]
+
+
+class TestRefinancedLoanRollup:
+    def test_closed_refinance_remains_visible_without_counting_as_current_debt(self, client, db, user, prop):
+        previous = prop.loans[0]
+        previous.status = "REFINANCED"
+        previous.closed_date = "2021-07-30"
+        previous.current_balance = 290_000
+        previous.account_number = None
+        previous.interest_rate = 0
+        previous.monthly_payment = 0
+        previous.principal_due = 0
+        previous.interest_due = 0
+        current = models.Loan(
+            property_id=prop.id,
+            lender_name="Current lender",
+            loan_type="FIXED",
+            status="OPEN",
+            original_amount=300_000,
+            current_balance=275_000,
+            interest_rate=3.0,
+            monthly_payment=1_265,
+            loan_term_years=30,
+            origination_date="2021-07-30",
+        )
+        db.add(current)
+        db.commit()
+
+        response = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["loans"]) == 2
+        closed = next(loan for loan in data["loans"] if loan["loan_id"] == previous.id)
+        assert closed["current_balance"] == 0
+        assert closed["historical_ending_balance"] > 0
+        assert closed["payment"]["monthlyPI"] == 0
+        assert data["portfolio"]["totalBalance"] == pytest.approx(
+            next(loan["current_balance"] for loan in data["loans"] if loan["loan_id"] == current.id)
+        )
 
 
 class TestDocumentedYearsAreNeverOverwritten:
@@ -455,6 +555,9 @@ class TestLoanPaydownTracking:
         rows = loan_debt["paydown"]["rows"]
         assert rows
         assert max(row["year"] for row in rows) == 2024
+        assert all(row["isCurrentYear"] is False for row in rows)
+        assert all("now" not in row["yearLabel"].lower() for row in rows)
+        assert all(not row.get("isFullYearProjection") for row in rows)
         assert loan_debt["latest_period"]["year"] == 2024
         assert "2026" not in loan_debt["latest_period"]["label"]
         assert loan_debt["current_year_ytd"]["year"] == 2024
@@ -581,6 +684,104 @@ class TestLoanPaydownTracking:
         assert data["assertions"]["L3_totalBalanceEqualsSumLoanBalances"] is True
         assert data["assertions"]["L8_interestToDateEqualsSumLoanInterest"] is True
 
+    def test_latest_statement_pi_split_drives_projection_instead_of_total_payment(self, client, db, user, prop):
+        loan = prop.loans[0]
+        loan.lender_name = "Rocket"
+        loan.account_number = "3550379001"
+        loan.origination_date = "2023-05-26"
+        loan.original_amount = 463_428.32
+        loan.current_balance = 438_502.37
+        loan.interest_rate = 7.625
+        loan.monthly_payment = 4_274.51
+        loan.escrow_amount = 950.53
+        # Reproduce the polluted persisted split that treated total payment as P&I.
+        loan.principal_due = 1_488.19
+        loan.interest_due = 2_786.32
+        loan.loan_term_years = 30
+        db.commit()
+        _add_mortgage_statement(
+            db,
+            prop,
+            user.id,
+            2026,
+            438_502.37,
+            account="3550379001",
+            statement_date="06/11/2026",
+            principal_due=531.46,
+            interest_due=2_786.32,
+        )
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        loan_debt = resp.json()["loans"][0]
+        assert loan_debt["payment"]["monthlyPI"] == pytest.approx(3_317.78, abs=0.01)
+        projection = next(
+            row for row in loan_debt["paydown"]["rows"]
+            if row.get("isFullYearProjection")
+        )
+        assert 4_000 < projection["scheduledPrincipal"] < 7_000
+        assert projection["scheduledPrincipal"] != pytest.approx(17_406, abs=100)
+
+    def test_servicer_transfer_year_includes_same_origination_1098_aliases_once(self, client, db, user, prop):
+        old_loan = prop.loans[0]
+        old_loan.lender_name = "DHi Mortgage Company, Ltd., LP"
+        old_loan.account_number = "230577464"
+        old_loan.origination_date = "2023-05-24"
+        old_loan.servicer_start_date = "2023-05-26"
+        old_loan.servicer_end_date = "2024-09-01"
+        old_loan.closed_date = "2024-09-01"
+        old_loan.status = "CLOSED"
+        old_loan.closure_reason = "Servicing transfer"
+        old_loan.transfer_reason = "Servicing transfer"
+        old_loan.servicer_sequence = 1
+        old_loan.is_current_servicer = False
+        old_loan.original_amount = 468_750
+        old_loan.current_balance = 466_681.81
+        old_loan.interest_rate = 7.625
+        old_loan.monthly_payment = 4_274.51
+        old_loan.escrow_amount = 956.73
+        old_loan.principal_due = 0
+        old_loan.interest_due = 0
+        rocket = models.Loan(
+            property_id=prop.id,
+            lender_name="Rocket",
+            account_number="3550379001",
+            origination_date="2023-05-26",
+            servicer_start_date="2024-10-01",
+            original_amount=463_428.32,
+            current_balance=438_502.37,
+            interest_rate=7.625,
+            monthly_payment=4_274.51,
+            escrow_amount=956.73,
+            principal_due=0,
+            interest_due=0,
+            loan_term_years=30,
+            status="OPEN",
+            transfer_reason="Servicing transfer",
+            is_current_servicer=True,
+            servicer_sequence=2,
+        )
+        db.add(rocket)
+        db.commit()
+        db.refresh(prop)
+        _add_1098_with_balance(db, prop, user.id, 2024, 26_606.53, 466_681.81, account="0064944077", origination_date="2023-05-26")
+        _add_1098_with_balance(db, prop, user.id, 2024, 26_606.53, 466_681.81, account="0064944077", origination_date="2023-05-26")
+        _add_1098_with_balance(db, prop, user.id, 2024, 8_826.97, 463_428.32, account="3550379001", origination_date="2023-05-26")
+        _add_1098_with_balance(db, prop, user.id, 2025, 35_087.66, 462_301.95, account="3550379001", origination_date="2023-05-26")
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        rows = resp.json()["loans"][0]["paydown"]["rows"]
+        row_2024 = next(row for row in rows if row["year"] == 2024 and not row.get("isFullYearProjection"))
+        assert row_2024["servicerDisplay"] == "DHi Mortgage Company, Ltd., LP → Rocket"
+        assert row_2024["interestPaid"] == pytest.approx(35_433.5)
+        source_doc = row_2024["sourceDocument"]
+        assert source_doc["isCombined1098"] is True
+        assert [doc["accountNumber"] for doc in source_doc["combinedDocuments"]] == ["0064944077", "3550379001"]
+        assert [doc["box1Interest"] for doc in source_doc["combinedDocuments"]] == [26_606.53, 8_826.97]
+
     def test_servicer_transfer_includes_origination_year_without_1098(self, client, db, user, prop):
         old_loan = prop.loans[0]
         old_loan.lender_name = "DHI / LoanCare"
@@ -641,8 +842,51 @@ class TestLoanPaydownTracking:
         assert by_year[2023]["servicerDisplay"] == "DHI / LoanCare"
         assert by_year[2023]["startingBalance"] == 468_750
         assert by_year[2023]["endingBalance"] == 463_428
+        assert by_year[2023]["sourceDocument"] is None
+        assert by_year[2023]["documents"] == []
+        assert by_year[2023]["sourceDisplay"] == "Projected from balance checkpoint"
         assert by_year[2024]["servicerDisplay"] == "DHI / LoanCare → Rocket"
         assert by_year[2024]["startingBalance"] == 463_428
+        assert by_year[2024]["sourceDocument"]["parsedValues"]["taxYear"] == 2024
+
+    def test_same_year_1098_and_statement_keep_box1_interest_and_statement_principal(self, client, db, user, prop):
+        loan = prop.loans[0]
+        loan.account_number = "3550379001"
+        loan.origination_date = "2025-01-01"
+        loan.original_amount = 462_301.95
+        loan.current_balance = 457_576.25
+        loan.interest_rate = 7.625
+        loan.monthly_payment = 4_324.32
+        loan.escrow_amount = 1_006.54
+        loan.principal_due = 0
+        loan.interest_due = 0
+        db.commit()
+        _add_1098_with_balance(
+            db, prop, user.id, 2025, 35_087.66, 462_301.95,
+            account="3550379001",
+        )
+        _add_mortgage_statement(
+            db, prop, user.id, 2025, 457_576.25,
+            account="3550379001", statement_date="12/16/2025",
+            ytd_principal=4_725.70, ytd_interest=35_087.66,
+            principal_due=410.26, interest_due=2_907.52,
+        )
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        row_2025 = next(
+            row for row in resp.json()["loans"][0]["paydown"]["rows"]
+            if row["year"] == 2025 and not row.get("isFullYearProjection")
+        )
+        assert row_2025["source"] == "1098"
+        assert row_2025["sourceDisplay"] == "1098 interest + statement balance"
+        assert row_2025["interestPaid"] == pytest.approx(35_087.66)
+        assert row_2025["principalPaid"] == pytest.approx(4_725.70)
+        assert row_2025["principalPaid"] != pytest.approx(410.26)
+        assert row_2025["interestPaid"] != pytest.approx(2_907.52)
+        assert row_2025["endingBalance"] == pytest.approx(457_576.25)
+        assert {doc["docType"] for doc in row_2025["documents"]} == {"1098", "mortgage_statement"}
 
     def test_current_year_full_projection_is_separate_from_ytd_row(self, client, db, user, prop):
         loan = prop.loans[0]

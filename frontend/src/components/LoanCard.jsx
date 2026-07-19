@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { docAPI, propAPI } from '../services/api'
 import { formatCurrency, formatDate, formatInterestRate, formatMonthYear } from '../utils/formatters'
@@ -72,7 +72,7 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   const [selectedIssueYear, setSelectedIssueYear] = useState(null)
   const [openSourceYear, setOpenSourceYear] = useState(null)
   const statusMeta = metrics.status || {}
-  const statusLabel = l.status === 'CLOSED' || closed ? 'Closed' : 'Open'
+  const statusLabel = l.statusLabel || (l.status === 'REFINANCED' ? 'Refinanced' : l.status === 'PAID_OFF' ? 'Paid Off' : l.status === 'CLOSED' || closed ? 'Closed' : 'Open')
   const projectedMonths = Number(statusMeta.gapMonthsProjected ?? debt?.gap_months_projected ?? 0)
   const loanName = l.name || l.loan_name || l.lender_name || 'Primary mortgage'
   const rateDisplay = l.rateDisplay || metrics.rate?.displayValue || formatInterestRate(l.interest_rate)
@@ -80,7 +80,6 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   const term = l.termDisplay || (l.loan_term_years ? `${l.loan_term_years}-yr` : '—')
   const originationDate = l.originationDateDisplay || formatDate(l.origination_date || l.start_date)
   const maturity = l.maturityDateDisplay || formatDate(l.maturity_date)
-  const servicerSegments = l.servicerSegments || debt?.servicerSegments || []
   const paydown = debt?.paydown || null
   const paydownRows = paydown?.rows || []
   const reconciliation = paydown?.reconciliation || {}
@@ -181,13 +180,13 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   }
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 text-gray-900 shadow-sm dark:border-neutral-700/70 dark:bg-neutral-900 dark:text-neutral-100">
-      <div className="mb-7 flex items-start justify-between gap-4">
+    <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-5 text-gray-900 shadow-sm dark:border-neutral-700/70 dark:bg-neutral-900 dark:text-neutral-100">
+      <div className="mb-5 flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h4 className="truncate text-2xl font-semibold text-gray-950 dark:text-white">
+          <h4 className="truncate text-lg font-semibold text-gray-950 dark:text-white">
             {loanName}
           </h4>
-          <p className="mt-1 text-base text-gray-500 dark:text-neutral-400">
+          <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
             {term} {rateTypeLabel.toLowerCase()} {rateDisplay} · originated {originationDate} · matures {maturity}
           </p>
           {projectedMonths > 0 ? (
@@ -200,7 +199,7 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
         <div className="flex shrink-0 items-start gap-3">
           <div className="flex flex-wrap justify-end gap-2">
             <span
-              className={`rounded-full px-4 py-2 text-base font-medium ${
+              className={`rounded-full px-3 py-1 text-sm font-medium ${
                 rateTypeLabel === 'ARM'
                   ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300'
                   : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
@@ -209,7 +208,7 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
               {rateTypeLabel} {rateDisplay}
             </span>
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-4 py-2 text-base font-medium ${
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-medium ${
                 closed
                   ? 'bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300'
                   : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
@@ -241,33 +240,36 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
         </div>
       </div>
 
-      <ServicerTimeline segments={servicerSegments} />
-
-      <div className="mt-8 grid grid-cols-2 gap-6 border-t border-gray-200 pt-6 dark:border-neutral-700 md:grid-cols-4">
-        <LoanMetric label="Balance" value={l.currentBalanceDisplay || debt?.remaining_balance_display || metrics.balance?.displayValue || '—'} bold />
+      <div className="mt-6 grid grid-cols-2 gap-4 border-t border-gray-200 pt-5 dark:border-neutral-700 md:grid-cols-4">
+        <LoanMetric
+          label={l.balanceLabel || 'Current balance (statement needed)'}
+          value={l.displayBalanceDisplay || debt?.displayBalanceDisplay || '—'}
+          bold
+        />
         <LoanMetric label="Original" value={l.originalAmountDisplay || metrics.originalAmount?.displayValue || '—'} />
         <LoanMetric label="Payment / mo" value={l.payment?.monthlyPIDisplay || metrics.paymentMonthly?.displayValue || '—'} />
         <LoanMetric label="Rate" value={rateDisplay || '—'} />
       </div>
 
-      <div className="mt-8">
+      <div className="mt-6">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-baseline gap-2">
-            <h5 className="text-xl font-semibold text-gray-950 dark:text-white">By year</h5>
-            <span className="text-lg text-gray-500 dark:text-neutral-500">· one continuous timeline across servicers</span>
+            <h5 className="text-base font-semibold text-gray-950 dark:text-white">By year</h5>
+            <span className="text-sm text-gray-500 dark:text-neutral-500">· one continuous timeline across servicers</span>
           </div>
           <button
             type="button"
             onClick={handleOpenUploadModal}
-            className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-5 py-3 text-base font-medium text-gray-800 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-60 dark:border-neutral-600 dark:text-white dark:hover:border-neutral-400 dark:hover:bg-neutral-800"
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-60 dark:border-neutral-600 dark:text-white dark:hover:border-neutral-400 dark:hover:bg-neutral-800"
             disabled={uploadingStatement}
           >
-            <Upload className="h-5 w-5" />
-            {uploadingStatement ? 'Uploading...' : 'Upload 1098'}
+            <Upload className="h-4 w-4" />
+            {uploadingStatement ? 'Uploading...' : 'Upload Docs'}
           </button>
         </div>
         <LoanYearTable
           rows={paydownRows}
+          closed={closed}
           reconciliationYears={reconciliationYears}
           highlightedYears={highlightedYears}
           selectedIssueYear={selectedIssueYear}
@@ -278,7 +280,7 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
           onReplace={handleOpenUploadModal}
           onRemove={handleRemoveDocument}
         />
-        <p className="mt-4 text-base text-gray-500 dark:text-neutral-500">
+        <p className="mt-3 text-sm text-gray-500 dark:text-neutral-500">
           One loan, one balance chain. The servicer column shows who held it that year - no duplicate tables, no "closed loan."
         </p>
       </div>
@@ -332,81 +334,64 @@ function DebtSourceBadge({ source, labelOverride }) {
   const cfg = SOURCE_BADGE[source] || SOURCE_BADGE.no_data
   const Icon = cfg.icon
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+    <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
       <span>{labelOverride || cfg.label}</span>
       <Icon className="h-3 w-3" />
     </span>
   )
 }
 
-function ServicerTimeline({ segments = [] }) {
-  if (!segments.length) return null
-  const transitionSegment = segments.find((segment, index) => index > 0 && (segment.transitionType || segment.transferDate || segment.from))
-  const transitionDate = transitionSegment?.fromDisplay
-    || formatDate(transitionSegment?.from)
-    || transitionSegment?.transferDateDisplay
-  const transitionType = String(transitionSegment?.transitionType || '').toLowerCase()
-  const isRefinance = transitionType === 'refinance'
-  const transitionLabel = transitionSegment?.transitionLabel || (isRefinance ? 'refinance' : 'servicer change')
-  const transitionClassName = isRefinance
-    ? 'bg-amber-100 text-amber-700 shadow-lg shadow-gray-200/70 dark:bg-amber-950 dark:text-amber-300 dark:shadow-neutral-950/20'
-    : 'bg-blue-100 text-blue-700 shadow-lg shadow-gray-200/70 dark:bg-blue-950 dark:text-blue-300 dark:shadow-neutral-950/20'
-
-  return (
-    <div>
-      <h5 className="mb-4 text-lg font-medium text-gray-500 dark:text-neutral-400">Servicer history</h5>
-      <div className="relative pt-9">
-        {segments.length > 1 ? (
-          <div className="pointer-events-none absolute left-1/2 top-0 flex -translate-x-1/2 flex-col items-center">
-            <span className="whitespace-nowrap text-center text-sm leading-tight text-gray-500 dark:text-neutral-500">
-              {transitionLabel} · {transitionDate || ''}
-            </span>
-          </div>
-        ) : null}
-        <div className="relative grid gap-6" style={{ gridTemplateColumns: `repeat(${segments.length}, minmax(0, 1fr))` }}>
-        {segments.map((segment, index) => {
-          const isCurrent = segment.current || index === segments.length - 1
-          return (
-            <div key={`${segment.loanId || segment.servicer}-${segment.from || index}`} className="min-w-0">
-              <div className={`h-3 rounded-full ${isCurrent ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-neutral-300'}`} aria-label={`${segment.servicer || 'Servicer'} timeline segment`} />
-              <div className="mt-4">
-                <p className="truncate text-lg font-semibold text-gray-950 dark:text-white">
-                  {segment.servicer || 'Servicer'}{isCurrent ? <span className="text-emerald-600 dark:text-emerald-400"> · current</span> : null}
-                </p>
-                <p className="mt-1 truncate text-base text-gray-500 dark:text-neutral-400">
-                  {segment.dateRangeDisplay || '—'}{segment.accountNumber ? ` · #${segment.accountNumber}` : ''}
-                </p>
-              </div>
-            </div>
-          )
-        })}
-        {segments.length > 1 ? (
-          <div className="pointer-events-none absolute left-1/2 top-[-16px] flex -translate-x-1/2 flex-col items-center">
-            <LoanTransitionBadge isRefinance={isRefinance} className={transitionClassName} />
-          </div>
-        ) : null}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function LoanTransitionBadge({ isRefinance, className }) {
   const ArrowIcon = isRefinance ? RefreshCw : ArrowRight
   return (
-    <span className={`relative inline-flex h-14 w-14 items-center justify-center rounded-2xl ${className}`}>
-      <Home className="absolute left-2 top-2 h-6 w-6" aria-hidden="true" />
-      <FileText className="absolute right-2 top-2.5 h-6 w-6" aria-hidden="true" />
-      <span className="absolute bottom-1.5 inline-flex h-6 min-w-8 items-center justify-center rounded-full bg-white/90 px-1 shadow-sm dark:bg-neutral-900/90">
-        <ArrowIcon className="h-4 w-4" aria-hidden="true" />
+    <span className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg ${className}`}>
+      <Home className="absolute left-1 top-1 h-4 w-4" aria-hidden="true" />
+      <FileText className="absolute right-1 top-1.5 h-4 w-4" aria-hidden="true" />
+      <span className="absolute bottom-0.5 inline-flex h-4 min-w-5 items-center justify-center rounded-full bg-white/90 px-0.5 shadow-sm dark:bg-neutral-900/90">
+        <ArrowIcon className="h-3 w-3" aria-hidden="true" />
       </span>
       <span className="sr-only">{isRefinance ? 'Refinance' : 'Servicer transfer'}</span>
     </span>
   )
 }
 
+function LoanYearEventIcon({ row, isFirstYear }) {
+  const servicerText = String(row.servicerDisplay || row.servicer || '')
+  const hasTransfer = servicerText.includes('→') || servicerText.includes('->')
+  const reasonText = `${row.transferReason || row.transfer_reason || row.closureReason || row.closure_reason || ''}`.toLowerCase()
+  const isRefinance = reasonText.includes('refinance')
+
+  if (hasTransfer) {
+    return (
+      <span title={isRefinance ? 'Refinance year' : 'Servicer transfer year'}>
+        <LoanTransitionBadge
+          isRefinance={isRefinance}
+          className={isRefinance
+            ? 'bg-amber-100 text-amber-700 shadow-sm dark:bg-amber-950 dark:text-amber-300'
+            : 'bg-blue-100 text-blue-700 shadow-sm dark:bg-blue-950 dark:text-blue-300'}
+        />
+      </span>
+    )
+  }
+
+  if (isFirstYear) {
+    return (
+      <span
+        title="Loan originated"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900/50"
+      >
+        <Home className="h-4 w-4" aria-hidden="true" />
+        <span className="sr-only">Loan originated</span>
+      </span>
+    )
+  }
+
+  return <span className="inline-block h-8 w-8" aria-hidden="true" />
+}
+
 function LoanYearTable({
   rows = [],
+  closed = false,
   reconciliationYears = [],
   highlightedYears = [],
   selectedIssueYear,
@@ -418,34 +403,45 @@ function LoanYearTable({
   onRemove,
 }) {
   const [expandedRows, setExpandedRows] = useState({})
+  const displayRows = loanYearDisplayRows(rows, closed)
+  useEffect(() => {
+    const defaults = {}
+    displayRows.forEach((row) => {
+      const key = row.rowKey || row.year
+      if (loanYearHasTransfer(row) && loanYearDetailRows(row, rows).length) defaults[key] = true
+    })
+    setExpandedRows((current) => ({ ...defaults, ...current }))
+  }, [rows, closed])
   const toggleRow = (rowKey) => setExpandedRows((current) => ({ ...current, [rowKey]: !current[rowKey] }))
 
   if (!rows.length) {
     return (
-      <div className="rounded-2xl border border-gray-200 px-5 py-8 text-center text-gray-500 dark:border-neutral-700 dark:text-neutral-400">
+      <div className="rounded-xl border border-gray-200 px-4 py-6 text-center text-sm text-gray-500 dark:border-neutral-700 dark:text-neutral-400">
         No loan years available.
       </div>
     )
   }
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-gray-200 dark:border-neutral-700">
-      <table className="min-w-full divide-y divide-gray-200 text-left text-base dark:divide-neutral-700">
+    <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain rounded-xl border border-gray-200 dark:border-neutral-700">
+      <table className="min-w-[82rem] divide-y divide-gray-200 text-left text-sm dark:divide-neutral-700">
         <thead className="bg-gray-50 text-gray-500 dark:bg-neutral-950/80 dark:text-neutral-400">
           <tr>
-            <th className="px-5 py-4 font-medium">Year</th>
-            <th className="px-5 py-4 font-medium">Servicer</th>
-            <th className="px-5 py-4 text-right font-medium">Start bal.</th>
-            <th className="px-5 py-4 text-right font-medium">Principal</th>
-            <th className="px-5 py-4 text-right font-medium">Interest</th>
-            <th className="px-5 py-4 text-right font-medium">End bal.</th>
-            <th className="px-2 py-4 text-center font-medium" aria-label="Calculation"></th>
-            <th className="px-5 py-4 font-medium">Source</th>
-            <th className="px-5 py-4 text-right font-medium">Notes</th>
+            <th className="px-4 py-3 font-medium">Year</th>
+            <th className="px-2 py-3 text-center font-medium" aria-label="Loan event"></th>
+            <th className="px-4 py-3 font-medium">Servicer</th>
+            <th className="px-4 py-3 text-right font-medium">Start bal.</th>
+            <th className="px-4 py-3 text-right font-medium">Principal</th>
+            <th className="px-4 py-3 text-right font-medium">Top-up</th>
+            <th className="px-4 py-3 text-right font-medium">Interest</th>
+            <th className="px-4 py-3 text-right font-medium">End bal.</th>
+            <th className="px-2 py-3 text-center font-medium" aria-label="Calculation"></th>
+            <th className="px-4 py-3 font-medium">Source</th>
+            <th className="px-4 py-3 text-right font-medium">Notes</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 dark:divide-neutral-700">
-          {loanYearDisplayRows(rows).map((row) => {
+          {displayRows.map((row, displayIndex) => {
             const issueYear = reconciliationYears.find((item) => item.year === row.year)
             const rowKey = row.rowKey || row.year
             const isSelected = selectedIssueYear === row.year
@@ -464,7 +460,7 @@ function LoanYearTable({
             return (
               <Fragment key={rowKey}>
                 <tr className={`${rowTone} text-gray-600 dark:text-neutral-300`}>
-                  <td className="whitespace-nowrap px-5 py-4 font-semibold text-gray-950 dark:text-white">
+                  <td className="whitespace-nowrap px-4 py-3 font-semibold text-gray-950 dark:text-white">
                     <span className="inline-flex items-center gap-2">
                       {canExpand ? (
                         <button
@@ -482,17 +478,23 @@ function LoanYearTable({
                       <span>{loanYearLabel(row)}</span>
                     </span>
                   </td>
-                  <td className="px-5 py-4 text-gray-500 dark:text-neutral-400">{row.servicerDisplay || '—'}</td>
-                  <td className="whitespace-nowrap px-5 py-4 text-right">{row.startingBalanceDisplay || '—'}</td>
-                  <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-gray-950 dark:text-white">{row.principalPaidDisplay || '—'}</td>
-                  <td className="whitespace-nowrap px-5 py-4 text-right">{row.interestPaidDisplay || '—'}</td>
-                  <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-gray-950 dark:text-white">
+                  <td className="whitespace-nowrap px-2 py-3 text-center">
+                    <LoanYearEventIcon row={row} isFirstYear={displayIndex === 0} />
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 dark:text-neutral-400">{row.servicerDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">{row.startingBalanceDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-gray-950 dark:text-white">{row.principalPaidDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <TopUpCell row={row} />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">{row.interestPaidDisplay || '—'}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-gray-950 dark:text-white">
                     {row.endingBalanceDisplay || '—'}
                   </td>
-                  <td className="whitespace-nowrap px-2 py-4 text-center">
+                  <td className="whitespace-nowrap px-2 py-3 text-center">
                     <CalculatedEndingBalanceIcon metric={row.endingBalanceMetric} />
                   </td>
-                  <td className="whitespace-nowrap px-5 py-4">
+                  <td className="whitespace-nowrap px-4 py-3">
                     <SourceCell
                       row={row}
                       openSourceYear={openSourceYear}
@@ -502,7 +504,7 @@ function LoanYearTable({
                       onRemove={onRemove}
                     />
                   </td>
-                  <td className="whitespace-nowrap px-5 py-4 text-right">
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
                     <IssueBadge
                       row={row}
                       reconciliationYear={issueYear}
@@ -514,9 +516,11 @@ function LoanYearTable({
                 {expanded ? detailRows.map((detail) => (
                   <tr key={`${rowKey}-${detail.key}`} className="bg-gray-50/80 text-sm text-gray-500 dark:bg-neutral-950/60 dark:text-neutral-400">
                     <td className="whitespace-nowrap px-5 py-3 pl-16 font-medium text-gray-700 dark:text-neutral-200">{detail.label}</td>
+                    <td className="px-2 py-3" />
                     <td className="px-5 py-3">{detail.servicer || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-3 text-right">{detail.startBalanceDisplay || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-3 text-right font-medium text-gray-700 dark:text-neutral-200">{detail.principalPaidDisplay || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-3 text-right">{detail.topUpDisplay || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-3 text-right">{detail.interestPaidDisplay || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-3 text-right font-medium text-gray-700 dark:text-neutral-200">{detail.endingBalanceDisplay || '—'}</td>
                     <td className="whitespace-nowrap px-2 py-3 text-center">{detail.calculation ? <CalcIcon className="inline h-3.5 w-3.5 text-gray-400" aria-hidden="true" /> : null}</td>
@@ -540,13 +544,60 @@ function moneyDisplay(value) {
   return formatCurrency(parsed)
 }
 
-function loanYearDisplayRows(rows) {
+function TopUpCell({ row }) {
+  const topUp = Number(row?.topUp ?? row?.extraPrincipal ?? 0)
+  const hasActual = row?.principalPaidDisplay && row.principalPaidDisplay !== '—'
+  const hasScheduled = row?.scheduledPrincipalDisplay && row.scheduledPrincipalDisplay !== '—'
+  const topUpDisplay = row?.topUpDisplay || row?.extraPrincipalDisplay || '—'
+  const tone = topUp > 0
+    ? 'text-emerald-700 dark:text-emerald-300'
+    : 'text-gray-500 dark:text-neutral-400'
+  const calculation = hasActual && hasScheduled
+    ? `${row.principalPaidDisplay} - ${row.scheduledPrincipalDisplay} = ${topUpDisplay}`
+    : ''
+  return (
+    <div className="inline-flex items-center justify-end gap-1.5 leading-tight">
+      <span className={`font-semibold ${tone}`}>{topUpDisplay}</span>
+      {hasActual && hasScheduled ? (
+        <span className="group relative inline-flex">
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:bg-gray-100 focus:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:hover:bg-gray-800 dark:hover:text-gray-200 dark:focus:bg-gray-800"
+            aria-label={`Top-up calculation: ${calculation}`}
+            title={`Top-up calculation: ${calculation}`}
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+          <span className="pointer-events-none absolute right-0 top-6 z-30 hidden w-64 rounded-lg border border-gray-200 bg-white p-3 text-left text-xs leading-relaxed text-gray-700 shadow-lg group-hover:block group-focus-within:block dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+            <span className="block font-semibold text-gray-900 dark:text-white">Top-up calculation</span>
+            <span className="mt-2 flex items-center justify-between gap-4">
+              <span>Actual principal</span>
+              <span className="font-semibold text-gray-900 dark:text-white">{row.principalPaidDisplay}</span>
+            </span>
+            <span className="mt-1 flex items-center justify-between gap-4">
+              <span>Scheduled principal</span>
+              <span className="font-semibold text-gray-900 dark:text-white">{row.scheduledPrincipalDisplay}</span>
+            </span>
+            <span className="mt-2 block border-t border-gray-100 pt-2 font-medium text-gray-900 dark:border-gray-700 dark:text-white">
+              {calculation}
+            </span>
+          </span>
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+function loanYearDisplayRows(rows, closed = false) {
   const yearsWithFullProjection = new Set(
     rows
       .filter((row) => row.isFullYearProjection)
       .map((row) => row.year),
   )
-  return rows.filter((row) => !(row.isCurrentYear && yearsWithFullProjection.has(row.year)))
+  return rows.filter((row) => {
+    if (closed && (row.isCurrentYear || row.isFullYearProjection || /\bnow\b/i.test(String(row.yearLabel || '')))) return false
+    return !(row.isCurrentYear && yearsWithFullProjection.has(row.year))
+  })
 }
 
 function loanYearLabel(row) {
@@ -554,6 +605,11 @@ function loanYearLabel(row) {
   const shouldMarkCurrentYear = row.isCurrentYear || row.isFullYearProjection
   if (!shouldMarkCurrentYear) return raw
   return raw.includes('*') ? raw : `${raw} *`
+}
+
+function loanYearHasTransfer(row) {
+  const servicerText = String(row.servicerDisplay || row.servicer || '')
+  return servicerText.includes('→') || servicerText.includes('->')
 }
 
 function sourceDocLabel(document) {
@@ -577,8 +633,10 @@ function loanYearDetailRows(row, rows) {
     const currentRow = rows.find((item) => item.year === row.year && item.isCurrentYear)
     const currentPrincipal = Number(currentRow?.principalPaid || 0)
     const currentInterest = Number(currentRow?.interestPaid || 0)
+    const currentTopUp = Number(currentRow?.topUp || 0)
     const projectedPrincipal = Number(row.principalPaid || 0)
     const projectedInterest = Number(row.interestPaid || 0)
+    const projectedTopUp = Number(row.topUp || 0)
     const remainingMonths = Number(row.projectedRemainingMonths || 0)
     const actualThroughMonth = Number(row.actualThroughMonth || 0)
     return [
@@ -588,6 +646,7 @@ function loanYearDetailRows(row, rows) {
         servicer: currentRow?.servicerDisplay || row.servicerDisplay,
         startBalanceDisplay: currentRow?.startingBalanceDisplay || row.startingBalanceDisplay,
         principalPaidDisplay: currentRow?.principalPaidDisplay || '—',
+        topUpDisplay: currentRow?.topUpDisplay || '—',
         interestPaidDisplay: currentRow?.interestPaidDisplay || '—',
         endingBalanceDisplay: currentRow?.endingBalanceDisplay || '—',
         source: currentRow?.sourceDisplay || currentRow?.sourceLabel || 'Current row',
@@ -599,6 +658,7 @@ function loanYearDetailRows(row, rows) {
         servicer: row.servicerDisplay,
         startBalanceDisplay: currentRow?.endingBalanceDisplay || row.startingBalanceDisplay,
         principalPaidDisplay: moneyDisplay(Math.max(projectedPrincipal - currentPrincipal, 0)),
+        topUpDisplay: moneyDisplay(Math.max(projectedTopUp - currentTopUp, 0)),
         interestPaidDisplay: moneyDisplay(Math.max(projectedInterest - currentInterest, 0)),
         endingBalanceDisplay: row.endingBalanceDisplay || '—',
         source: row.sourceDisplay || row.sourceLabel || 'Projected',
@@ -608,7 +668,8 @@ function loanYearDetailRows(row, rows) {
   }
 
   const documents = rowSourceDocuments(row)
-  if (documents.length <= 1 && !String(row.servicerDisplay || '').includes('→')) return []
+  if (documents.length <= 1 && loanYearHasTransfer(row)) return transferServicerDetailRows(row, documents[0])
+  if (documents.length <= 1) return []
   return documents.map((document, index) => {
     const balance = docFieldValue(document, ['box2Balance', 'current_balance', 'box2_balance'])
     const nextBalance = docFieldValue(documents[index + 1], ['box2Balance', 'current_balance', 'box2_balance'])
@@ -619,12 +680,38 @@ function loanYearDetailRows(row, rows) {
       servicer: document.filename || row.servicerDisplay,
       startBalanceDisplay: moneyDisplay(balance),
       principalPaidDisplay: '—',
+      topUpDisplay: '—',
       interestPaidDisplay: moneyDisplay(interest),
       endingBalanceDisplay: nextBalance ? moneyDisplay(nextBalance) : (index === documents.length - 1 ? row.endingBalanceDisplay : '—'),
       source: sourceDocLabel(document),
       note: document.statementDate || document.parsedValues?.statementDate || 'Uploaded source',
     }
   })
+}
+
+function transferServicerDetailRows(row, document) {
+  const servicers = String(row.servicerDisplay || row.servicer || '')
+    .split(/→|->/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (servicers.length < 2) return []
+  const transferBalance = docFieldValue(document, ['box2Balance', 'current_balance', 'box2_balance'])
+  const interest = docFieldValue(document, ['box1Interest', 'mortgage_interest', 'box1_interest'])
+  const docText = `${document?.filename || ''} ${document?.accountNumber || ''}`.toLowerCase()
+  const sourceIndex = servicers.findIndex((servicer) => docText.includes(servicer.toLowerCase()))
+  const interestIndex = sourceIndex >= 0 ? sourceIndex : 0
+  return servicers.slice(0, 2).map((servicer, index) => ({
+    key: `transfer-${index}-${servicer}`,
+    label: index === 0 ? 'Before transfer' : 'After transfer',
+    servicer,
+    startBalanceDisplay: index === 0 ? (row.startingBalanceDisplay || row.startBalanceDisplay || '—') : moneyDisplay(transferBalance),
+    principalPaidDisplay: index === 0 ? row.principalPaidDisplay || '—' : '—',
+    topUpDisplay: index === 0 ? row.topUpDisplay || '—' : '—',
+    interestPaidDisplay: index === interestIndex ? moneyDisplay(interest) : '—',
+    endingBalanceDisplay: index === 0 ? moneyDisplay(transferBalance) : row.endingBalanceDisplay || '—',
+    source: document ? sourceDocLabel(document) : row.sourceDisplay || row.sourceLabel || 'Transfer',
+    note: index === interestIndex && document ? 'Source document matched this servicer period' : (index === 0 ? 'Original servicer portion' : 'New servicer after transfer'),
+  }))
 }
 
 function IssueBadge({ row, reconciliationYear, isOpen, onClick }) {
@@ -899,8 +986,17 @@ function sourceBadgeLabel(row) {
 }
 
 function rowSourceDocuments(row) {
-  if (Array.isArray(row.documents) && row.documents.length) return row.documents
-  return row.sourceDocument ? [row.sourceDocument] : []
+  const docs = Array.isArray(row.documents) && row.documents.length
+    ? row.documents
+    : row.sourceDocument
+      ? [row.sourceDocument]
+      : []
+  return docs.flatMap((document) => {
+    if (Array.isArray(document?.combinedDocuments) && document.combinedDocuments.length) {
+      return document.combinedDocuments
+    }
+    return document ? [document] : []
+  })
 }
 
 function rowPreviewUrl(row) {
@@ -949,30 +1045,32 @@ function SourceCell({ row, openSourceYear, setOpenSourceYear, uploadingStatement
           uploadingStatement={uploadingStatement}
           onReplace={onReplace}
           onRemove={onRemove}
+          onClose={() => setOpenSourceYear(null)}
         />
       ) : null}
     </div>
   )
 }
 
-function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove }) {
+function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove, onClose }) {
   const documents = rowSourceDocuments(row)
   const popoverRef = useRef(null)
   const [position, setPosition] = useState(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const updatePosition = () => {
       const anchor = anchorRef.current
       if (!anchor) return
       const rect = anchor.getBoundingClientRect()
+      const tableRect = anchor.closest('table')?.getBoundingClientRect()
       const width = documents.length > 1 ? Math.min(760, window.innerWidth - 16) : 420
       const margin = 8
       const popoverHeight = popoverRef.current?.offsetHeight || (documents.length ? 132 : 104)
       const left = Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin)
-      const belowTop = rect.bottom + 6
-      const top = belowTop + popoverHeight > window.innerHeight - margin
-        ? Math.max(margin, rect.top - popoverHeight - 6)
-        : belowTop
+      const preferredTop = tableRect
+        ? Math.max(margin, tableRect.top + margin)
+        : Math.max(margin, rect.top - popoverHeight - 6)
+      const top = Math.max(margin, Math.min(preferredTop, window.innerHeight - popoverHeight - margin))
       setPosition({ top, left, width })
     }
     updatePosition()
@@ -985,6 +1083,22 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
       window.removeEventListener('scroll', updatePosition, true)
     }
   }, [anchorRef, documents.length])
+
+  useEffect(() => {
+    const closeFromOutside = (event) => {
+      if (popoverRef.current?.contains(event.target) || anchorRef.current?.contains(event.target)) return
+      onClose?.()
+    }
+    const closeFromKeyboard = (event) => {
+      if (event.key === 'Escape') onClose?.()
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('keydown', closeFromKeyboard)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('keydown', closeFromKeyboard)
+    }
+  }, [anchorRef, onClose])
 
   if (typeof document === 'undefined') return null
   return (
@@ -1057,8 +1171,8 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
 function LoanMetric({ label, value, bold }) {
   return (
     <div className="min-w-0">
-      <p className="truncate text-base text-gray-500 dark:text-neutral-500">{label}</p>
-      <p className={`mt-1 truncate text-2xl leading-tight ${bold ? 'font-semibold text-gray-950 dark:text-white' : 'font-semibold text-gray-900 dark:text-neutral-100'}`}>
+      <p className="truncate text-xs font-medium text-gray-500 dark:text-neutral-500">{label}</p>
+      <p className={`mt-1 truncate text-base leading-tight ${bold ? 'font-semibold text-gray-950 dark:text-white' : 'font-semibold text-gray-900 dark:text-neutral-100'}`}>
         {value}
       </p>
     </div>
@@ -1076,7 +1190,7 @@ function LoanHighlightCard({ label, value, tone }) {
   return (
     <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
       <p className="truncate text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
-      <p className={`mt-1 truncate text-2xl font-medium leading-tight ${valueClass}`}>{value || '—'}</p>
+      <p className={`mt-1 truncate text-lg font-medium leading-tight ${valueClass}`}>{value || '—'}</p>
     </div>
   )
 }
