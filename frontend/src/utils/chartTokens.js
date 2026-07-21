@@ -33,6 +33,8 @@ export const chartColors = {
   dangerStrong: '#dc2626',
   dangerDark: '#b91c1c',
   expense: '#e11d48',
+  negative: '#f43f5e',
+  negativeSoft: '#fb7185',
   warning: '#f97316',
   warningSoft: '#f59e0b',
   warningStrong: '#d97706',

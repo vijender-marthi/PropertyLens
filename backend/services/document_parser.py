@@ -1747,7 +1747,11 @@ def _parse_1098_stacked(text: str) -> Dict[int, Any]:
     return out
 
 
-_FORM_1098_MONEY_RE = re.compile(r'\$?\s*(-?[\d,]{1,15}\.\d{2})')
+# Tolerate whitespace artifacts from OCR/pdfplumber: spaces used as a thousands
+# separator ("17 478.05"), a stray space after a comma ("17, 478.05") or before
+# the decimals ("17,131. 85"). The value ends at ".dd", so the first dot bounds
+# the match and it can't run into the next amount.
+_FORM_1098_MONEY_RE = re.compile(r'\$?\s*(-?\d[\d,  \t]{0,14}\.[ \t ]?\d{2})')
 _FORM_1098_DATE_RE = re.compile(r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})')
 _FORM_1098_INT_RE = re.compile(r'\b(\d{1,3})\b')
 _FORM_1098_START = re.compile(r'mortgage\s*interest\s*received', re.IGNORECASE)
@@ -1816,7 +1820,9 @@ def _form_1098_money(region: str, anchor: str, window: int = 320):
     if raw is None:
         return None
     try:
-        return float(raw.replace(',', ''))
+        # Strip commas and every kind of whitespace (incl. NBSP) the OCR/text
+        # extractor may have left inside the amount before converting.
+        return float(re.sub(r'[,\s ]', '', raw))
     except ValueError:
         return None
 
