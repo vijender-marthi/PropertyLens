@@ -260,11 +260,11 @@ function CapitalStructure({ data }) {
   return (
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
-      <div className="mt-4 flex items-center gap-5">
-        <div className="grid h-28 w-28 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.negative} ${equity?.percentage || 0}%)` }}>
-          <div className="grid h-16 w-16 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-xs text-gray-500">Total value</p></div></div>
+      <div className="mt-4 flex flex-col items-center gap-4">
+        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.negative} ${equity?.percentage || 0}%)` }}>
+          <div className="grid h-14 w-14 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-[10px] text-gray-500">Total</p></div></div>
         </div>
-        <dl className="min-w-0 flex-1 space-y-3">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 rounded-full ${item.tone === 'positive' ? 'bg-green-600' : 'bg-red-500'}`} />{item.label}</dt><dd className="text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
+        <dl className="w-full space-y-2.5">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex min-w-0 items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === 'positive' ? 'bg-green-600' : 'bg-red-500'}`} /><span className="truncate">{item.label}</span></dt><dd className="whitespace-nowrap text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
       </div>
     </DashboardCard>
   )
@@ -395,7 +395,7 @@ export default function DashboardPage() {
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Portfolio metrics">{dashboard.topMetrics.map((config) => <KpiCard key={config.metricKey} config={config} metric={resolveMetric('analytics', config.metricKey)} trendSeries={dashboard.cashFlowTrend.series} />)}</section>
 
-        <section className="grid items-start gap-4 xl:grid-cols-[minmax(15rem,0.9fr)_minmax(34rem,2.2fr)_minmax(15rem,0.9fr)]">
+        <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,2.2fr)_minmax(0,0.9fr)]">
           <div className="space-y-4"><SummaryPanel section={dashboard.assets} resolveMetric={resolveMetric} kind="assets" /><PortfolioHealth data={dashboard.health} /></div>
           <CashFlowWaterfall data={dashboard.cashFlowWaterfall} />
           <div className="space-y-4"><SummaryPanel section={dashboard.liabilities} resolveMetric={resolveMetric} kind="liabilities" /><CapitalStructure data={dashboard.capitalStructure} /></div>
