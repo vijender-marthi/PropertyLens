@@ -18,6 +18,7 @@ from services.loan_calculator import (
     depreciation_schedule, simulate_what_if_scenarios
 )
 from services.property_engine import build_property_engine, loan_monthly_pi, monthly_principal_interest as engine_monthly_principal_interest
+from services.payoff_planner import build_report as build_payoff_report
 from services.property_valuation import (
     AUTO_MARKET_VALUE_SOURCE,
     apply_default_market_price,
@@ -11304,6 +11305,78 @@ def dashboard_summary(
         "income_expense_trends": income_expense_trends,
         "properties": properties_detail,
     }
+
+
+@router.get("/analysis/payoff-planner")
+def payoff_planner(
+    strategy: str = "avalanche",
+    lump_sum: float = 0.0,
+    extra_monthly: float = 0.0,
+    include_primary: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Portfolio-level debt payoff plan (avalanche/snowball with income cascade).
+
+    Reads each rental loan's live values from the loan engine (balance, rate,
+    P&I with escrow excluded) and each property's monthly NOI, then hands a pure
+    overlay simulation to ``services.payoff_planner``. Stored loan data is never
+    mutated. The primary residence is excluded unless ``include_primary`` is set.
+    """
+    own_props = db.query(models.Property).filter(
+        models.Property.owner_id == current_user.id
+    ).all()
+    shared_owner_ids = [
+        share.owner_id
+        for share in db.query(models.UserSharing).filter(
+            models.UserSharing.shared_with_id == current_user.id
+        ).all()
+    ]
+    shared_props = (
+        db.query(models.Property).filter(models.Property.owner_id.in_(shared_owner_ids)).all()
+        if shared_owner_ids else []
+    )
+    all_props = own_props + shared_props
+
+    planner_loans: List[Dict[str, Any]] = []
+    noi_sum = 0.0
+    for prop in all_props:
+        is_primary = str(prop.usage_type or "Rental").lower() == "primary"
+        if is_primary and not include_primary:
+            continue
+
+        metrics = compute_property_metrics(prop)
+        # Monthly NOI (rent - opex, before debt service); only the sum feeds the cascade.
+        noi_sum += (metrics.get("annual_noi", 0.0) or 0.0) / 12.0
+
+        prop_name = prop.name or _default_property_name(prop.address, prop.id)
+        active_loans = [
+            loan for loan in (prop.loans or [])
+            if not _is_closed_loan_status(getattr(loan, "status", None))
+        ]
+        active_loans = [loan for loan in active_loans if current_loan_balance(loan) > 0]
+        for offset, loan in enumerate(active_loans):
+            # Disambiguate when a property carries more than one active loan.
+            if len(active_loans) > 1:
+                label = f"{prop_name} · {loan.lender_name}" if loan.lender_name else f"{prop_name} ({offset + 1})"
+            else:
+                label = prop_name
+            planner_loans.append({
+                "name": label,
+                "balance": round(current_loan_balance(loan), 2),
+                "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
+                "pi": round(loan_monthly_pi(loan), 2),
+            })
+
+    return build_payoff_report(
+        planner_loans,
+        noi_sum,
+        strategy=strategy,
+        lump_sum=lump_sum,
+        extra_monthly=extra_monthly,
+        include_primary=include_primary,
+        start_date=date.today(),
+    )
 
 
 @router.get("/analysis/portfolio")

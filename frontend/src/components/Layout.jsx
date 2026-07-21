@@ -20,6 +20,31 @@ const MAIN_NAV = [
   { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
 ]
 
+// Tabler-style "stairs-down" glyph rendered inline so it matches the spec's
+// ti-stairs-down icon without adding an icon dependency. Mirrors the lucide
+// icon API (accepts a className) so it drops into NavItem unchanged.
+function StairsDown({ className }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 5v4h4v4h4v4h4v2" />
+      <path d="M18 15l-2 2-2-2" />
+    </svg>
+  )
+}
+
+const SCENARIOS_NAV = [
+  { to: '/payoff-planner', icon: StairsDown, label: 'Payoff planner' },
+]
+
 const TOOLS_NAV = [
   { to: '/help',     icon: HelpCircle, label: 'Help' },
   { to: '/settings', icon: Settings,   label: 'Settings' },
@@ -128,6 +153,12 @@ const isAdmin = ['admin', 'superuser'].includes((user?.role || '').toLowerCase()
         <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5">Main</p>
         <div className="flex flex-col gap-0.5">
           {MAIN_NAV.map(({ to, icon, label }) => (
+            <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
+          ))}
+        </div>
+                <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5 mt-3">Scenarios</p>
+        <div className="flex flex-col gap-0.5">
+          {SCENARIOS_NAV.map(({ to, icon, label }) => (
             <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
           ))}
         </div>

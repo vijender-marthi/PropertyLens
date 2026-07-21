@@ -79,6 +79,7 @@ export const propAPI = {
   updateNotes: (id, note) => api.patch(`/properties/${id}/notes`, null, { params: { note } }),
   dashboard: (excludeIds = '') => api.get('/properties/dashboard/summary', { params: { exclude_ids: excludeIds } }),
   portfolioAnalysis: (params = {}, config = {}) => api.get('/properties/analysis/portfolio', { ...config, params }),
+  payoffPlanner: (params = {}, config = {}) => api.get('/properties/analysis/payoff-planner', { ...config, params }),
   // Loans
   addLoan: (propId, data) => api.post(`/properties/${propId}/loans`, data),
   updateLoan: (propId, loanId, data) => api.put(`/properties/${propId}/loans/${loanId}`, data),
