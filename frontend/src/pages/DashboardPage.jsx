@@ -2,492 +2,401 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
-  AlertCircle,
+  AlertTriangle,
   ArrowRight,
   BarChart3,
+  Building2,
   CalendarDays,
-  CheckCircle2,
-  ChevronDown,
+  Check,
+  CircleDollarSign,
+  Download,
+  Gauge,
   Home,
   Landmark,
-  RefreshCw,
+  Percent,
+  ReceiptText,
+  Scale,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
-  WalletCards,
 } from 'lucide-react'
 import {
   CartesianGrid,
+  Cell,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts'
 import PageContainer from '../components/PageContainer'
+import InfoTooltip from '../components/InfoTooltip'
 import { propAPI } from '../services/api'
-import { formatCurrencyCompact, formatCurrency, formatPercent, formatRatio } from '../utils/formatters'
-import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
+import { formatCurrency, formatCurrencyCompact, formatPercent, formatRatio } from '../utils/formatters'
+import { chartColorRamps, chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
 
-const KPI_ICONS = {
-  portfolioValue: Home,
-  totalEquity: Landmark,
-  monthlyNetCashFlow: WalletCards,
-  portfolioLtv: ShieldCheck,
-  annualNoi: BarChart3,
-  propertiesNeedingAttention: AlertCircle,
+const ICONS = {
+  home: Home,
+  equity: Landmark,
+  cashFlow: CircleDollarSign,
+  percent: Percent,
+  analytics: BarChart3,
+  ratio: Scale,
+  properties: Building2,
+  occupancy: Gauge,
+  income: CircleDollarSign,
+  expenses: ReceiptText,
+  noi: TrendingUp,
 }
 
-function num(value, fallback = 0) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
+const TONES = {
+  blue: { icon: 'bg-blue-50 text-blue-600', stroke: chartColors.primary },
+  green: { icon: 'bg-green-50 text-green-600', stroke: chartColors.positive },
+  teal: { icon: 'bg-teal-50 text-teal-600', stroke: chartColors.cyan },
+  orange: { icon: 'bg-orange-50 text-orange-600', stroke: chartColors.warning },
+  purple: { icon: 'bg-purple-50 text-purple-600', stroke: chartColors.purple },
+  cyan: { icon: 'bg-cyan-50 text-cyan-700', stroke: chartColors.primarySoft },
 }
 
-function money(value) {
-  return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 1, mDigits: 2 })
-}
-
-function metricValue(metric) {
-  if (!metric) return '—'
-  if (metric.unit === 'percent') return formatPercent(metric.value)
+function metricDisplay(metric) {
+  if (!metric || metric.value === null || metric.value === undefined) return '—'
+  if (metric.unit === 'percent' || metric.unit === 'rate') return formatPercent(metric.value)
   if (metric.unit === 'ratio') return formatRatio(metric.value)
-  if (metric.unit === 'count') return String(metric.value ?? 0)
-  return metric.display || metric.fullDisplay || money(metric.value)
+  if (metric.unit === 'count') return String(metric.value)
+  return formatCurrencyCompact(metric.value, { threshold: 100_000, kDigits: 1, mDigits: 2 })
 }
 
-function metricTone(metric) {
-  if (metric?.status === 'data_issue') return 'text-amber-700 bg-amber-50 ring-amber-100'
-  if (num(metric?.value) < 0) return 'text-red-700 bg-red-50 ring-red-100'
-  return 'text-blue-700 bg-blue-50 ring-blue-100'
+function metricFullDisplay(metric) {
+  if (!metric || metric.value === null || metric.value === undefined) return '—'
+  if (metric.unit === 'percent' || metric.unit === 'rate') return formatPercent(metric.value)
+  if (metric.unit === 'ratio') return formatRatio(metric.value)
+  if (metric.unit === 'count') return String(metric.value)
+  return formatCurrency(metric.value)
 }
 
 function DashboardCard({ children, className = '' }) {
-  return (
-    <section className={`rounded-xl border border-gray-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900 ${className}`}>
-      {children}
-    </section>
-  )
+  return <section className={`rounded-xl border border-gray-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${className}`}>{children}</section>
 }
 
-function KpiCard({ metric }) {
-  const Icon = KPI_ICONS[metric?.key] || BarChart3
+function KpiCard({ config, metric, trendSeries }) {
+  const Icon = ICONS[config.icon] || BarChart3
+  const tone = TONES[config.tone] || TONES.blue
   return (
-    <DashboardCard className="p-4">
+    <DashboardCard className="min-h-28 overflow-hidden p-4">
       <div className="flex items-start gap-3">
-        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1 ${metricTone(metric)}`}>
-          <Icon className="h-4 w-4" />
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${tone.icon}`}>
+          <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-gray-500 dark:text-neutral-400">{metric?.label || 'Metric'}</p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{metricValue(metric)}</p>
-          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-500">{metric?.reason || metric?.description || 'Current portfolio signal'}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold uppercase text-gray-500">{config.label}</p>
+          <p className={`mt-1 truncate text-xl font-bold ${metric?.value < 0 ? 'text-red-600' : config.tone === 'green' || config.tone === 'teal' ? 'text-green-700' : 'text-gray-950'}`}>{metricDisplay(metric)}</p>
+          <p className="mt-1 text-xs text-gray-500">{metric?.period || metric?.status || 'Current selection'}</p>
         </div>
       </div>
+      {config.seriesKey && trendSeries?.length > 1 ? (
+        <div className="mt-2 h-7 border-t border-gray-100 pt-1" aria-hidden="true">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={trendSeries}><Line type="monotone" dataKey={config.seriesKey} stroke={tone.stroke} strokeWidth={2} dot={false} /></LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null}
     </DashboardCard>
   )
 }
 
-function FilterBar({ properties, excludedIds, setExcludedIds }) {
-  const includedCount = properties.filter((property) => !excludedIds.has(property.id)).length
-  const toggle = (id) => {
-    setExcludedIds((current) => {
+function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedIds, startDate, setStartDate, endDate, setEndDate, reportHref }) {
+  const available = context?.availableProperties || []
+  const toggleProperty = (id) => {
+    setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
   }
+  return (
+    <div className="grid w-full gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap lg:items-center lg:justify-end">
+      <select className="input h-10 min-w-40 text-sm lg:w-auto" value={scope} onChange={(event) => setScope(event.target.value)} aria-label="Portfolio property scope">
+        <option value="all">All properties ({available.length})</option>
+        <option value="rentals">Rentals only</option>
+        <option value="custom">Custom selection</option>
+      </select>
+      {scope === 'custom' ? (
+        <details className="relative">
+          <summary className="btn-secondary inline-flex h-10 cursor-pointer list-none items-center text-sm">Select properties</summary>
+          <div className="absolute right-0 z-30 mt-2 max-h-72 w-72 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+            {available.map((property) => (
+              <label key={property.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-gray-50">
+                <input type="checkbox" checked={selectedIds.has(property.id)} onChange={() => toggleProperty(property.id)} />
+                <span className="truncate">{property.name || property.address}</span>
+              </label>
+            ))}
+          </div>
+        </details>
+      ) : null}
+      <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-600 sm:col-span-2 lg:col-span-1">
+        <CalendarDays className="h-4 w-4" aria-hidden="true" />
+        <span className="sr-only">Start date</span>
+        <input type="date" className="min-w-0 flex-1 bg-transparent text-xs sm:text-sm" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+        <span aria-hidden="true">–</span>
+        <span className="sr-only">End date</span>
+        <input type="date" className="min-w-0 flex-1 bg-transparent text-xs sm:text-sm" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+      </label>
+      <Link to={reportHref} className="btn-secondary inline-flex h-10 items-center justify-center gap-2 text-sm"><Download className="h-4 w-4" aria-hidden="true" />Export Report</Link>
+    </div>
+  )
+}
+
+function SummaryPanel({ section, resolveMetric, kind }) {
+  const total = resolveMetric('analytics', section.totalMetricKey)
+  return (
+    <DashboardCard className="overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3">
+        <h2 className="text-sm font-bold uppercase text-gray-900">{section.title}</h2>
+        <span className="text-base font-bold text-gray-950">{kind === 'assets' ? metricDisplay(resolveMetric('analytics', 'portfolioValue')) : metricDisplay(resolveMetric('loans', 'totalBalance'))}</span>
+      </div>
+      <dl className="px-4">
+        {(section.rows || []).map((row) => {
+          const metric = resolveMetric(row.metricSource || (kind === 'assets' ? 'dashboard' : 'analytics'), row.metricKey)
+          return <div key={row.label} className="flex items-center justify-between gap-3 border-t border-gray-100 py-3 first:border-t-0"><dt className="text-sm text-gray-600">{row.label}</dt><dd className={`text-right text-sm font-semibold ${row.tone === 'positive' ? 'text-green-700' : 'text-gray-900'}`}>{metricFullDisplay(metric)}</dd></div>
+        })}
+      </dl>
+      <div className={`flex items-center justify-between px-4 py-3 text-sm font-bold ${kind === 'assets' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+        <span>{kind === 'assets' ? 'Total Equity' : 'Debt to Value (LTV)'}</span><span>{metricDisplay(total)}</span>
+      </div>
+    </DashboardCard>
+  )
+}
+
+function PortfolioHealth({ data }) {
+  return (
+    <DashboardCard className="p-4">
+      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <div className="mt-4 flex items-center gap-4">
+        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${data.score || 0}%, ${chartColors.trackLight} ${data.score || 0}%)` }}>
+          <div className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-white text-center"><div><p className="text-2xl font-bold text-gray-950">{data.scoreDisplay}</p><p className="text-[10px] font-semibold uppercase text-green-700">{data.status}</p></div></div>
+        </div>
+        <ul className="min-w-0 flex-1 space-y-2">
+          {(data.checks || []).map((check) => <li key={check.key} className="flex items-start gap-2 text-xs text-gray-600"><Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${check.passes ? 'text-green-600' : 'text-amber-600'}`} aria-hidden="true" />{check.label}</li>)}
+        </ul>
+      </div>
+      <Link to={data.href || '/analytics'} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Full Health Check <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
+    </DashboardCard>
+  )
+}
+
+function waterfallSignedValue(step) {
+  const value = Number(step?.value || 0)
+  if (step?.type === 'decrease') return -Math.abs(value)
+  return value
+}
+
+function CashFlowWaterfall({ data }) {
+  const steps = data.steps || []
+  const maxAmount = Math.max(...steps.map((step) => Math.abs(waterfallSignedValue(step))), 1)
 
   return (
     <DashboardCard className="p-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-neutral-400">Property Filter</p>
-          <p className="mt-1 text-sm text-gray-600 dark:text-neutral-300">{includedCount} of {properties.length} properties included in this executive view</p>
+          <h2 className="text-sm font-bold uppercase text-gray-900">Cash flow (Monthly)</h2>
+          <p className="mt-1 text-xs text-gray-500">{data.subtitle}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn-secondary text-xs" onClick={() => setExcludedIds(new Set())}>Select all</button>
-          {properties.map((property) => {
-            const selected = !excludedIds.has(property.id)
-            return (
-              <button
-                key={property.id}
-                type="button"
-                onClick={() => toggle(property.id)}
-                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                  selected
-                    ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200'
-                    : 'border-gray-200 bg-white text-gray-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400'
-                }`}
-              >
-                <span className={`h-3.5 w-3.5 rounded border ${selected ? 'border-blue-600 bg-blue-600' : 'border-gray-300'}`} />
-                {property.address || property.name || `Property ${property.id}`}
-              </button>
-            )
-          })}
-        </div>
+        <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">Monthly</span>
       </div>
-    </DashboardCard>
-  )
-}
-
-function HealthGauge({ dashboard }) {
-  const checks = dashboard.dataQuality?.checks || []
-  const healthRows = dashboard.propertyHealth || []
-  const stable = healthRows.filter((row) => row.status === 'Stable').length
-  const score = healthRows.length ? Math.round((stable / healthRows.length) * 10 * 10) / 10 : dashboard.dataQualityStatus === 'Complete' ? 9 : 7
-  const pct = Math.max(0, Math.min(100, score * 10))
-  const label = score >= 8 ? 'Strong' : score >= 6 ? 'Watch' : 'Needs Review'
-
-  return (
-    <DashboardCard className="p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Portfolio Health</h2>
-          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Executive readiness score</p>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${score >= 8 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{label}</span>
-      </div>
-      <div className="mt-5 flex items-center gap-5">
-        <div
-          className="grid h-32 w-32 shrink-0 place-items-center rounded-full"
-          style={{ background: `conic-gradient(${score >= 8 ? '#10b981' : '#f59e0b'} ${pct}%, #e5e7eb ${pct}%)` }}
-        >
-          <div className="grid h-24 w-24 place-items-center rounded-full bg-white dark:bg-neutral-900">
-            <div className="text-center">
-              <p className="text-3xl font-semibold text-gray-950 dark:text-white">{score}</p>
-              <p className="text-xs text-gray-500">/10</p>
-            </div>
+      <div className="mt-4">
+        <div className="relative h-72 rounded-lg border border-gray-100 bg-gray-50 px-3 py-4">
+          <div className="absolute left-3 right-3 top-1/2 h-px bg-gray-300" aria-hidden="true" />
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-gray-500">0</div>
+          <div className="grid h-full items-stretch gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(steps.length, 1)}, minmax(4.5rem, 1fr))` }}>
+            {steps.map((step) => {
+              const signedValue = waterfallSignedValue(step)
+              const isNegative = signedValue < 0
+              const heightPercent = Math.max(4, (Math.abs(signedValue) / maxAmount) * 42)
+              const barTop = isNegative ? 50 : 50 - heightPercent
+              const valueTop = isNegative ? 50 + heightPercent + 2 : Math.max(0, 50 - heightPercent - 9)
+              const toneClass = step.type === 'total' ? 'bg-blue-600' : isNegative ? 'bg-red-500' : 'bg-green-600'
+              return (
+                <div key={step.key} className="relative min-w-0">
+                  <p className="absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-xs font-bold text-gray-900" style={{ top: `${valueTop}%` }}>
+                    {formatCurrencyCompact(signedValue)}
+                  </p>
+                  <div
+                    className={`absolute left-1/2 w-3/5 -translate-x-1/2 rounded-sm ${toneClass}`}
+                    style={{ top: `${barTop}%`, height: `${heightPercent}%` }}
+                    title={`${step.label}: ${formatCurrency(signedValue)}`}
+                  />
+                  <p className="absolute bottom-0 left-1/2 w-24 -translate-x-1/2 text-center text-xs text-gray-600">{step.label}</p>
+                </div>
+              )
+            })}
           </div>
         </div>
-        <div className="min-w-0 flex-1 space-y-2">
-          {[
-            ['Cash Flow', dashboard.overview?.find((metric) => metric.key === 'monthlyNetCashFlow')?.display],
-            ['Data Quality', dashboard.dataQualityStatus],
-            ['Properties', `${dashboard.scope?.includedRentalProperties || 0} rentals`],
-            ['Validation', checks[0]?.display || checks[0]?.reason || 'Current'],
-          ].map(([labelText, value]) => (
-            <div key={labelText} className="flex items-center justify-between gap-3 text-sm">
-              <span className="text-gray-500 dark:text-neutral-400">{labelText}</span>
-              <span className="font-semibold text-gray-800 dark:text-neutral-100">{value || '—'}</span>
-            </div>
-          ))}
+        <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-green-600" />Positive cash flow</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-red-500" />Negative cash flow</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-blue-600" />Net result</span>
         </div>
       </div>
+      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-gray-200 bg-gray-200 sm:grid-cols-5">
+        {(data.reconciliation || []).map((item) => <div key={item.label} className="bg-white px-3 py-3"><p className="text-xs text-gray-500">{item.label}</p><p className={`mt-1 text-sm font-bold ${item.tone === 'negative' ? 'text-red-600' : item.tone === 'positive' ? 'text-green-700' : 'text-gray-900'}`}>{formatCurrency(item.value)}</p></div>)}
+      </div>
+      <Link to="/analytics?tab=cash-flow" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Cash Flow Analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
   )
 }
 
-function StorySummary({ dashboard }) {
-  const stories = dashboard.stories || []
-  const cashFlow = stories.find((story) => story.key === 'cashFlow') || stories[0]
-  const firstAction = (dashboard.attention?.groups || []).flatMap((group) => group.actions || [])[0]
-  const headline = cashFlow?.chart?.insight || cashFlow?.explanation || 'Portfolio summary is available from backend metrics.'
-  const why = firstAction?.whyItMatters || cashFlow?.chart?.recommendation || 'The dashboard is showing current portfolio movement from rent, operating expenses, and debt service.'
-
+function CapitalStructure({ data }) {
+  const equity = data.segments?.find((item) => item.key === 'equity')
   return (
-    <DashboardCard className="p-5">
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-700 ring-1 ring-blue-100">
-          <Sparkles className="h-5 w-5" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">AI Story</p>
-          <h2 className="mt-1 text-lg font-semibold text-gray-950 dark:text-white">Tell me what’s happening.</h2>
-          <p className="mt-2 text-sm leading-6 text-gray-700 dark:text-neutral-200">{headline}</p>
-          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-neutral-800 dark:bg-neutral-950">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-neutral-400">Tell me why it’s happening.</p>
-            <p className="mt-1 text-sm leading-6 text-gray-700 dark:text-neutral-200">{why}</p>
-          </div>
+    <DashboardCard className="p-4">
+      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <div className="mt-4 flex items-center gap-5">
+        <div className="grid h-28 w-28 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.negative} ${equity?.percentage || 0}%)` }}>
+          <div className="grid h-16 w-16 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-xs text-gray-500">Total value</p></div></div>
         </div>
+        <dl className="min-w-0 flex-1 space-y-3">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 rounded-full ${item.tone === 'positive' ? 'bg-green-600' : 'bg-red-500'}`} />{item.label}</dt><dd className="text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
       </div>
     </DashboardCard>
   )
 }
 
-function Waterfall({ dashboard }) {
-  const nodes = dashboard.stories?.find((story) => story.key === 'cashFlow')?.chart?.nodes || []
-  const max = Math.max(...nodes.map((node) => Math.abs(num(node.value || node.runningTotal))), 1)
-  if (!nodes.length) return <EmptyBlock label="Cash flow story unavailable" />
+function CashFlowTrend({ data }) {
+  const series = data.series || []
   return (
-    <DashboardCard className="p-5">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Cash Flow</h2>
-          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Monthly path from rent to net cash flow</p>
-        </div>
-        <Link to="/analytics" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-300">
-          Analyze
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
-      </div>
-      <div className="space-y-3">
-        {nodes.map((node) => {
-          const negative = node.tone === 'negative'
-          const width = Math.max(6, Math.abs(num(node.value || node.runningTotal)) / max * 100)
-          return (
-            <div key={node.key || node.label} className={`grid grid-cols-[8.5rem_1fr_5rem] items-center gap-3 text-xs ${node.total ? 'border-t border-gray-100 pt-3 font-semibold dark:border-neutral-800' : ''}`}>
-              <span className="text-gray-600 dark:text-neutral-300">{node.label}</span>
-              <div className="h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-neutral-800">
-                <div className={`h-full rounded-full ${negative ? 'bg-red-500' : node.total ? 'bg-blue-500' : 'bg-emerald-500'}`} style={{ width: `${width}%` }} />
-              </div>
-              <span className={`text-right font-semibold ${negative ? 'text-red-600' : 'text-gray-950 dark:text-white'}`}>{node.display || node.runningDisplay}</span>
-            </div>
-          )
-        })}
-      </div>
+    <DashboardCard className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2><span className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{data.period || 'Monthly'}</span></div>
+      <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-gray-500"><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-green-600" />Net Cash Flow</span><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-blue-600" />Debt Service</span></div>
+      <div className="mt-3 h-52">{series.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={series} margin={{ left: -16, right: 8, top: 8 }}><CartesianGrid stroke={chartColors.gridLight} vertical={false} /><XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><YAxis tickFormatter={formatCurrencyCompact} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} /><Line type="monotone" dataKey="cashFlow" name="Net Cash Flow" stroke={chartColors.positive} strokeWidth={2} dot={{ r: 3 }} /><Line type="monotone" dataKey="debtService" name="Debt Service" stroke={chartColors.primary} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer> : <EmptyState label="Cash-flow history unavailable" />}</div>
+      <Link to="/analytics?tab=cash-flow" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Cash Flow Analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
   )
 }
 
-function PropertyRanking({ rows }) {
-  const sorted = (rows || []).slice().sort((a, b) => num(b.monthlyCashFlow?.value) - num(a.monthlyCashFlow?.value))
+function ExpenseBreakdown({ data }) {
+  const colors = chartColorRamps.blue.concat(chartColorRamps.amber)
   return (
-    <DashboardCard className="p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Property Performance Ranking</h2>
-          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Fast scan for daily attention</p>
-        </div>
-        <Link to="/properties" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-300">View all <ArrowRight className="h-3.5 w-3.5" /></Link>
+    <DashboardCard className="p-4">
+      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <div className="mt-3 grid min-h-52 grid-cols-[8rem_1fr] items-center gap-3">
+        <div className="relative h-32 w-32">{data.items?.length ? <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data.items} dataKey="value" nameKey="label" innerRadius={38} outerRadius={58}>{data.items.map((item, index) => <Cell key={item.key} fill={colors[index % colors.length]} />)}</Pie><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} /></PieChart></ResponsiveContainer> : null}<div className="pointer-events-none absolute inset-0 grid place-items-center text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.total)}</p><p className="text-xs text-gray-500">Total</p></div></div></div>
+        <ul className="space-y-2">{(data.items || []).map((item, index) => <li key={item.key} className="flex items-center justify-between gap-2 text-xs"><span className="flex min-w-0 items-center gap-2 text-gray-600"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} /><span className="truncate">{item.label}</span></span><span className="font-semibold text-gray-900">{formatPercent(item.percentage)}</span></li>)}</ul>
       </div>
-      <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-neutral-800">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-xs text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
-            <tr>
-              <th className="px-3 py-2 text-left font-semibold">Property</th>
-              <th className="px-3 py-2 text-right font-semibold">Cash Flow</th>
-              <th className="px-3 py-2 text-right font-semibold">DSCR</th>
-              <th className="px-3 py-2 text-right font-semibold">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100 dark:divide-neutral-800">
-            {sorted.map((row, index) => (
-              <tr key={row.id || row.property}>
-                <td className="px-3 py-3">
-                  <div className="flex items-center gap-2">
-                    <span className={`grid h-6 w-6 place-items-center rounded-full text-xs font-semibold ${index < 3 ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>{index + 1}</span>
-                    <span className="font-medium text-gray-900 dark:text-neutral-100">{row.property}</span>
-                  </div>
-                </td>
-                <td className={`px-3 py-3 text-right font-semibold ${num(row.monthlyCashFlow?.value) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{row.monthlyCashFlow?.display || '—'}</td>
-                <td className="px-3 py-3 text-right text-gray-700 dark:text-neutral-300">{metricValue(row.dscr)}</td>
-                <td className="px-3 py-3 text-right">
-                  <span className={`rounded-full px-2 py-1 text-xs font-semibold ${row.status === 'Stable' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{row.status}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Link to="/income-expenses" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Expense Details <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
   )
 }
 
-function AllocationBars({ properties }) {
-  const total = properties.reduce((sum, property) => sum + num(property.market_value), 0)
-  if (!properties.length) return <EmptyBlock label="No property allocation data" />
+function PropertyPerformance({ data }) {
   return (
-    <DashboardCard className="p-5">
-      <h2 className="text-base font-semibold text-gray-950 dark:text-white">Portfolio Allocation</h2>
-      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">By property value, shown without pie charts</p>
-      <div className="mt-4 space-y-3">
-        {properties.slice().sort((a, b) => num(b.market_value) - num(a.market_value)).map((property) => {
-          const pct = total ? num(property.market_value) / total * 100 : 0
-          return (
-            <div key={property.id || property.name} className="space-y-1.5">
-              <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="truncate font-medium text-gray-700 dark:text-neutral-200">{property.name || property.address || `Property ${property.id}`}</span>
-                <span className="text-gray-500">{pct.toFixed(1)}% · {money(property.market_value)}</span>
-              </div>
-              <div className="h-2 rounded-full bg-gray-100 dark:bg-neutral-800">
-                <div className="h-2 rounded-full bg-blue-500" style={{ width: `${Math.max(3, pct)}%` }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
+    <DashboardCard className="p-4">
+      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <div className="mt-3 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-gray-200 text-xs text-gray-500"><th className="py-2 text-left font-semibold">Property</th><th className="py-2 text-right font-semibold">Cash Flow</th><th className="py-2 text-right font-semibold">CoC Return</th></tr></thead><tbody>{(data.rows || []).map((row) => <tr key={row.id} className="border-b border-gray-100 last:border-0"><td className="max-w-36 truncate py-2 font-medium text-gray-900">{row.label}</td><td className={`py-2 text-right font-semibold ${row.cashFlow < 0 ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(row.cashFlow)}</td><td className={`py-2 text-right font-semibold ${row.cashOnCash !== null && row.cashOnCash < 0 ? 'text-red-600' : 'text-green-700'}`}>{row.cashOnCash === null ? '—' : formatPercent(row.cashOnCash)}</td></tr>)}</tbody></table></div>
+      <Link to="/properties" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View All Properties <ArrowRight className="h-3.5 w-3.5" /></Link>
     </DashboardCard>
   )
 }
 
-function CashFlowTrend({ trends }) {
-  const rows = (trends || []).map((row) => ({ year: row.year, cashFlow: num(row.net_income), income: num(row.rental_income) }))
-  if (!rows.length) return <EmptyBlock label="No trend data available" />
+function AlertsPanel({ data }) {
   return (
-    <DashboardCard className="p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold text-gray-950 dark:text-white">Cash Flow Trend</h2>
-          <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Yearly net rental income trend</p>
-        </div>
-        <Link to="/analytics" className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 dark:text-blue-300">Deep analysis <ArrowRight className="h-3.5 w-3.5" /></Link>
-      </div>
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={rows} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-            <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} tickFormatter={(value) => formatCurrencyCompact(value)} />
-            <Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} />
-            <Line type="monotone" dataKey="cashFlow" name="Net Income" stroke={chartColors.primary} strokeWidth={2.5} dot={{ r: 3 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+    <DashboardCard className="p-4">
+      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <div className="mt-3 divide-y divide-gray-100">{data.items?.length ? data.items.map((item) => <div key={item.key} className="flex items-start gap-3 py-3"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${item.severity === 'WARNING' || item.severity === 'IMPORTANT' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}><AlertTriangle className="h-4 w-4" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-gray-900">{item.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{item.message}</p></div><Link to={item.href} className="text-xs font-semibold text-blue-600">{item.actionLabel}</Link></div>) : <EmptyState label="No high-priority alerts" />}</div>
+      <Link to="/analytics" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View All Alerts <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
   )
 }
 
-function AttentionPanel({ dashboard }) {
-  const actions = (dashboard.attention?.groups || []).flatMap((group) => group.actions || [])
-  return (
-    <DashboardCard className="p-5">
-      <h2 className="text-base font-semibold text-gray-950 dark:text-white">What Needs Attention</h2>
-      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Prioritized backend recommendations</p>
-      <div className="mt-4 space-y-3">
-        {actions.length ? actions.slice(0, 4).map((action) => (
-          <div key={action.id} className={`rounded-lg border p-3 ${action.severity === 'critical' ? 'border-red-200 bg-red-50 text-red-950' : action.severity === 'warning' ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-blue-200 bg-blue-50 text-blue-950'}`}>
-            <p className="text-sm font-semibold">{action.title}</p>
-            <p className="mt-1 text-xs opacity-80">{action.scope} · {action.financialImpact}</p>
-            {action.primaryAction?.href ? <Link to={action.primaryAction.href} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold">Review <ArrowRight className="h-3.5 w-3.5" /></Link> : null}
-          </div>
-        )) : (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-            <CheckCircle2 className="mb-2 h-4 w-4" />
-            No urgent actions in the selected portfolio scope.
-          </div>
-        )}
-      </div>
-    </DashboardCard>
-  )
+function BottomStrip({ items, resolveMetric }) {
+  return <section className="grid gap-px overflow-visible rounded-xl border border-gray-200 bg-gray-200 shadow-sm sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Portfolio operating metrics">{items.map((item) => { const Icon = ICONS[item.icon] || ShieldCheck; const metric = resolveMetric(item.metricSource || (item.scope === 'rental' && ['income', 'noi'].includes(item.metricKey) ? 'income' : item.metricKey === 'occupancy' ? 'analytics' : 'dashboard'), item.metricKey); return <div key={item.label} className="flex min-h-20 items-center gap-3 bg-white px-4 py-3"><Icon className="h-5 w-5 shrink-0 text-gray-500" aria-hidden="true" /><div className="min-w-0 flex-1"><div className="flex items-center gap-1"><p className="text-xs font-semibold uppercase text-gray-500">{item.label}</p><InfoTooltip metric={metric} label={item.label} /></div><p className="mt-1 text-base font-bold text-gray-950">{metricDisplay(metric)}</p><p className="mt-1 truncate text-xs text-gray-500">{item.detail}</p></div></div>})}</section>
 }
 
-function ScenarioPanel() {
-  const assumptions = [
-    ['Interest Rate', '5.50%'],
-    ['Rent Increase', '5%'],
-    ['Vacancy Rate', '3%'],
-    ['Maintenance', '10%'],
-    ['Property Tax', '4%'],
-  ]
-  return (
-    <DashboardCard className="p-5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-gray-950 dark:text-white">Scenario Snapshot</h2>
-        <Link to="/analytics" className="text-xs font-semibold text-blue-700 dark:text-blue-300">Open</Link>
-      </div>
-      <p className="mt-1 text-xs text-gray-500 dark:text-neutral-400">Fast what-if controls. Deep scenario work lives in Analytics.</p>
-      <div className="mt-4 space-y-2">
-        {assumptions.map(([label, value]) => (
-          <div key={label} className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2 text-sm dark:border-neutral-800">
-            <span className="text-gray-500 dark:text-neutral-400">{label}</span>
-            <span className="font-semibold text-gray-900 dark:text-neutral-100">{value}</span>
-          </div>
-        ))}
-      </div>
-      <Link to="/analytics" className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">
-        Run Analysis
-        <ArrowRight className="h-4 w-4" />
-      </Link>
-    </DashboardCard>
-  )
-}
-
-function EmptyBlock({ label }) {
-  return <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400 dark:border-neutral-700">{label}</div>
+function EmptyState({ label }) {
+  return <div className="grid h-full min-h-24 place-items-center text-center text-sm text-gray-500">{label}</div>
 }
 
 export default function DashboardPage() {
+  const today = new Date().toISOString().slice(0, 10)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [excludedIds, setExcludedIds] = useState(new Set())
+  const [scope, setScope] = useState('all')
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const [startDate, setStartDate] = useState(`${today.slice(0, 4)}-01-01`)
+  const [endDate, setEndDate] = useState(today)
 
-  const excludedKey = useMemo(() => Array.from(excludedIds).sort((a, b) => a - b).join(','), [excludedIds])
+  const selectedKey = useMemo(() => Array.from(selectedIds).sort((a, b) => a - b).join(','), [selectedIds])
+  const reportHref = useMemo(() => {
+    const params = new URLSearchParams({
+      selected_property_ids: scope === 'custom' ? selectedKey : '',
+      selection_explicit: String(scope === 'custom'),
+      include_primary_residence: String(scope !== 'rentals'),
+      start_date: startDate,
+      end_date: endDate,
+    })
+    return `/reports?${params.toString()}`
+  }, [scope, selectedKey, startDate, endDate])
 
   useEffect(() => {
+    const controller = new AbortController()
+    let active = true
+    const request = {
+      selected_property_ids: scope === 'custom' ? selectedKey : '',
+      selection_explicit: scope === 'custom',
+      include_primary_residence: scope !== 'rentals',
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
+    }
     setLoading(true)
-    propAPI.dashboard(excludedKey)
-      .then((response) => setData(response.data))
-      .catch(() => toast.error('Failed to load dashboard'))
-      .finally(() => setLoading(false))
-  }, [excludedKey])
+    propAPI.portfolioAnalysis(request, { signal: controller.signal })
+      .then((response) => {
+        if (active) setData(response.data)
+      })
+      .catch((error) => {
+        if (active && error?.code !== 'ERR_CANCELED') toast.error('Failed to load portfolio dashboard')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [scope, selectedKey, startDate, endDate])
 
-  const dashboard = data?.executive_dashboard
-  const portfolio = data?.dashboard || {}
-  const filterProperties = portfolio.filter_properties || []
-
-  if (loading && !data) {
-    return (
-      <PageContainer>
-        <div className="flex h-64 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-        </div>
-      </PageContainer>
-    )
+  const analytics = data?.analytics
+  const dashboard = analytics?.dashboard
+  const dashboardMetrics = analytics?.dashboardMetrics || {}
+  const resolveMetric = (source, key) => {
+    if (source === 'loans') return data?.loans?.kpis?.[key]
+    if (source === 'income') return data?.incomeExpenses?.kpis?.[key]
+    if (source === 'dashboard') return dashboardMetrics[key]
+    return analytics?.kpis?.[key]
   }
 
-  if (!dashboard) {
-    return (
-      <PageContainer>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 py-12 text-center text-amber-950">
-          <AlertCircle className="mx-auto h-10 w-10 text-amber-500" />
-          <h1 className="mt-3 text-lg font-semibold">Dashboard unavailable</h1>
-          <p className="mt-1 text-sm">The backend dashboard view model could not be loaded.</p>
-        </div>
-      </PageContainer>
-    )
-  }
+  if (loading && !data) return <PageContainer><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" /></div></PageContainer>
+  if (!dashboard) return <PageContainer><DashboardCard className="p-10 text-center"><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><h1 className="mt-3 text-lg font-semibold text-gray-900">Portfolio dashboard unavailable</h1><p className="mt-1 text-sm text-gray-500">The backend did not return a dashboard presentation.</p></DashboardCard></PageContainer>
 
   return (
     <PageContainer className="max-w-[112rem]">
-      <div className="space-y-5">
-        <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-neutral-800 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Portfolio Dashboard</h1>
-            <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">30-second executive summary: what happened, why it happened, and what needs attention.</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm">
-              <CalendarDays className="h-4 w-4" />
-              {dashboard.asOfDate || 'Current'}
-              <ChevronDown className="h-4 w-4" />
-            </button>
-            <Link to="/analytics" className="btn-primary inline-flex items-center gap-2 text-sm">
-              <TrendingUp className="h-4 w-4" />
-              Deep Analysis
-            </Link>
-          </div>
+      <div className="space-y-4" data-testid="portfolio-dashboard">
+        <header className="flex flex-col gap-4 border-b border-gray-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+          <div><h1 className="text-2xl font-bold text-gray-950">{dashboard.header.title}</h1><p className="mt-1 text-sm text-gray-500">{dashboard.header.subtitle}</p></div>
+          <PortfolioFilters context={data.filterContext} scope={scope} setScope={setScope} selectedIds={selectedIds} setSelectedIds={setSelectedIds} startDate={startDate} setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate} reportHref={reportHref} />
         </header>
 
-        <FilterBar properties={filterProperties} excludedIds={excludedIds} setExcludedIds={setExcludedIds} />
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Portfolio metrics">{dashboard.topMetrics.map((config) => <KpiCard key={config.metricKey} config={config} metric={resolveMetric('analytics', config.metricKey)} trendSeries={dashboard.cashFlowTrend.series} />)}</section>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-          {(dashboard.overview || []).map((metric) => <KpiCard key={metric.key || metric.label} metric={metric} />)}
-        </div>
+        <section className="grid items-start gap-4 xl:grid-cols-[minmax(15rem,0.9fr)_minmax(34rem,2.2fr)_minmax(15rem,0.9fr)]">
+          <div className="space-y-4"><SummaryPanel section={dashboard.assets} resolveMetric={resolveMetric} kind="assets" /><PortfolioHealth data={dashboard.health} /></div>
+          <CashFlowWaterfall data={dashboard.cashFlowWaterfall} />
+          <div className="space-y-4"><SummaryPanel section={dashboard.liabilities} resolveMetric={resolveMetric} kind="liabilities" /><CapitalStructure data={dashboard.capitalStructure} /></div>
+        </section>
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
-          <main className="space-y-5">
-            <div className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr_1fr]">
-              <HealthGauge dashboard={dashboard} />
-              <StorySummary dashboard={dashboard} />
-              <Waterfall dashboard={dashboard} />
-            </div>
-            <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
-              <PropertyRanking rows={dashboard.propertyHealth || []} />
-              <AllocationBars properties={portfolio.properties || []} />
-            </div>
-            <CashFlowTrend trends={data?.yearly_trends || []} />
-          </main>
-          <aside className="space-y-5">
-            <AttentionPanel dashboard={dashboard} />
-            <ScenarioPanel />
-          </aside>
-        </div>
+        <BottomStrip items={dashboard.bottomMetrics} resolveMetric={resolveMetric} />
 
-        <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-100">
-          <span className="font-semibold">Dashboard vs Analytics:</span> Dashboard is the executive summary for daily use. Analytics is the investigation page for interactive charting, comparisons, and deeper monthly review.
-        </div>
+        <section className="grid items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-4"><CashFlowTrend data={dashboard.cashFlowTrend} /><ExpenseBreakdown data={dashboard.expenseBreakdown} /><PropertyPerformance data={dashboard.propertyPerformance} /><AlertsPanel data={dashboard.alerts} /></section>
       </div>
     </PageContainer>
   )
