@@ -6,7 +6,7 @@ import {
   ArrowRight,
   BarChart3,
   Building2,
-  CalendarDays,
+  ChevronDown,
   Check,
   CircleDollarSign,
   Download,
@@ -106,9 +106,12 @@ function KpiCard({ config, metric, trendSeries }) {
   )
 }
 
-function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedIds, startDate, setStartDate, endDate, setEndDate, reportHref }) {
+function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedIds, reportHref }) {
+  const [open, setOpen] = useState(false)
   const available = context?.availableProperties || []
+
   const toggleProperty = (id) => {
+    setScope('custom')
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
@@ -116,34 +119,83 @@ function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedId
       return next
     })
   }
+  const selectAll = () => { setScope('all'); setSelectedIds(new Set()) }
+  const selectRentals = () => { setScope('rentals'); setSelectedIds(new Set()) }
+  const clearSelection = () => { setScope('all'); setSelectedIds(new Set()) }
+
+  const firstName = available.find((property) => selectedIds.has(property.id))?.name
+  const label =
+    scope === 'all' ? `All properties (${available.length})`
+      : scope === 'rentals' ? 'Rentals only'
+        : selectedIds.size === 0 ? 'Select properties'
+          : selectedIds.size === 1 ? (firstName || '1 property')
+            : `${selectedIds.size} properties selected`
+
+  const quickOptions = [
+    { key: 'all', label: 'All properties', hint: String(available.length), onSelect: selectAll },
+    { key: 'rentals', label: 'Rentals only', hint: '', onSelect: selectRentals },
+  ]
+
   return (
-    <div className="grid w-full gap-2 sm:grid-cols-2 lg:flex lg:w-auto lg:flex-wrap lg:items-center lg:justify-end">
-      <select className="input h-10 min-w-40 text-sm lg:w-auto" value={scope} onChange={(event) => setScope(event.target.value)} aria-label="Portfolio property scope">
-        <option value="all">All properties ({available.length})</option>
-        <option value="rentals">Rentals only</option>
-        <option value="custom">Custom selection</option>
-      </select>
-      {scope === 'custom' ? (
-        <details className="relative">
-          <summary className="btn-secondary inline-flex h-10 cursor-pointer list-none items-center text-sm">Select properties</summary>
-          <div className="absolute right-0 z-30 mt-2 max-h-72 w-72 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
-            {available.map((property) => (
-              <label key={property.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-gray-50">
-                <input type="checkbox" checked={selectedIds.has(property.id)} onChange={() => toggleProperty(property.id)} />
-                <span className="truncate">{property.name || property.address}</span>
-              </label>
-            ))}
-          </div>
-        </details>
-      ) : null}
-      <label className="inline-flex h-10 min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-600 sm:col-span-2 lg:col-span-1">
-        <CalendarDays className="h-4 w-4" aria-hidden="true" />
-        <span className="sr-only">Start date</span>
-        <input type="date" className="min-w-0 flex-1 bg-transparent text-xs sm:text-sm" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
-        <span aria-hidden="true">–</span>
-        <span className="sr-only">End date</span>
-        <input type="date" className="min-w-0 flex-1 bg-transparent text-xs sm:text-sm" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
-      </label>
+    <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="input flex h-10 min-w-[13rem] items-center justify-between gap-2 text-left text-sm"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+        >
+          <span className="truncate">{label}</span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+        </button>
+        {open ? (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden="true" />
+            <div className="absolute right-0 z-30 mt-2 w-72 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900" role="listbox" aria-label="Select properties">
+              <div className="p-1.5">
+                {quickOptions.map((option) => {
+                  const active = scope === option.key
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={option.onSelect}
+                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm ${active ? 'bg-blue-50 font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800'}`}
+                    >
+                      <span>{option.label}</span>
+                      <span className="flex items-center gap-2">
+                        {option.hint ? <span className="text-xs text-gray-400">{option.hint}</span> : null}
+                        {active ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex items-center justify-between border-t border-gray-100 px-3 py-2 dark:border-gray-800">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Or pick individually</span>
+                {scope === 'custom' && selectedIds.size > 0 ? (
+                  <button type="button" onClick={clearSelection} className="text-xs font-medium text-blue-600 hover:underline">Clear</button>
+                ) : null}
+              </div>
+              <div className="max-h-56 overflow-y-auto px-1.5 pb-1.5">
+                {available.length ? available.map((property) => {
+                  const checked = scope === 'custom' && selectedIds.has(property.id)
+                  return (
+                    <label key={property.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
+                      <input type="checkbox" checked={checked} onChange={() => toggleProperty(property.id)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                      <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200">{property.name || property.address}</span>
+                    </label>
+                  )
+                }) : <p className="px-3 py-4 text-center text-xs text-gray-400">No properties available</p>}
+              </div>
+              <div className="border-t border-gray-100 p-2 dark:border-gray-800">
+                <button type="button" onClick={() => setOpen(false)} className="btn-primary h-9 w-full text-sm">Done</button>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
       <Link to={reportHref} className="btn-secondary inline-flex h-10 items-center justify-center gap-2 text-sm"><Download className="h-4 w-4" aria-hidden="true" />Export Report</Link>
     </div>
   )
@@ -390,7 +442,7 @@ export default function DashboardPage() {
       <div className="space-y-4" data-testid="portfolio-dashboard">
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
           <div><h1 className="text-2xl font-bold text-gray-950">{dashboard.header.title}</h1><p className="mt-1 text-sm text-gray-500">{dashboard.header.subtitle}</p></div>
-          <PortfolioFilters context={data.filterContext} scope={scope} setScope={setScope} selectedIds={selectedIds} setSelectedIds={setSelectedIds} startDate={startDate} setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate} reportHref={reportHref} />
+          <PortfolioFilters context={data.filterContext} scope={scope} setScope={setScope} selectedIds={selectedIds} setSelectedIds={setSelectedIds} reportHref={reportHref} />
         </header>
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Portfolio metrics">{dashboard.topMetrics.map((config) => <KpiCard key={config.metricKey} config={config} metric={resolveMetric('analytics', config.metricKey)} trendSeries={dashboard.cashFlowTrend.series} />)}</section>
