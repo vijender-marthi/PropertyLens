@@ -1750,7 +1750,7 @@ def _parse_1098_stacked(text: str) -> Dict[int, Any]:
 _FORM_1098_MONEY_RE = re.compile(r'\$?\s*(-?[\d,]{1,15}\.\d{2})')
 _FORM_1098_DATE_RE = re.compile(r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})')
 _FORM_1098_INT_RE = re.compile(r'\b(\d{1,3})\b')
-_FORM_1098_START = re.compile(r'mortgage\s*interest\s*received\s*from', re.IGNORECASE)
+_FORM_1098_START = re.compile(r'mortgage\s*interest\s*received', re.IGNORECASE)
 _FORM_1098_TERMINATORS = (
     r'form\s*1098\s*\(keep',
     r'department\s+of\s+the\s+treasury',
