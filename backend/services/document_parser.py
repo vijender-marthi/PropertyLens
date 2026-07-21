@@ -1767,6 +1767,21 @@ _FORM_1098_STREET_SUFFIX = (
 )
 
 
+_LETTER_SPLIT_RE = re.compile(r'\b([A-Z]) (?=[a-z])')
+
+
+def _repair_letter_splits(text: str) -> str:
+    """Rejoin a word's leading letter that the PDF text layer split off.
+
+    pdfplumber/MarkItDown occasionally emit a table cell's first glyph as its
+    own token: "1 M ortgage interest received" instead of "Mortgage". Rejoin a
+    lone capital letter to a following lowercase fragment. All-caps tokens
+    (street addresses, names), money and dates never match — the fragment must
+    start lowercase — so only broken words are repaired.
+    """
+    return _LETTER_SPLIT_RE.sub(r'\1', text)
+
+
 def _isolate_form_1098(text: str) -> str:
     """Return just the Form 1098 region, ignoring coupons / activity pages.
 
@@ -1793,8 +1808,14 @@ def _isolate_form_1098(text: str) -> str:
                 end = min(end, start + tm.start())
         region = text[start:end]
         score = sum(1 for lbl in box_labels if re.search(lbl, region, re.IGNORECASE))
-        if re.search(r'outstanding\s*(?:mortgage|principal)', region, re.IGNORECASE) and _FORM_1098_MONEY_RE.search(region):
+        has_money = bool(_FORM_1098_MONEY_RE.search(region))
+        if has_money and re.search(r'outstanding\s*(?:mortgage|principal)', region, re.IGNORECASE):
             score += 1
+        if not has_money:
+            # The "Instructions for Payer/Borrower" block quotes every box label
+            # in prose but carries no dollar amounts. It must never beat the real
+            # box grid (e.g. when the grid's own Box 1 label was mangled).
+            score -= 10
         if score > best_score:
             best, best_score = region, score
     return best
@@ -1868,6 +1889,14 @@ def _extract_form_1098_property_address(region: str, full_text: str, data: Dict[
             r'([A-Za-z][A-Za-z .\-]+?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b',
             tail,
         )
+        if not csz:
+            # Some servicer forms drop the city/state comma ("SCOTTSDALE AZ
+            # 85258"). The city can't span a line break, so this stays anchored
+            # to the property's own city line.
+            csz = re.search(
+                r'([A-Za-z][A-Za-z .\-]+?)\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b',
+                tail,
+            )
         if street:
             data['property_address'] = re.sub(r'\s{2,}', ' ', street.group(1).strip())
         if csz:
@@ -1886,6 +1915,21 @@ def _extract_form_1098_property_address(region: str, full_text: str, data: Dict[
             data.setdefault(key, value)
 
 
+_1098_BOX_FIELDS = (
+    'mortgage_interest', 'current_balance', 'property_tax_amount',
+    'origination_date', 'account_number', 'property_address',
+)
+
+
+def _count_1098_boxes(data: Dict[str, Any]) -> int:
+    """How many of the meaningful 1098 fields a parse actually recovered.
+
+    Used to pick the better of two text extractions (MarkItDown vs pdfplumber)
+    for the same form.
+    """
+    return sum(1 for k in _1098_BOX_FIELDS if data.get(k) is not None)
+
+
 def parse_1098(text: str) -> Dict[str, Any]:
     """Extract data from a Form 1098 Mortgage Interest Statement.
 
@@ -1900,6 +1944,11 @@ def parse_1098(text: str) -> Dict[str, Any]:
     not the borrower's mailing address.
     """
     data = {}
+
+    # Repair leading-letter splits ("1 M ortgage interest") so the Box 1 label
+    # and the region-start anchor match on servicer forms whose text layer
+    # sheared the first glyph off the word.
+    text = _repair_letter_splits(text)
 
     # Calendar / tax year -> drives statement_date and the yearly period.
     # Layouts vary: printed IRS forms say "For calendar year YYYY"; web
@@ -1973,6 +2022,16 @@ def parse_1098(text: str) -> Dict[str, Any]:
         box10 = _form_1098_money(region, r'(?:^|\n)\s*10\s+other\b')
     if box10 is None:
         box10 = _form_1098_money(region, r'property\s*tax(?:es)?')
+    if box10 is None:
+        # NewRez/Shellpoint print the Box 10 amount inline as "$3,161.42 Taxes
+        # Paid" — the value sits *before* the words, so the forward anchors
+        # above can't reach it. Capture the amount immediately preceding it.
+        m = re.search(r'(-?[\d,]+\.\d{2})\s*(?:real\s*estate\s*)?taxes\s*paid', region, re.IGNORECASE)
+        if m:
+            try:
+                box10 = float(m.group(1).replace(',', ''))
+            except ValueError:
+                box10 = None
     if box10 is not None:
         data['property_tax_amount'] = box10
     box11 = _form_1098_date(region, r'mortgage\s*acquisition\s*date')
@@ -3438,18 +3497,21 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
             }
         elif category == '1098':
             # The IRS Form 1098 box grid often lives on a later page of a
-            # year-end packet that MarkItDown drops. Detect the page first: if
-            # the primary text has no Box 1 label, use pdfplumber's positional
-            # text, which preserves every page.
-            form_text = text
-            if not _FORM_1098_START.search(text):
+            # year-end packet that MarkItDown drops or flattens into unreadable,
+            # character-spaced text — while still quoting the box labels in the
+            # instructions, so a label check alone gives a false positive. Parse
+            # the primary text, and whenever we didn't actually recover Box 1 or
+            # Box 2, fall back to pdfplumber's positional text and keep whichever
+            # read more boxes.
+            raw_data = parse_1098(text)
+            if raw_data.get('mortgage_interest') is None or raw_data.get('current_balance') is None:
                 try:
                     alt = _pdfplumber_text(filepath, x_tolerance=1)
-                    if _FORM_1098_START.search(alt):
-                        form_text = alt
+                    alt_data = parse_1098(alt)
+                    if _count_1098_boxes(alt_data) > _count_1098_boxes(raw_data):
+                        raw_data = alt_data
                 except Exception:
                     pass
-            raw_data = parse_1098(form_text)
             _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
         elif category == '1099':
             raw_data = parse_1099(text)
