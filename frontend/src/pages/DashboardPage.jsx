@@ -37,6 +37,11 @@ import { propAPI } from '../services/api'
 import { formatCurrency, formatCurrencyCompact, formatPercent, formatRatio } from '../utils/formatters'
 import { chartColorRamps, chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
 
+// Softer positive/negative fills for dashboard charts (lighter than the default
+// dark green/red so they read well on both light and dark cards).
+const POS = '#34d399' // emerald-400
+const NEG = '#fb7185' // rose-400
+
 const ICONS = {
   home: Home,
   equity: Landmark,
@@ -53,7 +58,7 @@ const ICONS = {
 
 const TONES = {
   blue: { icon: 'bg-blue-50 text-blue-600', stroke: chartColors.primary },
-  green: { icon: 'bg-green-50 text-green-600', stroke: chartColors.positive },
+  green: { icon: 'bg-green-50 text-emerald-500 dark:text-emerald-400', stroke: POS },
   teal: { icon: 'bg-teal-50 text-teal-600', stroke: chartColors.cyan },
   orange: { icon: 'bg-orange-50 text-orange-600', stroke: chartColors.warning },
   purple: { icon: 'bg-purple-50 text-purple-600', stroke: chartColors.purple },
@@ -91,7 +96,7 @@ function KpiCard({ config, metric, trendSeries }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold uppercase text-gray-500">{config.label}</p>
-          <p className={`mt-1 truncate text-xl font-bold ${metric?.value < 0 ? 'text-red-600' : config.tone === 'green' || config.tone === 'teal' ? 'text-green-700' : 'text-gray-950'}`}>{metricDisplay(metric)}</p>
+          <p className={`mt-1 truncate text-xl font-bold ${metric?.value < 0 ? 'text-rose-500 dark:text-rose-400' : config.tone === 'green' || config.tone === 'teal' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-950'}`}>{metricDisplay(metric)}</p>
           <p className="mt-1 text-xs text-gray-500">{metric?.period || metric?.status || 'Current selection'}</p>
         </div>
       </div>
@@ -212,10 +217,10 @@ function SummaryPanel({ section, resolveMetric, kind }) {
       <dl className="px-4">
         {(section.rows || []).map((row) => {
           const metric = resolveMetric(row.metricSource || (kind === 'assets' ? 'dashboard' : 'analytics'), row.metricKey)
-          return <div key={row.label} className="flex items-center justify-between gap-3 border-t border-gray-100 py-3 first:border-t-0"><dt className="text-sm text-gray-600">{row.label}</dt><dd className={`text-right text-sm font-semibold ${row.tone === 'positive' ? 'text-green-700' : 'text-gray-900'}`}>{metricFullDisplay(metric)}</dd></div>
+          return <div key={row.label} className="flex items-center justify-between gap-3 border-t border-gray-100 py-3 first:border-t-0"><dt className="text-sm text-gray-600">{row.label}</dt><dd className={`text-right text-sm font-semibold ${row.tone === 'positive' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-900'}`}>{metricFullDisplay(metric)}</dd></div>
         })}
       </dl>
-      <div className={`flex items-center justify-between px-4 py-3 text-sm font-bold ${kind === 'assets' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+      <div className={`flex items-center justify-between px-4 py-3 text-sm font-bold ${kind === 'assets' ? 'bg-green-50 text-emerald-500 dark:text-emerald-400' : 'bg-red-50 text-rose-500 dark:text-rose-400'}`}>
         <span>{kind === 'assets' ? 'Total Equity' : 'Debt to Value (LTV)'}</span><span>{metricDisplay(total)}</span>
       </div>
     </DashboardCard>
@@ -227,11 +232,11 @@ function PortfolioHealth({ data }) {
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-4 flex items-center gap-4">
-        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${data.score || 0}%, ${chartColors.trackLight} ${data.score || 0}%)` }}>
-          <div className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-white text-center"><div><p className="text-2xl font-bold text-gray-950">{data.scoreDisplay}</p><p className="text-[10px] font-semibold uppercase text-green-700">{data.status}</p></div></div>
+        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${POS} ${data.score || 0}%, ${chartColors.trackLight} ${data.score || 0}%)` }}>
+          <div className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-white text-center"><div><p className="text-2xl font-bold text-gray-950">{data.scoreDisplay}</p><p className="text-[10px] font-semibold uppercase text-emerald-500 dark:text-emerald-400">{data.status}</p></div></div>
         </div>
         <ul className="min-w-0 flex-1 space-y-2">
-          {(data.checks || []).map((check) => <li key={check.key} className="flex items-start gap-2 text-xs text-gray-600"><Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${check.passes ? 'text-green-600' : 'text-amber-600'}`} aria-hidden="true" />{check.label}</li>)}
+          {(data.checks || []).map((check) => <li key={check.key} className="flex items-start gap-2 text-xs text-gray-600"><Check className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${check.passes ? 'text-emerald-500 dark:text-emerald-400' : 'text-amber-600'}`} aria-hidden="true" />{check.label}</li>)}
         </ul>
       </div>
       <Link to={data.href || '/analytics'} className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Full Health Check <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
@@ -271,8 +276,8 @@ function CashFlowWaterfall({ data }) {
               const heightPercent = Math.max(3, (Math.abs(signedValue) / maxAmount) * 44)
               const barTop = isNegative ? 50 : 50 - heightPercent
               const valueTop = isNegative ? 50 + heightPercent + 2 : Math.max(1, 50 - heightPercent - 9)
-              const toneClass = step.type === 'total' ? 'bg-blue-600' : isNegative ? 'bg-red-500' : 'bg-green-600'
-              const valueColor = step.type === 'total' ? 'text-blue-700' : isNegative ? 'text-red-600' : 'text-green-700'
+              const toneClass = step.type === 'total' ? 'bg-blue-600' : isNegative ? 'bg-rose-400' : 'bg-emerald-400'
+              const valueColor = step.type === 'total' ? 'text-blue-700' : isNegative ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-500 dark:text-emerald-400'
               return (
                 <div key={step.key} className="relative min-w-0">
                   <p className={`absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold tabular-nums ${valueColor}`} style={{ top: `${valueTop}%` }}>
@@ -294,13 +299,13 @@ function CashFlowWaterfall({ data }) {
           ))}
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-green-600" />Positive cash flow</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-red-500" />Negative cash flow</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />Positive cash flow</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-rose-400" />Negative cash flow</span>
           <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-blue-600" />Net result</span>
         </div>
       </div>
       <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-gray-200 bg-gray-200 sm:grid-cols-5">
-        {(data.reconciliation || []).map((item) => <div key={item.label} className="bg-white px-3 py-3"><p className="text-xs text-gray-500">{item.label}</p><p className={`mt-1 text-sm font-bold ${item.tone === 'negative' ? 'text-red-600' : item.tone === 'positive' ? 'text-green-700' : 'text-gray-900'}`}>{formatCurrency(item.value)}</p></div>)}
+        {(data.reconciliation || []).map((item) => <div key={item.label} className="bg-white px-3 py-3"><p className="text-xs text-gray-500">{item.label}</p><p className={`mt-1 text-sm font-bold ${item.tone === 'negative' ? 'text-rose-500 dark:text-rose-400' : item.tone === 'positive' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-900'}`}>{formatCurrency(item.value)}</p></div>)}
       </div>
       <Link to="/analytics?tab=cash-flow" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Cash Flow Analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
@@ -313,10 +318,10 @@ function CapitalStructure({ data }) {
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-4 flex flex-col items-center gap-4">
-        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.danger} ${equity?.percentage || 0}%)` }}>
+        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${POS} ${equity?.percentage || 0}%, ${NEG} ${equity?.percentage || 0}%)` }}>
           <div className="grid h-14 w-14 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-[10px] text-gray-500">Total</p></div></div>
         </div>
-        <dl className="w-full space-y-2.5">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex min-w-0 items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === 'positive' ? 'bg-green-600' : 'bg-red-500'}`} /><span className="truncate">{item.label}</span></dt><dd className="whitespace-nowrap text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
+        <dl className="w-full space-y-2.5">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex min-w-0 items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === 'positive' ? 'bg-emerald-400' : 'bg-rose-400'}`} /><span className="truncate">{item.label}</span></dt><dd className="whitespace-nowrap text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
       </div>
     </DashboardCard>
   )
@@ -327,8 +332,8 @@ function CashFlowTrend({ data }) {
   return (
     <DashboardCard className="p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2><span className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{data.period || 'Monthly'}</span></div>
-      <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-gray-500"><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-green-600" />Net Cash Flow</span><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-blue-600" />Debt Service</span></div>
-      <div className="mt-3 h-52">{series.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={series} margin={{ left: -16, right: 8, top: 8 }}><CartesianGrid stroke={chartColors.gridLight} vertical={false} /><XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><YAxis tickFormatter={formatCurrencyCompact} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} /><Line type="monotone" dataKey="cashFlow" name="Net Cash Flow" stroke={chartColors.positive} strokeWidth={2} dot={{ r: 3 }} /><Line type="monotone" dataKey="debtService" name="Debt Service" stroke={chartColors.primary} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer> : <EmptyState label="Cash-flow history unavailable" />}</div>
+      <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-gray-500"><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-emerald-400" />Net Cash Flow</span><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-blue-600" />Debt Service</span></div>
+      <div className="mt-3 h-52">{series.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={series} margin={{ left: -16, right: 8, top: 8 }}><CartesianGrid stroke={chartColors.gridLight} vertical={false} /><XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><YAxis tickFormatter={formatCurrencyCompact} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} /><Line type="monotone" dataKey="cashFlow" name="Net Cash Flow" stroke={POS} strokeWidth={2} dot={{ r: 3 }} /><Line type="monotone" dataKey="debtService" name="Debt Service" stroke={chartColors.primary} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer> : <EmptyState label="Cash-flow history unavailable" />}</div>
       <Link to="/analytics?tab=cash-flow" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Cash Flow Analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
   )
@@ -352,7 +357,7 @@ function PropertyPerformance({ data }) {
   return (
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
-      <div className="mt-3 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-gray-200 text-xs text-gray-500"><th className="py-2 text-left font-semibold">Property</th><th className="py-2 text-right font-semibold">Cash Flow</th><th className="py-2 text-right font-semibold">CoC Return</th></tr></thead><tbody>{(data.rows || []).map((row) => <tr key={row.id} className="border-b border-gray-100 last:border-0"><td className="max-w-36 truncate py-2 font-medium text-gray-900">{row.label}</td><td className={`py-2 text-right font-semibold ${row.cashFlow < 0 ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(row.cashFlow)}</td><td className={`py-2 text-right font-semibold ${row.cashOnCash !== null && row.cashOnCash < 0 ? 'text-red-600' : 'text-green-700'}`}>{row.cashOnCash === null ? '—' : formatPercent(row.cashOnCash)}</td></tr>)}</tbody></table></div>
+      <div className="mt-3 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-gray-200 text-xs text-gray-500"><th className="py-2 text-left font-semibold">Property</th><th className="py-2 text-right font-semibold">Cash Flow</th><th className="py-2 text-right font-semibold">CoC Return</th></tr></thead><tbody>{(data.rows || []).map((row) => <tr key={row.id} className="border-b border-gray-100 last:border-0"><td className="max-w-36 truncate py-2 font-medium text-gray-900">{row.label}</td><td className={`py-2 text-right font-semibold ${row.cashFlow < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-500 dark:text-emerald-400'}`}>{formatCurrency(row.cashFlow)}</td><td className={`py-2 text-right font-semibold ${row.cashOnCash !== null && row.cashOnCash < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-500 dark:text-emerald-400'}`}>{row.cashOnCash === null ? '—' : formatPercent(row.cashOnCash)}</td></tr>)}</tbody></table></div>
       <Link to="/properties" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View All Properties <ArrowRight className="h-3.5 w-3.5" /></Link>
     </DashboardCard>
   )
@@ -362,7 +367,7 @@ function AlertsPanel({ data }) {
   return (
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
-      <div className="mt-3 divide-y divide-gray-100">{data.items?.length ? data.items.map((item) => <div key={item.key} className="flex items-start gap-3 py-3"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${item.severity === 'WARNING' || item.severity === 'IMPORTANT' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}><AlertTriangle className="h-4 w-4" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-gray-900">{item.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{item.message}</p></div><Link to={item.href} className="text-xs font-semibold text-blue-600">{item.actionLabel}</Link></div>) : <EmptyState label="No high-priority alerts" />}</div>
+      <div className="mt-3 divide-y divide-gray-100">{data.items?.length ? data.items.map((item) => <div key={item.key} className="flex items-start gap-3 py-3"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${item.severity === 'WARNING' || item.severity === 'IMPORTANT' ? 'bg-red-50 text-rose-500 dark:text-rose-400' : 'bg-blue-50 text-blue-600'}`}><AlertTriangle className="h-4 w-4" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-gray-900">{item.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{item.message}</p></div><Link to={item.href} className="text-xs font-semibold text-blue-600">{item.actionLabel}</Link></div>) : <EmptyState label="No high-priority alerts" />}</div>
       <Link to="/analytics" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View All Alerts <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
   )
