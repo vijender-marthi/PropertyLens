@@ -129,6 +129,36 @@ def _camel_count(text: str) -> int:
     return len(re.findall(r'[a-z][A-Z]', text)) if text else 10 ** 9
 
 
+_ADJACENCY_VALUE_RE = re.compile(
+    r'(\$\s*[\d,]+\.?\d*|\d+\.\d+\s*%|\d{1,2}/\d{1,2}/\d{2,4}|\d{2,3}\s+months)\s*$'
+)
+_STANDALONE_VALUE_RE = re.compile(
+    r'(?m)^\s*(?:\$\s*[\d,]+\.\d{2}|\d+\.\d+\s*%|\d{1,2}/\d{1,2}/\d{2,4})\s*$'
+)
+
+
+def _label_value_adjacency(text: str) -> int:
+    """Count lines where a text label is immediately followed, on the SAME
+    line, by its value (money / date / percent / term).
+
+    Two-column statements (label column + value column) are read out of order by
+    pdfminer/MarkItDown — every value lands on its own line, separated from its
+    label — so they score ~0 here. A correctly interleaved extraction
+    ("Original Principal Balance $506,250.00") scores high. This lets us detect
+    and reject a mis-ordered extraction that would otherwise break every
+    label->value regex downstream.
+    """
+    if not text:
+        return 0
+    count = 0
+    for line in text.splitlines():
+        s = line.strip()
+        m = _ADJACENCY_VALUE_RE.search(s)
+        if m and re.match(r'[A-Za-z].*[A-Za-z]', s[:m.start()].strip()):
+            count += 1
+    return count
+
+
 def extract_pdf_text(filepath: str) -> str:
     """Extract readable plain text from a PDF for field parsing.
 
@@ -145,7 +175,29 @@ def extract_pdf_text(filepath: str) -> str:
     md_text = _markitdown_text(filepath)
     if md_text and len(md_text.strip()) > 30:
         if not _looks_spaceless(md_text):
-            return md_text      # Fast path: clean text from MarkItDown
+            # MarkItDown produced spaced text, but two-column statements (a
+            # label column beside a value column) are read out of order: all
+            # values first, then all labels. That breaks every label->value
+            # regex. Detect the pathology (few label->value lines despite many
+            # standalone values) and fall back to pdfplumber's positional
+            # extraction, which reconstructs the correct row order.
+            md_adjacency = _label_value_adjacency(md_text)
+            standalone_values = len(_STANDALONE_VALUE_RE.findall(md_text))
+            if not (md_adjacency < 4 and standalone_values >= 6):
+                return md_text      # Fast path: well-ordered text from MarkItDown
+            for xt in (3, 1):
+                try:
+                    t = _pdfplumber_text(filepath, x_tolerance=xt)
+                    if t and len(t.strip()) > 30 and not _looks_spaceless(t):
+                        candidates.append(t)
+                except Exception:
+                    pass
+            # Prefer the extraction with the best label->value adjacency; break
+            # ties on the fewest camelCase run-togethers.
+            return max(
+                [md_text, *candidates],
+                key=lambda c: (_label_value_adjacency(c), -_camel_count(c)),
+            )
         candidates.append(md_text)
     else:
         logger.warning("MarkItDown produced empty text for PDF upload %s; trying text/OCR fallbacks.", filepath)
@@ -322,6 +374,8 @@ def extract_excel_data(filepath: str) -> Dict[str, Any]:
 def detect_category(text: str) -> str:
     """Guess the document category from its text content."""
     t = text.lower()
+    if re.search(r'\bannual\s+statement\b', t) and re.search(r'transaction\s+activity', t) and re.search(r'amount\s+disbursed\s+from\s+escrow|county\s+taxes|homeowners?\s+insurance\s+premium', t):
+        return 'escrow_analysis'
     if re.search(r'annual\s+escrow\s+account|escrow\s+account\s+(?:analysis|disclosure)|closer\s+look\s+at\s+your\s+escrow|statement\s+of\s+activity\s+in\s+your\s+escrow\s+account', t):
         return 'escrow_analysis'
     # CFPB Loan Estimates routinely say "compare with your Closing
@@ -344,6 +398,17 @@ def detect_category(text: str) -> str:
         return 'closing_statement'
     if re.search(r'loan\s+estimate|loan\s+disclosure', t):
         return 'loan_disclosure'
+    # Servicer "Loan Information" / online mortgage statements routinely embed a
+    # Form 1098 year-end snapshot. Classify them by the statement body (live
+    # balance, rate and next payment) rather than the embedded 1098 box list,
+    # which would otherwise drop the loan terms. A standalone 1098 has none of
+    # these live-servicing fields.
+    if (
+        re.search(r'current\s+principal\s+balance|loan\s+information\s+as\s+of', t)
+        and re.search(r'(?:current\s+annual\s+)?interest\s+rate', t)
+        and re.search(r'(?:next|monthly|regular)\s+payment(?:\s+amount)?', t)
+    ):
+        return 'mortgage_statement'
     # 1098/1099 forms must be matched before tax_return: their boilerplate
     # references "Form 1040 / Schedule A", which otherwise trips tax_return.
     if re.search(r'form\s*1098|mortgage\s+interest\s+statement|mortgage\s+interest\s+received\s+from', t):
@@ -407,6 +472,134 @@ def parse_escrow_analysis(text: str) -> Dict[str, Any]:
         if 'DEPOSIT' in normalized:
             return 'ESCROW_DEPOSIT'
         return 'OTHER'
+
+    def parse_money(value: str) -> Optional[float]:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw or raw in {'—', '-'}:
+            return None
+        negative = raw.startswith('(') and raw.endswith(')')
+        raw = raw.strip('()').replace('$', '').replace(',', '').strip()
+        try:
+            parsed = float(raw)
+        except ValueError:
+            return None
+        return -parsed if negative else parsed
+
+    def annual_activity_statement() -> Optional[Dict[str, Any]]:
+        if not (
+            re.search(r'\bAnnual\s+Statement\b', text, re.IGNORECASE)
+            and re.search(r'Transaction\s+Activity', text, re.IGNORECASE)
+        ):
+            return None
+        annual: Dict[str, Any] = parse_property_address(text)
+        loan = re.search(r'Loan\s+Number\s*:\s*([A-Z0-9X*\-]+)', text, re.IGNORECASE)
+        if loan:
+            annual['loan_number'] = annual['account_number'] = loan.group(1).strip()
+        servicer = re.search(r'\bServicer\s*:\s*([^\n]+)', text, re.IGNORECASE)
+        if servicer:
+            annual['servicer'] = servicer.group(1).strip()
+        elif re.search(r'PENNYMAC|Pennymac', text):
+            annual['servicer'] = 'Pennymac'
+        notice = re.search(r'Notice\s+Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})', text, re.IGNORECASE)
+        if notice:
+            annual['statement_date'] = _normalize_date(notice.group(1))
+        period = re.search(
+            r'(?:from|activity\s*\(?)\s*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*((?:19|20)\d{2})\s*(?:to|-)\s*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2}),\s*((?:19|20)\d{2})',
+            text,
+            re.IGNORECASE,
+        )
+        if period:
+            start_text = f'{period.group(1)} {period.group(2)}, {period.group(3)}'
+            end_text = f'{period.group(4)} {period.group(5)}, {period.group(6)}'
+            annual['history_period_start'] = _normalize_date(start_text)
+            annual['history_period_end'] = _normalize_date(end_text)
+            annual['expense_year'] = int(period.group(3))
+            annual['statement_year'] = int(period.group(3))
+        address = re.search(r'Property\s+Address\s*:\s*([^\n]+)\n\s*([^\n]+)', text, re.IGNORECASE)
+        if address:
+            annual['property_address'] = re.split(
+                r'\s+(?=Credits\s+since\s+last\s+statement|Debits\s+since\s+last\s+statement|Payment\s+Activity|Transaction\s+Activity)\b',
+                address.group(1).strip(),
+                flags=re.IGNORECASE,
+            )[0].strip(' ,')
+            locality = re.search(r'(.+?)[,\s]+([A-Z]{2})\s+(\d{5})(?:-\d{4})?', address.group(2).strip())
+            if locality:
+                annual['property_city'] = locality.group(1).strip(' ,')
+                annual['property_state'] = locality.group(2)
+                annual['property_zip'] = locality.group(3)
+        summary_fields = (
+            ('current_balance', r'Unpaid\s+Principal\s+Balance\s+as\s+of\s+12-31-\d{4}'),
+            ('mortgage_interest', r'Amount\s+Paid\s+to\s+Interest'),
+            ('principal_paid_ytd', r'Aggregate\s+of\s+payments\s+applied\s+towards\s+principal'),
+            ('principal_interest_paid_ytd', r'Amount\s+Paid\s+to\s+Principal\s+&\s+Interest\s+\(P&I\)'),
+            ('escrow_deposited', r'Amount\s+Deposited\s+into\s+Escrow'),
+            ('actual_total_disbursement', r'Amount\s+Disbursed\s+from\s+Escrow'),
+            ('current_escrow_balance', r'Current\s+Escrow\s+Balance'),
+        )
+        for key, pattern in summary_fields:
+            match = re.search(pattern + r'[^\n$()]*(\(?\$?[\d,]+\.\d{2}\)?)', text, re.IGNORECASE)
+            if match:
+                value = parse_money(match.group(1))
+                if key == 'actual_total_disbursement' and value is not None:
+                    value = abs(value)
+                annual[key] = value
+
+        activities = []
+        latest_escrow_deposit = None
+        for match in re.finditer(
+            r'^\s*(\d{2}-\d{2}-\d{4})\s+(.+?)\s+(\(?\$[\d,]+\.\d{2}\)?)\s+(\(?\$[\d,]+\.\d{2}\)?)\s+(\(?\$[\d,]+\.\d{2}\)?)\s+(\(?\$[\d,]+\.\d{2}\)?)\s+(\(?\$[\d,]+\.\d{2}\)?)\s+(\(?\$[\d,]+\.\d{2}\)?)\s*$',
+            text,
+            re.MULTILINE,
+        ):
+            activity_date = _normalize_date(match.group(1))
+            description = match.group(2).strip()
+            transaction_amount = parse_money(match.group(3))
+            principal = parse_money(match.group(4))
+            interest = parse_money(match.group(5))
+            escrow = parse_money(match.group(6))
+            activity_type = category(description)
+            item = {
+                'activity_date': activity_date,
+                'activity_type': activity_type,
+                'source_description': description,
+                'phase': 'HISTORICAL',
+                'value_status': 'ACTUAL',
+            }
+            if activity_type in {'PROPERTY_TAX', 'HOMEOWNERS_INSURANCE'}:
+                item['actual_disbursement'] = abs(transaction_amount or 0)
+            elif activity_type == 'OVERAGE_REFUND':
+                item['actual_disbursement'] = abs(transaction_amount or 0)
+            elif description.lower().startswith('payment'):
+                item['activity_type'] = 'ESCROW_DEPOSIT'
+                item['actual_deposit'] = escrow if escrow and escrow > 0 else None
+                if escrow and escrow > 0:
+                    latest_escrow_deposit = escrow
+            elif activity_type == 'OTHER':
+                item['actual_deposit'] = transaction_amount if transaction_amount and transaction_amount > 0 else None
+                item['actual_disbursement'] = abs(transaction_amount) if transaction_amount and transaction_amount < 0 else None
+            if principal and principal > 0:
+                item['principal'] = principal
+            if interest and interest > 0:
+                item['interest'] = interest
+            activities.append(item)
+        if activities:
+            annual['activities'] = activities
+            tax_total = round(sum(row.get('actual_disbursement') or 0 for row in activities if row.get('activity_type') == 'PROPERTY_TAX'), 2)
+            insurance_total = round(sum(row.get('actual_disbursement') or 0 for row in activities if row.get('activity_type') == 'HOMEOWNERS_INSURANCE'), 2)
+            if tax_total:
+                annual['actual_tax'] = tax_total
+            if insurance_total:
+                annual['actual_insurance'] = insurance_total
+            if latest_escrow_deposit is not None:
+                annual['current_escrow_payment'] = latest_escrow_deposit
+        annual['period_type'] = 'yearly'
+        return {key: value for key, value in annual.items() if value is not None}
+
+    annual_data = annual_activity_statement()
+    if annual_data:
+        return annual_data
 
     loan_match = re.search(r'Loan\s+Number\s*:\s*([A-Z0-9X*\-]+)', text, re.IGNORECASE)
     if loan_match:
@@ -672,7 +865,7 @@ def parse_percentage(text: str) -> Optional[float]:
 
 
 # Column-2 labels that bleed into the address line on multi-column statements
-_ADDRESS_NOISE = r'\s+(?=(?:Interest|Principal|Escrow|Late|Fees?|Total|Amount|Balance|Payment)\b)|\s*\$'
+_ADDRESS_NOISE = r'\s+(?=(?:Interest|Principal|Escrow|Late|Fees?|Total|Amount|Balance|Payment|Credits?|Activity|Transactions?|Disbursements?|Since|Statement)\b)|\s*\$'
 
 _STREET_SUFFIX = (
     r'(?:St(?:reet)?|Ave(?:nue)?|Dr(?:ive)?|Way|Ct|Court|Ln|Lane|Rd|Road|'
@@ -847,6 +1040,73 @@ def _find_date(text: str, label_patterns: list) -> Optional[str]:
     return None
 
 
+def _parse_past_payments_breakdown(text: str) -> Dict[str, Any]:
+    """Parse the two-column 'Past Payments Breakdown' table.
+
+    Servicer statements render this as a table with a prior-period column and a
+    year-to-date column, e.g.:
+
+        Past Payments Breakdown   As of Last Stmt   Paid Year to Date
+        Principal:                $507.12           $3,002.04
+        Interest:                 $2,692.72         $16,197.00
+        Escrow (Taxes & Ins):     $499.22           $4,464.68
+        Total:                    $3,699.06         $23,663.72
+
+    Reading the *first* amount after each label grabs the prior-statement figure,
+    not the YTD one — the classic bug. Instead we read the header to learn which
+    positional column is YTD, then map each row's amounts to columns by position.
+    Handles both "As of Last Stmt / Paid Year to Date" (PennyMac) and
+    "Paid Since Last Statement / Paid Year-to-Date" (Chase) orderings, and
+    tolerates marketing text interleaved between the rows.
+    """
+    result: Dict[str, Any] = {}
+    m = re.search(r'past\s+payments?\s+breakdown(?P<body>[\s\S]{0,900})', text, re.IGNORECASE)
+    if not m:
+        return result
+    body = m.group('body')
+    header = body[:160].lower()
+
+    prior_m = re.search(r'as\s+of\s+last\s+stmt|paid\s+since\s+last\s+statement|since\s+last\s+statement|last\s+statement', header)
+    ytd_m = re.search(r'paid\s+year[\s-]*to[\s-]*date|year[\s-]*to[\s-]*date|\bytd\b', header)
+    # Default: prior column first, YTD second (the common layout).
+    ytd_is_second = True
+    if prior_m and ytd_m:
+        ytd_is_second = ytd_m.start() > prior_m.start()
+
+    money = r'\$?\s*([\d,]+\.\d{2})'
+    rows = (
+        ('principal', r'principal'),
+        ('interest', r'interest'),
+        ('escrow', r'escrow(?:\s*\([^)]*\))?'),
+        ('total', r'total'),
+    )
+    for key, label in rows:
+        row = re.search(
+            label + r'\s*:?\s*((?:' + money + r'\s*){2,6})',
+            body, re.IGNORECASE,
+        )
+        if not row:
+            continue
+        amounts = [float(a.replace(',', '')) for a in re.findall(money, row.group(1))]
+        if len(amounts) < 2:
+            continue
+        prior_amt = amounts[0] if ytd_is_second else amounts[1]
+        ytd_amt = amounts[1] if ytd_is_second else amounts[0]
+        if key == 'principal':
+            result['principal_paid_last_statement'] = prior_amt
+            result['principal_paid_ytd'] = ytd_amt
+        elif key == 'interest':
+            result['interest_paid_last_statement'] = prior_amt
+            result['interest_paid_ytd'] = ytd_amt
+        elif key == 'escrow':
+            result['escrow_paid_last_statement'] = prior_amt
+            result['escrow_paid_ytd'] = ytd_amt
+        elif key == 'total':
+            result['total_paid_last_statement'] = prior_amt
+            result['total_paid_ytd'] = ytd_amt
+    return result
+
+
 def parse_mortgage_statement(text: str) -> Dict[str, Any]:
     """Extract structured fields from mortgage statement text.
 
@@ -889,10 +1149,13 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
         data['original_amount'] = v
 
     v = _find_amount(text, [
-        r'unpaid\s+principal\s+balance',
-        r'outstanding\s+principal(?:\s+balance)?',
+        # "Current principal balance" must win over "Outstanding principal" —
+        # servicer statements embed a Form 1098 line ("Box 2: Outstanding
+        # mortgage principal") that reports a different (prior year-end) figure.
         r'current\s+principal\s+balance',
+        r'unpaid\s+principal\s+balance',
         r'unpaid\s+balance',
+        r'outstanding\s+principal(?:\s+balance)?',
         r'outstanding\s+balance',
         r'principal\s+balance',
     ])
@@ -911,6 +1174,7 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
 
     v = _find_amount(text, [
         r'(?:monthly|regular)\s+payment(?:\s+amount)?',
+        r'next\s+payment\s+amount',
         r'amount\s+due',
         r'automatic\s+payment\s+(?:amount|on)',
         r'total\s+payment',
@@ -971,49 +1235,37 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
             data['monthly_other_escrow'] = round(float(data.get('escrow_amount') or 0) - component_total, 2)
         data['escrow_included'] = True
 
-    ytd_m = re.search(
-        r'paid\s+year\s+to\s+date(?P<body>.*?)(?:total\s+paid\s+year\s+to\s+date|escrow\s+disbursements|phone:|page\s+\d)',
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if ytd_m:
-        ytd_body = ytd_m.group('body')
-        ytd_values = _money_values(ytd_body)
-        principal_ytd = _find_amount(ytd_body, [r'principal:'])
-        interest_ytd = _find_amount(ytd_body, [r'interest:'])
-        escrow_ytd = _find_amount(ytd_body, [r'escrow\s+amount\s*\(taxes\s*&\s*insurance\):', r'escrow:'])
-        if principal_ytd is None and len(ytd_values) >= 1:
-            principal_ytd = ytd_values[0]
-        if interest_ytd is None and len(ytd_values) >= 2:
-            interest_ytd = ytd_values[1]
-        if escrow_ytd is None and len(ytd_values) >= 3:
-            escrow_ytd = ytd_values[2]
-        if principal_ytd is not None:
-            data['principal_paid_ytd'] = principal_ytd
-        if interest_ytd is not None:
-            data['interest_paid_ytd'] = interest_ytd
-        if escrow_ytd is not None:
-            data['escrow_paid_ytd'] = escrow_ytd
+    # Past Payments Breakdown: read the two-column (prior | year-to-date) table
+    # by column position so YTD is never confused with the prior-statement figure.
+    breakdown = _parse_past_payments_breakdown(text)
+    for field, value in breakdown.items():
+        data[field] = value
 
-    # Chase and similar statements render "Paid since last statement" and
-    # "Paid year-to-date" as adjacent columns. MarkItDown preserves each data
-    # row but can move the headers elsewhere, so parse rows containing exactly
-    # the two reported amounts. This is source data, not an amortization
-    # estimate; do not derive either amount from balances.
-    if re.search(r'paid\s+since\s+.*?paid\s+.*?year[\s-]*to[\s-]*date', text, re.IGNORECASE | re.DOTALL):
-        two_amount_row = r'\$\s*([\d,]+\.\d{2})\s+\$\s*([\d,]+\.\d{2})'
-        principal_row = re.search(r'^\s*Principal\s+' + two_amount_row + r'\s*$', text, re.IGNORECASE | re.MULTILINE)
-        interest_row = re.search(r'^\s*Interest\s+' + two_amount_row + r'\s*$', text, re.IGNORECASE | re.MULTILINE)
-        total_row = re.search(r'^\s*Total\s+' + two_amount_row + r'\s*$', text, re.IGNORECASE | re.MULTILINE)
-        if principal_row:
-            data['principal_paid_last_statement'] = float(principal_row.group(1).replace(',', ''))
-            data['principal_paid_ytd'] = float(principal_row.group(2).replace(',', ''))
-        if interest_row:
-            data['interest_paid_last_statement'] = float(interest_row.group(1).replace(',', ''))
-            data['interest_paid_ytd'] = float(interest_row.group(2).replace(',', ''))
-        if total_row:
-            data['total_paid_last_statement'] = float(total_row.group(1).replace(',', ''))
-            data['total_paid_ytd'] = float(total_row.group(2).replace(',', ''))
+    # Fallback for single-column "Paid Year to Date" statements (no prior column).
+    if 'principal_paid_ytd' not in data:
+        ytd_m = re.search(
+            r'paid\s+year\s+to\s+date(?P<body>.*?)(?:total\s+paid\s+year\s+to\s+date|escrow\s+disbursements|phone:|page\s+\d)',
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if ytd_m:
+            ytd_body = ytd_m.group('body')
+            ytd_values = _money_values(ytd_body)
+            principal_ytd = _find_amount(ytd_body, [r'principal:'])
+            interest_ytd = _find_amount(ytd_body, [r'interest:'])
+            escrow_ytd = _find_amount(ytd_body, [r'escrow\s+amount\s*\(taxes\s*&\s*insurance\):', r'escrow:'])
+            if principal_ytd is None and len(ytd_values) >= 1:
+                principal_ytd = ytd_values[0]
+            if interest_ytd is None and len(ytd_values) >= 2:
+                interest_ytd = ytd_values[1]
+            if escrow_ytd is None and len(ytd_values) >= 3:
+                escrow_ytd = ytd_values[2]
+            if principal_ytd is not None:
+                data['principal_paid_ytd'] = principal_ytd
+            if interest_ytd is not None:
+                data['interest_paid_ytd'] = interest_ytd
+            if escrow_ytd is not None:
+                data['escrow_paid_ytd'] = escrow_ytd
 
     # "principal:" (colon) catches the bare "Principal: $531.46" payment-
     # breakdown label without matching "principal balance:" (no colon there).
@@ -1037,7 +1289,28 @@ def parse_mortgage_statement(text: str) -> Dict[str, Any]:
     if d:
         data['maturity_date'] = d
 
-    d = _find_date(text, [r'statement\s+date'])
+    # Loan origination date on servicer "Loan Information" statements.
+    d = _find_date(text, [r'origination\s+date'])
+    if d:
+        data['origination_date'] = d
+
+    # "Original Term 360 months" -> 30 years. Only trust an explicit term line so
+    # a stray "N months" (e.g. remaining term) never overrides it.
+    term_m = re.search(r'original\s+term\s*[:|\s]*?(\d{2,3})\s*months?', text, re.IGNORECASE)
+    if term_m:
+        months = int(term_m.group(1))
+        data['term_months'] = months
+        data['loan_term_years'] = round(months / 12)
+
+    # Servicer identity for statements that only name the lender in fine print.
+    if not data.get('lender_name') and re.search(r'pennymac', text, re.IGNORECASE):
+        data['lender_name'] = 'PennyMac Loan Services, LLC'
+        data['servicer_name'] = 'PennyMac'
+
+    # Online loan-information pages date the snapshot as "Loan Information as of
+    # Jun 12, 2026" rather than a labeled "Statement Date". _find_date returns
+    # MM/DD/YYYY, keeping the statement_year derivation below correct.
+    d = _find_date(text, [r'statement\s+date', r'loan\s+information\s+as\s+of'])
     if d:
         data['statement_date'] = d
         # Extract year from statement date (e.g. "01/15/2024" → 2024, "1/15/24" → 2024)
@@ -1474,6 +1747,139 @@ def _parse_1098_stacked(text: str) -> Dict[int, Any]:
     return out
 
 
+_FORM_1098_MONEY_RE = re.compile(r'\$?\s*(-?[\d,]{1,15}\.\d{2})')
+_FORM_1098_DATE_RE = re.compile(r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})')
+_FORM_1098_INT_RE = re.compile(r'\b(\d{1,3})\b')
+_FORM_1098_START = re.compile(r'mortgage\s*interest\s*received\s*from', re.IGNORECASE)
+_FORM_1098_TERMINATORS = (
+    r'form\s*1098\s*\(keep',
+    r'department\s+of\s+the\s+treasury',
+    r'www\.irs\.gov/?form\s*1098',
+)
+_FORM_1098_STREET_SUFFIX = (
+    r'WAY|STREET|ST|AVENUE|AVE|DRIVE|DR|LANE|LN|ROAD|RD|COURT|CT|BOULEVARD|BLVD|'
+    r'CIRCLE|CIR|PLACE|PL|TERRACE|TER|PARKWAY|PKWY|HIGHWAY|HWY|LOOP|TRAIL|TRL|'
+    r'RUN|PASS|POINT|PT|COVE|BEND|SQUARE|SQ|CROSSING|XING|ROW|WALK|PATH'
+)
+
+
+def _isolate_form_1098(text: str) -> str:
+    """Return just the Form 1098 region, ignoring coupons / activity pages.
+
+    A servicer year-end packet has several pages; only the IRS 1098 box grid (or
+    the "Box N:" snapshot) should be parsed. Each candidate starts at the Box 1
+    label and ends at the next form terminator; the candidate that contains the
+    most box labels wins.
+    """
+    starts = [m.start() for m in _FORM_1098_START.finditer(text)]
+    if not starts:
+        return text
+    box_labels = (
+        r'outstanding\s*(?:mortgage|principal)', r'mortgage\s*origination\s*date',
+        r'refund\s*of\s*overpaid', r'mortgage\s*insurance', r'points\s*paid',
+        r'real\s*estate\s*taxes', r'mortgage\s*acquisition\s*date',
+        r'address\s*or\s*description\s*of\s*property',
+    )
+    best, best_score = text, -1
+    for start in starts:
+        end = len(text)
+        for term in _FORM_1098_TERMINATORS:
+            tm = re.search(term, text[start:], re.IGNORECASE)
+            if tm:
+                end = min(end, start + tm.start())
+        region = text[start:end]
+        score = sum(1 for lbl in box_labels if re.search(lbl, region, re.IGNORECASE))
+        if re.search(r'outstanding\s*(?:mortgage|principal)', region, re.IGNORECASE) and _FORM_1098_MONEY_RE.search(region):
+            score += 1
+        if score > best_score:
+            best, best_score = region, score
+    return best
+
+
+def _form_1098_after(region: str, anchor: str, value_re: re.Pattern, window: int = 320):
+    """First value matched by *value_re* that appears after *anchor*.
+
+    Value-oriented: we don't stop at the next box label (on grid forms the next
+    label sits *between* Box N's label and its value). We simply take the first
+    value of the right type after the anchor, within a window — Box N's own value
+    is always the first one of its type after its own label.
+    """
+    m = re.search(anchor, region, re.IGNORECASE)
+    if not m:
+        return None
+    vm = value_re.search(region, m.end(), min(len(region), m.end() + window))
+    return vm.group(1) if vm else None
+
+
+def _form_1098_money(region: str, anchor: str, window: int = 320):
+    raw = _form_1098_after(region, anchor, _FORM_1098_MONEY_RE, window)
+    if raw is None:
+        return None
+    try:
+        return float(raw.replace(',', ''))
+    except ValueError:
+        return None
+
+
+def _form_1098_date(region: str, anchor: str, window: int = 200):
+    return _form_1098_after(region, anchor, _FORM_1098_DATE_RE, window)
+
+
+def _form_1098_integer(region: str, anchor: str, window: int = 60):
+    raw = _form_1098_after(region, anchor, _FORM_1098_INT_RE, window)
+    try:
+        return int(raw) if raw is not None else None
+    except ValueError:
+        return None
+
+
+def _form_1098_fragment(region: str, anchor: str, span: int = 180) -> str:
+    m = re.search(anchor, region, re.IGNORECASE)
+    if not m:
+        return region[:span]
+    return region[max(0, m.start() - 20):m.end() + span]
+
+
+def _extract_form_1098_property_address(region: str, full_text: str, data: Dict[str, Any]) -> None:
+    """Property address from Box 8 only; fall back to a generic address scan."""
+    m = re.search(
+        r'address\s*or\s*description\s*of\s*property\s*securing\s*mortgage',
+        region, re.IGNORECASE,
+    )
+    if m:
+        after = region[m.end():]
+        # Street body is letters/spaces only (no digits or dashes) so the number
+        # can't span across neighbouring boxes like "10 Other - Real Estate...".
+        street = re.search(
+            r'(\d{2,6}\s+[A-Za-z][A-Za-z .]{1,30}?\s+(?:' + _FORM_1098_STREET_SUFFIX + r'))\b',
+            after, re.IGNORECASE,
+        )
+        # The grid interleaves the borrower's city (Box 7) right after the Box 8
+        # label, so read the city/state/zip that follows the *property* street,
+        # not the first one after the label.
+        tail = after[street.end():] if street else after
+        csz = re.search(
+            r'([A-Za-z][A-Za-z .\-]+?),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b',
+            tail,
+        )
+        if street:
+            data['property_address'] = re.sub(r'\s{2,}', ' ', street.group(1).strip())
+        if csz:
+            # Drop OCR noise words that grid layouts push in front of the city
+            # ("mortgage Paid MANTECA" -> "MANTECA").
+            noise = {'paid', 'mortgage', 'other', 'the', 'item', 'real', 'estate',
+                     'taxes', 'securing', 'number', 'description', 'address'}
+            words = csz.group(1).strip().split()
+            while len(words) > 1 and words[0].lower() in noise:
+                words.pop(0)
+            data['property_city'] = ' '.join(words)
+            data['property_state'] = csz.group(2)
+            data['property_zip'] = csz.group(3)
+    if not data.get('property_address'):
+        for key, value in parse_property_address(full_text).items():
+            data.setdefault(key, value)
+
+
 def parse_1098(text: str) -> Dict[str, Any]:
     """Extract data from a Form 1098 Mortgage Interest Statement.
 
@@ -1527,77 +1933,60 @@ def parse_1098(text: str) -> Dict[str, Any]:
         data['period_start'] = f"01/01/{y}"
         data['period_end'] = f"12/31/{y}"
 
-    # Box amounts. "Box N:" colon layouts stack labels then values, so map
-    # them positionally; printed forms keep each value near its label.
-    boxes = _parse_1098_stacked(text) if re.search(r'box\s*\d+\s*:', text, re.IGNORECASE) else {}
-    if boxes:
-        if boxes.get(1) is not None:
-            data['mortgage_interest'] = boxes[1]
-        if boxes.get(2) is not None:
-            data['current_balance'] = boxes[2]
-        if boxes.get(5):
-            data['mortgage_insurance'] = boxes[5]
-        if boxes.get(6):
-            data['points_paid'] = boxes[6]
-        if boxes.get(10) is not None:
-            data['property_tax_amount'] = boxes[10]
-        if isinstance(boxes.get(3), str):
-            data['origination_date'] = boxes[3]
-        if isinstance(boxes.get(11), str):
-            data['mortgage_acquisition_date'] = boxes[11]
+    # ── Structured box extraction ─────────────────────────────────────────────
+    # Isolate the Form 1098 region (ignore coupons / activity pages), then read
+    # each box by its label anchor + the first value of the expected type that
+    # follows it. This is value-oriented, not line-based: it survives OCR that
+    # drops the spaces inside a label or wraps the value onto another line, and
+    # it handles both the IRS box-grid form and the "Box N:" colon layouts.
+    region = _isolate_form_1098(text)
+
+    box1 = _form_1098_money(region, r'mortgage\s*interest\s*received')
+    if box1 is not None:
+        data['mortgage_interest'] = box1
+    box2 = _form_1098_money(region, r'outstanding\s*(?:mortgage|principal)')
+    if box2 is not None:
+        data['current_balance'] = box2
+    box3 = _form_1098_date(region, r'(?:mortgage\s*)?origination\s*date')
+    if box3:
+        data['origination_date'] = box3
+    box4 = _form_1098_money(region, r'refund\s*of\s*overpaid')
+    if box4 is not None:
+        data['refund_of_overpaid_interest'] = box4
+    box5 = _form_1098_money(region, r'mortgage\s*insurance\s*premium')
+    if box5:
+        data['mortgage_insurance'] = box5
+    box6 = _form_1098_money(region, r'points\s*paid')
+    if box6:
+        data['points_paid'] = box6
+    box9 = _form_1098_integer(region, r'number\s*of\s*properties\s*securing')
+    if box9 is not None:
+        data['property_count'] = box9
+    box10 = _form_1098_money(region, r'real\s*estate\s*taxes')
+    if box10 is None:
+        box10 = _form_1098_money(region, r'(?:^|\n)\s*10\s+other\b')
+    if box10 is None:
+        box10 = _form_1098_money(region, r'property\s*tax(?:es)?')
+    if box10 is not None:
+        data['property_tax_amount'] = box10
+    box11 = _form_1098_date(region, r'mortgage\s*acquisition\s*date')
+    if box11:
+        data['mortgage_acquisition_date'] = box11
+
+    # Account number: labelled on its own line, else the first plausible
+    # 8-12 digit loan number in the form region.
+    m = re.search(
+        r'account\s*number(?:\s*\(see\s*instructions\))?[\s:]*\n+\s*([\dXx\*\-]{5,})',
+        region, re.IGNORECASE)
+    if m:
+        data['account_number'] = m.group(1).strip()
     else:
-        # pdfplumber sometimes splits "Mortgage" into "M ortgage" on these
-        # forms, so anchor on the "interest received from" portion, which
-        # survives the spacing glitch.
-        v = _money_after(text, r'interest\s+received\s+from', 90)
-        if v is not None:
-            data['mortgage_interest'] = v
-        v = _money_after(text, r'outstanding\s+mortgage\s+principal', 130)
-        if v is not None:
-            data['current_balance'] = v
-        else:
-            # Fallback: some servicer PDFs print Box 2 as a bare number
-            # without a '$' sign (the '$' lands on the next line next to
-            # the Box 3 date).  Allow the amount without the dollar symbol.
-            v = _money_after(text, r'outstanding\s+mortgage\s+principal', 130,
-                             require_dollar=False)
-            if v is not None:
-                data['current_balance'] = v
-        v = _money_after(text, r'mortgage\s+insurance\s+premiums?', 30)
-        if v is not None:
-            data['mortgage_insurance'] = v
-        v = _money_after(text, r'points\s+paid', 40)
-        if v is not None:
-            data['points_paid'] = v
-        v = _money_after(text, r'real\s+estate\s+taxes\s+paid', 40)
-        if v is None:
-            v = _money_after(text, r'\b10\s+other\b', 30)
-        if v is not None:
-            data['property_tax_amount'] = v
-
-        m = re.search(r'mortgage\s+origination\s+date[\s\S]{0,120}?(\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))', text, re.IGNORECASE)
-        if m:
-            data['origination_date'] = m.group(1)
-        m = re.search(r'mortgage\s+acquisition\s+date[\s\S]{0,120}?(\d{1,2}/\d{1,2}/(?:\d{4}|\d{2}))', text, re.IGNORECASE)
-        if m:
-            data['mortgage_acquisition_date'] = m.group(1)
-        if data.get('property_tax_amount') is None:
-            v = _money_after(text, r'property\s+tax(?:es)?', 40)
-            if v is not None:
-                data['property_tax_amount'] = v
-
-        m = re.search(
-            r'account\s+number(?:\s*\(see\s+instructions\))?[\s:]*\n+\s*([\dXx\*\-]{5,})',
-            text, re.IGNORECASE)
-        if m:
-            data['account_number'] = m.group(1).strip()
-        else:
-            candidates = [
-                c for c in re.findall(r'\b(\d{8,12})\b', text)
-                if not c.startswith(('000000', '1545'))
-            ]
-            if candidates:
-                data['account_number'] = candidates[0]
+        candidates = [
+            c for c in re.findall(r'\b(\d{8,12})\b', region)
+            if not c.startswith(('000000', '1545'))
+        ]
+        if candidates:
+            data['account_number'] = candidates[0]
 
     m = re.search(
         r"recipient'?s/lender'?s\s+name[\s\S]*?(?:telephone no\.?|postal code[^\n]*)\s*\n\s*([^\n]+)",
@@ -1610,19 +1999,26 @@ def parse_1098(text: str) -> Dict[str, Any]:
         if name and not any(w in name.lower() for w in boilerplate):
             data['lender_name'] = name
 
-    # Box 8 - address/description of the property securing the mortgage
-    m = re.search(
-        r'address or description of property securing mortgage\s*\n+\s*([^\n]+)\n+\s*([^\n]+)',
-        text, re.IGNORECASE)
-    if m:
-        data['property_address'] = re.sub(r'\s{2,}', ' ', m.group(1).strip())
-        csz = re.match(r'^(.*?)[,]?\s+([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b', m.group(2).strip())
-        if csz:
-            data['property_city'] = csz.group(1).strip().title()
-            data['property_state'] = csz.group(2)
-            data['property_zip'] = csz.group(3)
-    if not data.get('property_address'):
-        data.update(parse_property_address(text))
+    # Box 8 - property securing the mortgage. Read ONLY the region that follows
+    # the Box 8 label so the borrower's mailing address (Box 7) and statement
+    # noise ("Credits since last statement") can never leak in.
+    _extract_form_1098_property_address(region, text, data)
+
+    # ── Validation: never silently drop Box 2 ────────────────────────────────
+    # A real 1098 always reports outstanding principal. If Box 1 parsed but
+    # Box 2 did not, the extraction is wrong (not the document) — log the OCR
+    # fragment and fail loudly rather than returning a null the UI would ask the
+    # user to fill in by hand.
+    if data.get('mortgage_interest') is not None and data.get('current_balance') is None:
+        fragment = _form_1098_fragment(region, r'outstanding\s*(?:mortgage|principal)')
+        logger.error(
+            "Form 1098 Box 2 (outstanding mortgage principal) missing though Box 1 "
+            "was extracted. OCR fragment near Box 2: %r", fragment,
+        )
+        raise ValueError(
+            "Form 1098 parse failed: Box 2 (outstanding mortgage principal) could "
+            f"not be read. OCR fragment near Box 2: {fragment!r}"
+        )
 
     # Borrower name(s) - capture lines after the wrapped label, before the street
     m = re.search(
@@ -2546,6 +2942,27 @@ def parse_closing_statement(text: str) -> Dict[str, Any]:
         v = _parse_amount(m.group(1))
         if v:
             data['down_payment'] = v
+    # ALTA / title-company settlement statements don't print a "Down Payment"
+    # line. The buyer's down payment is the earnest-money deposit plus the cash
+    # brought at closing ("Buyer's funds to close"). (Apostrophe may be curly.)
+    if not data.get('down_payment'):
+        funds_m = re.search(
+            r"buyer.?s\s+funds\s+to\s+close[^\d$\n]*\$?\s*([\d,]+(?:\.\d{1,2})?)",
+            text, re.IGNORECASE,
+        )
+        if funds_m:
+            funds_to_close = _parse_amount(funds_m.group(1))
+            if funds_to_close is not None:
+                data['buyer_funds_to_close'] = funds_to_close
+                data.setdefault('cash_to_close', funds_to_close)
+                deposit_amt = float(data.get('deposit') or 0)
+                if not deposit_amt:
+                    # "Deposit 40,500.00" (no colon) is parsed later; read it now.
+                    dep_m = re.search(r'^deposit\s+\$?\s*([\d,]+(?:\.\d{1,2})?)', text, re.IGNORECASE | re.MULTILINE)
+                    if dep_m:
+                        deposit_amt = _parse_amount(dep_m.group(1)) or 0
+                data['down_payment'] = round(funds_to_close + deposit_amt, 2)
+                data['down_payment_source'] = 'deposit_plus_buyer_funds_to_close'
     if (
         not data.get('original_amount')
         and data.get('purchase_price')
@@ -3014,7 +3431,19 @@ def parse_document(filepath: str, category: str = 'auto') -> tuple[str, Dict[str
                 'period_type': 'yearly',
             }
         elif category == '1098':
-            raw_data = parse_1098(text)
+            # The IRS Form 1098 box grid often lives on a later page of a
+            # year-end packet that MarkItDown drops. Detect the page first: if
+            # the primary text has no Box 1 label, use pdfplumber's positional
+            # text, which preserves every page.
+            form_text = text
+            if not _FORM_1098_START.search(text):
+                try:
+                    alt = _pdfplumber_text(filepath, x_tolerance=1)
+                    if _FORM_1098_START.search(alt):
+                        form_text = alt
+                except Exception:
+                    pass
+            raw_data = parse_1098(form_text)
             _log_loan_document_extraction_gaps(category, raw_data, text, filepath)
         elif category == '1099':
             raw_data = parse_1099(text)
