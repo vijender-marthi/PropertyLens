@@ -154,7 +154,7 @@ function SummaryPanel({ section, resolveMetric, kind }) {
   return (
     <DashboardCard className="overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-sm font-bold uppercase text-gray-900">{section.title}</h2>
+        <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{section.title}</h2>
         <span className="text-base font-bold text-gray-950">{kind === 'assets' ? metricDisplay(resolveMetric('analytics', 'portfolioValue')) : metricDisplay(resolveMetric('loans', 'totalBalance'))}</span>
       </div>
       <dl className="px-4">
@@ -173,7 +173,7 @@ function SummaryPanel({ section, resolveMetric, kind }) {
 function PortfolioHealth({ data }) {
   return (
     <DashboardCard className="p-4">
-      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-4 flex items-center gap-4">
         <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${data.score || 0}%, ${chartColors.trackLight} ${data.score || 0}%)` }}>
           <div className="grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full bg-white text-center"><div><p className="text-2xl font-bold text-gray-950">{data.scoreDisplay}</p><p className="text-[10px] font-semibold uppercase text-green-700">{data.status}</p></div></div>
@@ -201,26 +201,29 @@ function CashFlowWaterfall({ data }) {
     <DashboardCard className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-bold uppercase text-gray-900">Cash flow (Monthly)</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Cash flow (Monthly)</h2>
           <p className="mt-1 text-xs text-gray-500">{data.subtitle}</p>
         </div>
         <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">Monthly</span>
       </div>
       <div className="mt-4">
-        <div className="relative h-72 rounded-lg border border-gray-100 bg-gray-50 px-3 py-4">
+        {/* Chart holds only the bars + value labels; category labels live in
+            their own row below so they never overlap the values. */}
+        <div className="relative h-56 rounded-lg border border-gray-100 bg-gray-50 px-3 pb-2 pt-5">
           <div className="absolute left-3 right-3 top-1/2 h-px bg-gray-300" aria-hidden="true" />
           <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-gray-500">0</div>
-          <div className="grid h-full items-stretch gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(steps.length, 1)}, minmax(4.5rem, 1fr))` }}>
+          <div className="grid h-full items-stretch gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(steps.length, 1)}, minmax(3.5rem, 1fr))` }}>
             {steps.map((step) => {
               const signedValue = waterfallSignedValue(step)
               const isNegative = signedValue < 0
-              const heightPercent = Math.max(4, (Math.abs(signedValue) / maxAmount) * 42)
+              const heightPercent = Math.max(3, (Math.abs(signedValue) / maxAmount) * 44)
               const barTop = isNegative ? 50 : 50 - heightPercent
-              const valueTop = isNegative ? 50 + heightPercent + 2 : Math.max(0, 50 - heightPercent - 9)
+              const valueTop = isNegative ? 50 + heightPercent + 2 : Math.max(1, 50 - heightPercent - 9)
               const toneClass = step.type === 'total' ? 'bg-blue-600' : isNegative ? 'bg-red-500' : 'bg-green-600'
+              const valueColor = step.type === 'total' ? 'text-blue-700' : isNegative ? 'text-red-600' : 'text-green-700'
               return (
                 <div key={step.key} className="relative min-w-0">
-                  <p className="absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-xs font-bold text-gray-900" style={{ top: `${valueTop}%` }}>
+                  <p className={`absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold tabular-nums ${valueColor}`} style={{ top: `${valueTop}%` }}>
                     {formatCurrencyCompact(signedValue)}
                   </p>
                   <div
@@ -228,11 +231,15 @@ function CashFlowWaterfall({ data }) {
                     style={{ top: `${barTop}%`, height: `${heightPercent}%` }}
                     title={`${step.label}: ${formatCurrency(signedValue)}`}
                   />
-                  <p className="absolute bottom-0 left-1/2 w-24 -translate-x-1/2 text-center text-xs text-gray-600">{step.label}</p>
                 </div>
               )
             })}
           </div>
+        </div>
+        <div className="mt-2 grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(steps.length, 1)}, minmax(3.5rem, 1fr))` }}>
+          {steps.map((step) => (
+            <p key={step.key} className="px-0.5 text-center text-[11px] leading-tight text-gray-600">{step.label}</p>
+          ))}
         </div>
         <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
           <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-green-600" />Positive cash flow</span>
@@ -252,7 +259,7 @@ function CapitalStructure({ data }) {
   const equity = data.segments?.find((item) => item.key === 'equity')
   return (
     <DashboardCard className="p-4">
-      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-4 flex items-center gap-5">
         <div className="grid h-28 w-28 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.negative} ${equity?.percentage || 0}%)` }}>
           <div className="grid h-16 w-16 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-xs text-gray-500">Total value</p></div></div>
@@ -267,7 +274,7 @@ function CashFlowTrend({ data }) {
   const series = data.series || []
   return (
     <DashboardCard className="p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2><span className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{data.period || 'Monthly'}</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2><span className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">{data.period || 'Monthly'}</span></div>
       <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-gray-500"><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-green-600" />Net Cash Flow</span><span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 bg-blue-600" />Debt Service</span></div>
       <div className="mt-3 h-52">{series.length ? <ResponsiveContainer width="100%" height="100%"><LineChart data={series} margin={{ left: -16, right: 8, top: 8 }}><CartesianGrid stroke={chartColors.gridLight} vertical={false} /><XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><YAxis tickFormatter={formatCurrencyCompact} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} /><Line type="monotone" dataKey="cashFlow" name="Net Cash Flow" stroke={chartColors.positive} strokeWidth={2} dot={{ r: 3 }} /><Line type="monotone" dataKey="debtService" name="Debt Service" stroke={chartColors.primary} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer> : <EmptyState label="Cash-flow history unavailable" />}</div>
       <Link to="/analytics?tab=cash-flow" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View Cash Flow Analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
@@ -279,7 +286,7 @@ function ExpenseBreakdown({ data }) {
   const colors = chartColorRamps.blue.concat(chartColorRamps.amber)
   return (
     <DashboardCard className="p-4">
-      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-3 grid min-h-52 grid-cols-[8rem_1fr] items-center gap-3">
         <div className="relative h-32 w-32">{data.items?.length ? <ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data.items} dataKey="value" nameKey="label" innerRadius={38} outerRadius={58}>{data.items.map((item, index) => <Cell key={item.key} fill={colors[index % colors.length]} />)}</Pie><Tooltip formatter={(value) => formatCurrency(value)} contentStyle={chartTooltipStyle(false)} /></PieChart></ResponsiveContainer> : null}<div className="pointer-events-none absolute inset-0 grid place-items-center text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.total)}</p><p className="text-xs text-gray-500">Total</p></div></div></div>
         <ul className="space-y-2">{(data.items || []).map((item, index) => <li key={item.key} className="flex items-center justify-between gap-2 text-xs"><span className="flex min-w-0 items-center gap-2 text-gray-600"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} /><span className="truncate">{item.label}</span></span><span className="font-semibold text-gray-900">{formatPercent(item.percentage)}</span></li>)}</ul>
@@ -292,7 +299,7 @@ function ExpenseBreakdown({ data }) {
 function PropertyPerformance({ data }) {
   return (
     <DashboardCard className="p-4">
-      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-3 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b border-gray-200 text-xs text-gray-500"><th className="py-2 text-left font-semibold">Property</th><th className="py-2 text-right font-semibold">Cash Flow</th><th className="py-2 text-right font-semibold">CoC Return</th></tr></thead><tbody>{(data.rows || []).map((row) => <tr key={row.id} className="border-b border-gray-100 last:border-0"><td className="max-w-36 truncate py-2 font-medium text-gray-900">{row.label}</td><td className={`py-2 text-right font-semibold ${row.cashFlow < 0 ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(row.cashFlow)}</td><td className={`py-2 text-right font-semibold ${row.cashOnCash !== null && row.cashOnCash < 0 ? 'text-red-600' : 'text-green-700'}`}>{row.cashOnCash === null ? '—' : formatPercent(row.cashOnCash)}</td></tr>)}</tbody></table></div>
       <Link to="/properties" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View All Properties <ArrowRight className="h-3.5 w-3.5" /></Link>
     </DashboardCard>
@@ -302,7 +309,7 @@ function PropertyPerformance({ data }) {
 function AlertsPanel({ data }) {
   return (
     <DashboardCard className="p-4">
-      <h2 className="text-sm font-bold uppercase text-gray-900">{data.title}</h2>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-3 divide-y divide-gray-100">{data.items?.length ? data.items.map((item) => <div key={item.key} className="flex items-start gap-3 py-3"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${item.severity === 'WARNING' || item.severity === 'IMPORTANT' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}><AlertTriangle className="h-4 w-4" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-gray-900">{item.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{item.message}</p></div><Link to={item.href} className="text-xs font-semibold text-blue-600">{item.actionLabel}</Link></div>) : <EmptyState label="No high-priority alerts" />}</div>
       <Link to="/analytics" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View All Alerts <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
