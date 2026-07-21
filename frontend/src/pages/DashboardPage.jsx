@@ -313,7 +313,7 @@ function CapitalStructure({ data }) {
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-4 flex flex-col items-center gap-4">
-        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.negative} ${equity?.percentage || 0}%)` }}>
+        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${chartColors.positive} ${equity?.percentage || 0}%, ${chartColors.danger} ${equity?.percentage || 0}%)` }}>
           <div className="grid h-14 w-14 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-[10px] text-gray-500">Total</p></div></div>
         </div>
         <dl className="w-full space-y-2.5">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex min-w-0 items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === 'positive' ? 'bg-green-600' : 'bg-red-500'}`} /><span className="truncate">{item.label}</span></dt><dd className="whitespace-nowrap text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
