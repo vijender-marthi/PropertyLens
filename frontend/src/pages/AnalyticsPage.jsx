@@ -457,7 +457,12 @@ function QuickActions() {
 }
 
 function EmptyState({ label }) {
-  return <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-400 dark:border-neutral-700">{label}</div>
+  return (
+    <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-200 bg-gray-50/70 px-4 text-center dark:border-neutral-700 dark:bg-neutral-800/40">
+      <LineChartIcon className="h-5 w-5 text-gray-300 dark:text-neutral-600" aria-hidden="true" />
+      <span className="text-xs leading-snug text-gray-400 dark:text-neutral-400">{label}</span>
+    </div>
+  )
 }
 
 function ForecastView({ forecast }) {
