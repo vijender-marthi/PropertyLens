@@ -604,8 +604,8 @@ def build_report(
         # Each freed coin carries the payoff order of the home it came from, so
         # the UI can tint it in that home's colour — money flowing from a cleared
         # home into the next target.
-        coins = [{"name": c["name"], "display": c["display"], "own": False, "order": c["order"]} for c in freed_coins]
-        coins.append({"name": l["name"], "display": format_currency(own_pi), "own": True, "order": k})
+        coins = [{"name": c["name"], "display": c["display"], "own": False, "order": c["order"], "amount": round(c["payment"], 2)} for c in freed_coins]
+        coins.append({"name": l["name"], "display": format_currency(own_pi), "own": True, "order": k, "amount": round(own_pi, 2)})
         rollover.append({
             "order": k,
             "name": l["name"],
@@ -613,6 +613,9 @@ def build_report(
             "neverPaysOff": never,
             "coinCount": len(coins),
             "freedCount": len(freed_coins),
+            "ownPayment": round(own_pi, 2),
+            "freedPayment": round(freed_total, 2),
+            "rollingPayment": round(freed_total + own_pi, 2),
             "ownPaymentDisplay": format_currency(own_pi),
             "freedPaymentDisplay": format_currency(freed_total),
             "rollingPaymentDisplay": format_currency(freed_total + own_pi),

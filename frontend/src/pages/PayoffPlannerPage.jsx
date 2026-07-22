@@ -545,6 +545,31 @@ function RolloverStep({ step }) {
             <span className="text-[11px] text-gray-400 dark:text-gray-500">(first target)</span>
           )}
         </div>
+
+        {/* Composition of the monthly attack on this home: solid = its own
+            payment (you pay), lighter = payments rolled in from cleared homes,
+            each tinted in the source home's colour. */}
+        {step.rollingPayment > 0 ? (
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="flex h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+              {step.coins.map((coin, idx) => {
+                const hex = homeAccent(coin.order, coin.own && never).hex
+                const pct = Math.max(0, (Number(coin.amount) || 0) / step.rollingPayment * 100)
+                return (
+                  <div
+                    key={`${coin.name}-${idx}`}
+                    className="h-full first:rounded-l-full last:rounded-r-full"
+                    style={{ width: `${pct}%`, backgroundColor: coin.own ? hex : `${hex}80` }}
+                    title={`${coin.name}: ${coin.display}/mo${coin.own ? ' — you pay' : ' — rolled in'}`}
+                  />
+                )
+              })}
+            </div>
+            <span className="shrink-0 text-[10px] tabular-nums text-gray-400 dark:text-gray-500">
+              you {Math.round((step.ownPayment / step.rollingPayment) * 100)}%
+            </span>
+          </div>
+        ) : null}
       </div>
     </li>
   )
