@@ -455,58 +455,26 @@ function ResultsPanel({ report, loading }) {
       <div className="card">
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Payoff timeline</h2>
-          <div className="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-            <span className="flex items-center gap-1.5"><Flag className="h-3 w-3 text-green-600 dark:text-green-400" />with your plan</span>
-            <span className="flex items-center gap-1.5"><Flag className="h-3 w-3 text-red-500" />without extra</span>
-          </div>
         </div>
         <p className="mb-3 text-xs text-gray-400 dark:text-gray-500">
-          The green flag is when you're debt-free with your plan; the red flag is your original (no-extra) date. Slide the lump sum or extra to watch the gap open.
+          Each home clears at its point on the timeline — the dotted line in the home's colour maps it to its year. The green flag is when you're debt-free with your plan; the red flag is your original (no-extra) date.
         </p>
 
-        {/* Proportional outcome ruler: green flag moves as inputs change */}
-        <OutcomeRuler report={report} />
-
-        {/* Homes as detail cards (even), each connected by a leader line down to
-            its true time position on the axis — which lines up with the year scale. */}
-        <div className="mt-2 w-full">
-          <div className="flex w-full items-stretch">
-            {timeline.map((row) => (
-              <ChartCard key={`${row.order}-${row.name}`} row={row} />
-            ))}
-          </div>
-          <div className="relative h-12">
-            <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-              {timeline.map((row, i) => (
-                <line
-                  key={`${row.order}-${row.name}`}
-                  x1={((i + 0.5) / timeline.length) * 100}
-                  y1="0"
-                  x2={Math.max(1.5, Math.min(Number(row.planPct) || 0, 100))}
-                  y2="72"
-                  stroke={homeAccent(row.order, row.verdict?.neverPaysOff).hex}
-                  strokeOpacity="0.5"
-                  strokeWidth="1"
-                  vectorEffect="non-scaling-stroke"
-                />
-              ))}
-            </svg>
-            <div className="absolute inset-x-0 h-0.5 -translate-y-1/2 rounded bg-blue-200 dark:bg-blue-900/70" style={{ top: '72%' }} />
-            <span className="absolute left-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-400" style={{ top: '72%' }} />
-            {timeline.map((row) => (
-              <span
-                key={`${row.order}-${row.name}`}
-                className="absolute -translate-x-1/2 -translate-y-1/2"
-                style={{ left: `${Math.max(1.5, Math.min(Number(row.planPct) || 0, 100))}%`, top: '72%' }}
-              >
-                <HomeNode row={row} />
-              </span>
-            ))}
-          </div>
+        {/* Message boxes → curved connectors → home icons → dotted colour map → one timeline */}
+        <div className="flex w-full items-stretch">
+          {timeline.map((row) => (
+            <ChartCard key={`${row.order}-${row.name}`} row={row} />
+          ))}
         </div>
+        <PayoffTimeline report={report} timeline={timeline} />
 
-        {/* Yearly time scale — shares the axis above, so nodes line up with years */}
-        <YearScale report={report} />
+        {/* Legend (bottom) */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-100 pt-3 text-[10px] text-gray-500 dark:border-gray-700/60 dark:text-gray-400">
+          <span className="flex items-center gap-1.5"><Flag className="h-3 w-3 text-green-600 dark:text-green-400" />debt-free with your plan</span>
+          <span className="flex items-center gap-1.5"><Flag className="h-3 w-3 text-red-500" />without extra</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-4 rounded-full bg-blue-500" />years with your plan</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-0 w-4 border-t-2 border-dashed border-red-400" />extra on original schedule</span>
+        </div>
       </div>
 
       {/* Payment rollover — the cascade shown as coins stacking up */}
@@ -668,100 +636,96 @@ function ChartCard({ row }) {
   )
 }
 
-// Year scale along the bottom, sharing the outcome ruler's axis (Today →
-// Original/baseline). Ticks at each year; the blue highlight marks the years
-// your plan covers, the rest are the extra years on the original schedule.
-function YearScale({ report }) {
+// One merged timeline. Message boxes (above) curve down to their home icons,
+// which sit just above a single axis; a dotted line in each home's colour maps
+// the icon to its exact year. The axis carries the year ticks, the blue "with
+// your plan" span, the green Debt-free flag (slides as inputs change) and the
+// fixed red Original flag.
+const PT = { H: 212, HOME_Y: 88, AXIS_Y: 134 } // container geometry (px)
+
+function PayoffTimeline({ report, timeline }) {
   const axis = report.baselineMonth || 1
+  const greenPct = Math.max(0, Math.min((report.debtFreeMonth / axis) * 100, 100))
   const start = new Date(report.startDate)
   const startYear = start.getFullYear()
   const startMonth = start.getMonth()
-  const greenPct = Math.max(0, Math.min((report.debtFreeMonth / axis) * 100, 100))
   const totalYears = Math.ceil(axis / 12)
   const step = totalYears > 20 ? 5 : totalYears > 10 ? 2 : 1
-
   const ticks = []
   for (let y = startYear; ; y += 1) {
     const months = (y - startYear) * 12 - startMonth
     if (months > axis + 0.5) break
     if (months >= 0) ticks.push({ year: y, pct: (months / axis) * 100, labeled: y % step === 0 })
   }
-
-  return (
-    <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-700/60">
-      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-gray-400 dark:text-gray-500">
-        <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-4 rounded-full bg-blue-500" />years with your plan</span>
-        <span className="flex items-center gap-1.5"><span className="inline-block h-0 w-4 border-t-2 border-dashed border-red-400" />extra years on original schedule</span>
-      </div>
-      <div className="relative h-7">
-        <div className="absolute inset-x-0 top-1.5 h-1 rounded-full bg-gray-200 dark:bg-gray-700" />
-        <div className="absolute top-1.5 h-0 border-t-2 border-dashed border-red-400" style={{ left: `${greenPct}%`, right: 0 }} />
-        <div className="absolute left-0 top-1.5 h-1 rounded-full bg-blue-500 transition-[width] duration-500" style={{ width: `${greenPct}%` }} />
-        <span className="absolute left-0 top-1.5 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-green-500 bg-white transition-[left] duration-500 dark:bg-gray-900" style={{ left: `${greenPct}%` }} />
-        {ticks.map((t) => (
-          <div key={t.year} className="absolute top-0 flex -translate-x-1/2 flex-col items-center" style={{ left: `${t.pct}%` }}>
-            <span className={`w-px ${t.labeled ? 'h-3 bg-gray-400 dark:bg-gray-500' : 'h-1.5 bg-gray-300 dark:bg-gray-600'}`} />
-            {t.labeled ? <span className="mt-1 text-[10px] tabular-nums text-gray-500 dark:text-gray-400">{t.year}</span> : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// Proportional ruler: Today → blue plan span → green Debt-free flag → dashed red
-// segment → red Original flag. The red flag is fixed (the no-contribution
-// baseline); the green flag slides left as the lump sum / extra grow, so the gap
-// (the time saved) opens up live.
-function OutcomeRuler({ report }) {
-  const axis = report.baselineMonth || 1
-  const greenLeft = Math.max(3, Math.min((report.debtFreeMonth / axis) * 100, 99))
+  const n = timeline.length || 1
+  const clampPct = (p) => Math.max(1.5, Math.min(Number(p) || 0, 100))
   const savedLabel = report.cards?.timeSaved?.display
   const hasSaved = (report.cards?.timeSaved?.value || 0) > 0 && report.debtFreeMonth < report.baselineMonth
 
-  if (!hasSaved) {
-    return (
-      <div className="mb-2 rounded-lg border border-gray-100 bg-gray-50/70 px-4 py-3 text-center text-xs text-gray-500 dark:border-gray-700/60 dark:bg-gray-800/40 dark:text-gray-400">
-        On your current schedule you're debt-free{' '}
-        <span className="font-semibold text-gray-700 dark:text-gray-200">{report.cards.debtFree.date}</span>. Add a lump sum or extra monthly and the green flag slides earlier.
-      </div>
-    )
-  }
-
-  const gapMid = (greenLeft + 100) / 2
-  const LINE = '3.1rem'  // vertical position of the axis within the box
   return (
-    <div className="mb-2 rounded-lg border border-gray-100 bg-gray-50/70 px-6 dark:border-gray-700/60 dark:bg-gray-800/40">
-      <div className="relative h-28">
-        {/* base + coloured segments */}
-        <div className="absolute inset-x-0 h-1 -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" style={{ top: LINE }} />
-        <div className="absolute left-0 h-1 -translate-y-1/2 rounded-full bg-blue-500 transition-[width] duration-500" style={{ top: LINE, width: `${greenLeft}%` }} />
-        <div className="absolute -translate-y-1/2 border-t-2 border-dashed border-red-400 transition-all duration-500" style={{ top: LINE, left: `${greenLeft}%`, right: 0 }} />
+    <div className="relative mt-1 w-full" style={{ height: PT.H }}>
+      {/* Curved card→home connectors (#5) + dotted colour map home→timeline (#4) */}
+      <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 100 ${PT.H}`} preserveAspectRatio="none" aria-hidden="true">
+        {timeline.map((row, i) => {
+          const cardX = ((i + 0.5) / n) * 100
+          const homeX = clampPct(row.planPct)
+          const hex = homeAccent(row.order, row.verdict?.neverPaysOff).hex
+          const yTop = PT.HOME_Y - 18
+          const mid = yTop / 2
+          return (
+            <g key={`${row.order}-${row.name}`}>
+              <path d={`M ${cardX} 0 C ${cardX} ${mid}, ${homeX} ${mid}, ${homeX} ${yTop}`} fill="none" stroke={hex} strokeWidth="1.5" strokeOpacity="0.6" vectorEffect="non-scaling-stroke" />
+              <line x1={homeX} y1={PT.HOME_Y + 18} x2={homeX} y2={PT.AXIS_Y} stroke={hex} strokeWidth="1.5" strokeDasharray="2 3" vectorEffect="non-scaling-stroke" />
+            </g>
+          )
+        })}
+      </svg>
 
-        {/* saved gap bracket + pill (above the line) */}
-        <div className="absolute h-2 border-x-2 border-t-2 border-green-400/70 transition-all duration-500" style={{ top: '2.05rem', left: `${greenLeft}%`, right: 0 }} />
-        <div className="absolute -translate-x-1/2 whitespace-nowrap transition-[left] duration-500" style={{ top: '0.7rem', left: `${gapMid}%` }}>
-          <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-900/50 dark:text-green-300">← {savedLabel} sooner</span>
-        </div>
+      {/* Home icons, hugging the timeline (#2) */}
+      {timeline.map((row) => (
+        <span key={`${row.order}-${row.name}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clampPct(row.planPct)}%`, top: PT.HOME_Y }}>
+          <HomeNode row={row} />
+        </span>
+      ))}
+
+      {/* Single merged axis (#1) */}
+      <div className="absolute inset-x-0" style={{ top: PT.AXIS_Y }}>
+        <div className="absolute inset-x-0 h-1 -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
+        <div className="absolute -translate-y-1/2 border-t-2 border-dashed border-red-400" style={{ left: `${greenPct}%`, right: 0 }} />
+        <div className="absolute left-0 h-1 -translate-y-1/2 rounded-full bg-blue-500 transition-[width] duration-500" style={{ width: `${greenPct}%` }} />
 
         {/* Today */}
-        <span className="absolute left-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-400" style={{ top: LINE }} />
-        <span className="absolute left-0 text-[10px] text-gray-400" style={{ top: '3.9rem' }}>Today</span>
+        <span className="absolute left-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-400" />
 
-        {/* Green debt-free flag (slides) + label on row 1 */}
-        <span className="absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-green-500 bg-white shadow-sm transition-[left] duration-500 dark:bg-gray-900" style={{ top: LINE, left: `${greenLeft}%` }}>
+        {/* Year ticks + labels below the line */}
+        {ticks.map((t) => (
+          <div key={t.year} className="absolute top-1.5 flex -translate-x-1/2 flex-col items-center" style={{ left: `${t.pct}%` }}>
+            <span className={`w-px ${t.labeled ? 'h-2.5 bg-gray-300 dark:bg-gray-600' : 'h-1.5 bg-gray-200 dark:bg-gray-700'}`} />
+            {t.labeled ? <span className="mt-1 text-[10px] tabular-nums text-gray-500 dark:text-gray-400">{t.year}</span> : null}
+          </div>
+        ))}
+
+        {/* Saved-time pill over the gap */}
+        {hasSaved ? (
+          <div className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: `${(greenPct + 100) / 2}%`, top: -20 }}>
+            <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-900/50 dark:text-green-300">← {savedLabel} sooner</span>
+          </div>
+        ) : null}
+
+        {/* Green debt-free flag (slides) */}
+        <span className="absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-green-500 bg-white shadow-sm transition-[left] duration-500 dark:bg-gray-900" style={{ left: `${greenPct}%` }}>
           <Flag className="h-3 w-3 text-green-600 dark:text-green-400" />
         </span>
-        <div className="absolute -translate-x-1/2 whitespace-nowrap text-center transition-[left] duration-500" style={{ top: '3.9rem', left: `${greenLeft}%` }}>
+        <div className="absolute -translate-x-1/2 whitespace-nowrap text-center transition-[left] duration-500" style={{ left: `${greenPct}%`, top: 40 }}>
           <span className="text-[10px] font-semibold text-green-600 dark:text-green-400">Debt-free </span>
           <span className="text-[10px] text-gray-600 dark:text-gray-300">{report.cards.debtFree.date}</span>
         </div>
 
-        {/* Red original flag (fixed at right) + label on row 2 */}
-        <span className="absolute right-0 flex h-6 w-6 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-red-500 bg-white shadow-sm dark:bg-gray-900" style={{ top: LINE }}>
+        {/* Red original flag (fixed at right) */}
+        <span className="absolute right-0 flex h-6 w-6 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-red-500 bg-white shadow-sm dark:bg-gray-900">
           <Flag className="h-3 w-3 text-red-500" />
         </span>
-        <div className="absolute right-0 whitespace-nowrap text-right" style={{ top: '5.2rem' }}>
+        <div className="absolute right-0 whitespace-nowrap text-right" style={{ top: 56 }}>
           <span className="text-[10px] font-semibold text-red-500">Original </span>
           <span className="text-[10px] text-gray-600 dark:text-gray-300">{report.baselineDate}</span>
         </div>
