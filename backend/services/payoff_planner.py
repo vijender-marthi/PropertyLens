@@ -668,6 +668,7 @@ def build_report(
             freed_coins.append({"name": l["name"], "payment": own_pi, "display": format_currency(own_pi), "order": k})
 
     rollover_max_total = max((s["totalPaid"] for s in rollover), default=0.0)
+    rollover_max_monthly = max((s["rollingPayment"] for s in rollover), default=0.0)
 
     # Metric cards.
     cards = {
@@ -764,6 +765,7 @@ def build_report(
         "timeline": timeline,
         "rollover": rollover,
         "rolloverMaxTotal": round(rollover_max_total, 2),
+        "rolloverMaxMonthly": round(rollover_max_monthly, 2),
         "warnings": warnings,
         "debtFreeMonth": debt_free_month,
         "baselineMonth": baseline_month,

@@ -682,11 +682,11 @@ function ResultsPanel({ report, loading }) {
             </div>
           </div>
           <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
-            When a loan clears, its monthly payment becomes a coin that rolls onto the next. The bar beside each home shows the <span className="font-medium">total</span> money that clears it, split by source — what you pay versus what rolled in from each cleared home.
+            When a loan clears, its monthly payment becomes a coin that rolls onto the next. The bar beside each home shows the <span className="font-medium">monthly payment</span> attacking it, split by source — your own payment versus what rolled in each month from every cleared home.
           </p>
           <ol className="space-y-3.5">
             {report.rollover.map((step) => (
-              <RolloverStep key={`${step.order}-${step.name}`} step={step} maxTotal={report.rolloverMaxTotal || 1} />
+              <RolloverStep key={`${step.order}-${step.name}`} step={step} maxMonthly={report.rolloverMaxMonthly || 1} />
             ))}
           </ol>
         </div>
@@ -714,49 +714,50 @@ function Coin({ own = false, order, never = false, title }) {
   )
 }
 
-function RolloverStep({ step, maxTotal }) {
+function RolloverStep({ step, maxMonthly }) {
   const never = step.neverPaysOff
-  const total = Number(step.totalPaid) || 0
-  const groups = step.groups || []
+  const monthly = Number(step.rollingPayment) || 0
+  const coins = step.coins || []
   return (
     <li className="flex items-start gap-3">
       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600 dark:bg-gray-700 dark:text-gray-200">
         {step.order}
       </span>
       <div className="min-w-0 flex-1">
-        {/* Property name (left) + total-paid box bar opposite it (right). Bar
-            length is proportional to the total money that clears this home;
-            each box is a source group (you pay, or rolled in from a home). */}
+        {/* Property name (left) + monthly-payment box bar opposite it (right).
+            Bar length is proportional to the monthly firepower attacking this
+            home; each box is a source — your own payment, or a payment that
+            rolled in from a cleared home (matched to the coins, left to right). */}
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">{step.name}</div>
             <div className="truncate text-[11px] text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</div>
           </div>
-          {total > 0 ? (
+          {monthly > 0 ? (
             /* A capped fraction of the row (not a fixed size), so the bar stays
                narrow and every row lines up on the same right edge whatever the
                panel width. */
             <div className="flex w-2/5 max-w-[15rem] shrink-0 items-center gap-2">
               <div
                 className="relative h-8 min-w-0 flex-1 overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
-                title={`${step.name}: ${step.totalPaidDisplay} total to clear`}
+                title={`${step.name}: ${step.rollingPaymentDisplay}/mo attacking this loan`}
               >
-                <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((total / maxTotal) * 100, 2)}%` }}>
-                  {groups.map((g, i) => {
-                    const hex = homeAccent(g.order, g.own && never).hex
-                    const segPct = total > 0 ? (Number(g.amount) || 0) / total * 100 : 0
+                <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((monthly / maxMonthly) * 100, 2)}%` }}>
+                  {coins.map((c, i) => {
+                    const hex = homeAccent(c.order, c.own && never).hex
+                    const segPct = monthly > 0 ? (Number(c.amount) || 0) / monthly * 100 : 0
                     return (
                       <div
-                        key={`${g.label}-${i}`}
+                        key={`${c.name}-${i}`}
                         className="h-full border-r border-white/70 last:border-r-0 dark:border-gray-900/50"
-                        style={{ width: `${segPct}%`, backgroundColor: g.own ? hex : `${hex}B3` }}
-                        title={`${g.label}: ${g.display}`}
+                        style={{ width: `${segPct}%`, backgroundColor: c.own ? hex : `${hex}B3` }}
+                        title={`${c.own ? `${c.name} · your payment` : `from ${c.name}`}: ${c.display}/mo`}
                       />
                     )
                   })}
                 </div>
               </div>
-              <span className="w-[4.75rem] shrink-0 text-right text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.totalPaidDisplay}</span>
+              <span className="w-[5.25rem] shrink-0 text-right text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.rollingPaymentDisplay}/mo</span>
             </div>
           ) : null}
         </div>
