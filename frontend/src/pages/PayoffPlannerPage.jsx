@@ -757,7 +757,7 @@ function RolloverStep({ step, maxMonthly }) {
                   })}
                 </div>
               </div>
-              <span className="w-[5.25rem] shrink-0 text-right text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.rollingPaymentDisplay}/mo</span>
+              <span className="w-[4.5rem] shrink-0 text-right text-[10px] font-medium tabular-nums text-gray-400 dark:text-gray-500">{step.rollingPaymentDisplay}/mo</span>
             </div>
           ) : null}
         </div>
