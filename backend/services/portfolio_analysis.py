@@ -554,19 +554,18 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
          for prop in rentals),
         Decimal("0"),
     )
-    # Occupancy from availability/vacancy across the rentals, not a rent ratio.
-    # Every rental is "available for rent"; a rental generating no rent is vacant
-    # (0% occupied), otherwise it counts at its own occupancy_rate. Occupancy is
-    # the average of those shares. A rent ratio hid vacant units entirely (a
-    # $0-rent property had zero weight, so it never lowered the number).
-    def _occ_share(prop):
-        if _d(prop.get("monthly_rent")) <= 0:
-            return Decimal("0")  # available but vacant
-        return min(max(_d(prop.get("occupancy_rate")), Decimal("0")), Decimal("100")) / 100
+    # Occupancy is driven by each rental's own occupancy_rate — the authoritative
+    # signal for whether a unit is occupied — NOT by whether monthly_rent happens
+    # to be filled in. (Rent is often blank on a record even though the unit is
+    # fully occupied, so a rent-presence heuristic wrongly reported those vacant.)
+    # Portfolio occupancy = the average occupancy_rate across every rental that is
+    # available for rent. A rental is "vacant" only when its occupancy_rate is 0.
+    def _occ_rate(prop):
+        return min(max(_d(prop.get("occupancy_rate")), Decimal("0")), Decimal("100"))
     available_units = len(rentals)
-    occupied_units = sum(1 for prop in rentals if _d(prop.get("monthly_rent")) > 0)
+    occupied_units = sum(1 for prop in rentals if _occ_rate(prop) > 0)
     vacant_units = available_units - occupied_units
-    occupancy = (sum((_occ_share(prop) for prop in rentals), Decimal("0")) / available_units * 100) if available_units else None
+    occupancy = (sum((_occ_rate(prop) for prop in rentals), Decimal("0")) / available_units) if available_units else None
 
     gross = _d(income["kpis"]["income"]["value"])
     scheduled_gross = sum((_d(prop.get("monthly_rent")) for prop in rentals), Decimal("0"))
@@ -903,7 +902,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             "capRate": _metric("capRate", "Portfolio Cap Rate", cap_rate, unit="percent", formula="Annual NOI ÷ current market value", status="UNAVAILABLE" if cap_rate is None else "CALCULATED", period=as_of),
             "dscr": _metric("dscr", "Debt Service Coverage Ratio", dscr, unit="ratio", formula="Annual NOI ÷ annual principal-and-interest debt service", status="UNAVAILABLE" if dscr is None else "CALCULATED", period=as_of[:4]),
             "ltv": _metric("ltv", "Loan-to-Value", ltv, unit="percent", formula="Active loan balance ÷ current market value", status="UNAVAILABLE" if ltv is None else "CALCULATED", period=as_of),
-            "occupancy": _metric("occupancy", "Occupancy", occupancy, unit="percent", formula="Occupied rentals ÷ rentals available for rent", inputs=[{"label": "Available for rent", "value": available_units, "unit": "count"}, {"label": "Occupied (generating rent)", "value": occupied_units, "unit": "count"}, {"label": "Vacant", "value": vacant_units, "unit": "count"}], status="UNAVAILABLE" if occupancy is None else "CALCULATED", period=as_of[:7]),
+            "occupancy": _metric("occupancy", "Occupancy", occupancy, unit="percent", formula="Average occupancy rate across rentals available for rent", inputs=[{"label": "Available for rent", "value": available_units, "unit": "count"}, {"label": "Occupied", "value": occupied_units, "unit": "count"}, {"label": "Vacant", "value": vacant_units, "unit": "count"}], status="UNAVAILABLE" if occupancy is None else "CALCULATED", period=as_of[:7]),
             "principalPaid": loans["kpis"]["principalYtd"],
             "interestPaid": loans["kpis"]["interestToDate"],
         },
