@@ -6,6 +6,8 @@ import { ArrowLeft, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-r
 import toast from 'react-hot-toast'
 import BrandLogo from '../components/BrandLogo'
 
+const LAST_EMAIL_KEY = 'propertylens:lastEmail'
+
 function authErrorMessage(err, fallback) {
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string') return detail
@@ -17,9 +19,10 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const [mode, setMode] = useState('signin')
-  const [form, setForm] = useState({ email: '', password: '' })
-  const [reset, setReset] = useState({ email: '', token: '', password: '', confirm: '' })
+  const [form, setForm] = useState(() => ({ email: localStorage.getItem(LAST_EMAIL_KEY) || '', password: '' }))
+  const [reset, setReset] = useState({ email: '', token: '', password: '', confirm: '', requested: false, emailed: false })
   const [showPwd, setShowPwd] = useState(false)
+  const [signInError, setSignInError] = useState('')
   const [loading, setLoading] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
   const sessionExpired = params.get('reason') === 'session-expired'
@@ -28,12 +31,17 @@ export default function LoginPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
+    setSignInError('')
     setLoading(true)
     try {
-      await login(form.email.trim(), form.password)
+      const email = form.email.trim()
+      await login(email, form.password)
+      localStorage.setItem(LAST_EMAIL_KEY, email)
       navigate(nextPath, { replace: true })
     } catch (err) {
-      toast.error(authErrorMessage(err, 'Sign in failed'))
+      const message = authErrorMessage(err, 'Sign in failed')
+      setSignInError(err?.response?.status === 401 ? 'Email or password did not match. Your password was not changed; reset only if you forgot it.' : message)
+      toast.error(message)
     } finally {
       setLoading(false)
     }
@@ -41,12 +49,13 @@ export default function LoginPage() {
 
   const requestReset = async (event) => {
     event.preventDefault()
+    setSignInError('')
     setResetLoading(true)
     try {
       const email = (reset.email || form.email).trim()
       const { data } = await authAPI.requestPasswordReset(email)
-      setReset((current) => ({ ...current, email, token: data.reset_token || '' }))
-      toast.success(data.reset_token ? 'Recovery code created' : 'If the account exists, recovery instructions were sent.')
+      setReset((current) => ({ ...current, email, token: data.reset_token || '', requested: true, emailed: Boolean(data.emailed) }))
+      toast.success(data.emailed ? 'Recovery code emailed' : 'If the account exists, recovery instructions were sent.')
     } catch (err) {
       toast.error(authErrorMessage(err, 'Account recovery failed'))
     } finally {
@@ -83,6 +92,11 @@ export default function LoginPage() {
     setMode('recovery')
   }
 
+  const switchToSignIn = () => {
+    setMode('signin')
+    setReset((current) => ({ ...current, token: '', password: '', confirm: '', requested: false, emailed: false }))
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950 dark:bg-slate-950 dark:text-white">
       <div className="mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center gap-6 lg:grid-cols-[0.9fr_1.1fr]">
@@ -91,19 +105,19 @@ export default function LoginPage() {
           <div className="mt-10 space-y-6">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">Property intelligence</p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">Portfolio data, documents, and loan history in one place.</h1>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">Sign in once. Keep working across sessions.</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-                Sign in keeps your extracted documents, property setup, loan schedules, and reporting workspace available across sessions.
+                PropertyLens keeps your verified session active for longer by default, so account recovery is only needed when the password is actually lost.
               </p>
             </div>
             <div className="grid gap-3 text-sm text-slate-600 dark:text-slate-300">
               <div className="flex gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950/40">
                 <ShieldCheck className="mt-0.5 h-5 w-5 text-blue-600 dark:text-blue-300" />
-                <span>Sessions now stay active longer and are verified quietly on app load.</span>
+                <span>Long-lived sessions are verified quietly when the app opens.</span>
               </div>
               <div className="flex gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950/40">
                 <LockKeyhole className="mt-0.5 h-5 w-5 text-blue-600 dark:text-blue-300" />
-                <span>Account recovery is separate from normal sign-in. Use it only when the password is actually lost.</span>
+                <span>Password reset is a separate recovery path, not part of routine sign-in.</span>
               </div>
             </div>
           </div>
@@ -116,7 +130,7 @@ export default function LoginPage() {
 
           {sessionExpired && mode === 'signin' ? (
             <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-              Your session expired. Sign in again to continue where you left off.
+              Your saved session expired. Sign in again with your current password; reset is only needed if you forgot it.
             </div>
           ) : null}
 
@@ -125,10 +139,15 @@ export default function LoginPage() {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Secure sign in</p>
                 <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">Welcome back</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use your PropertyLens account password. Reset is optional.</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use your existing password. Your account password is not reset unless you start recovery.</p>
               </div>
 
               <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+                {signInError ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                    {signInError}
+                  </div>
+                ) : null}
                 <div>
                   <label className="label">Email</label>
                   <div className="relative">
@@ -140,6 +159,7 @@ export default function LoginPage() {
                       value={form.email}
                       onChange={(event) => setForm({ ...form, email: event.target.value })}
                       autoComplete="email"
+                      autoFocus={!form.email}
                       required
                     />
                   </div>
@@ -176,6 +196,9 @@ export default function LoginPage() {
                 <button type="submit" className="btn-primary w-full py-2.5" disabled={loading}>
                   {loading ? 'Signing in...' : 'Sign in'}
                 </button>
+                <p className="text-center text-xs text-slate-500 dark:text-slate-400">
+                  Sessions stay active for months on this browser unless you sign out or clear browser storage.
+                </p>
               </form>
 
               <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
@@ -187,14 +210,14 @@ export default function LoginPage() {
             </>
           ) : (
             <>
-              <button type="button" className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white" onClick={() => setMode('signin')}>
+              <button type="button" className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white" onClick={switchToSignIn}>
                 <ArrowLeft className="h-4 w-4" />
                 Back to sign in
               </button>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Account recovery</p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">Reset password</h2>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this only if the saved password no longer works.</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">Recover access</h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this only if you forgot the password. Session expiration alone does not require a reset.</p>
               </div>
 
               <form onSubmit={requestReset} className="mt-6 space-y-4">
@@ -211,13 +234,32 @@ export default function LoginPage() {
                   />
                 </div>
                 <button type="submit" className="btn-secondary w-full py-2.5" disabled={resetLoading}>
-                  {resetLoading ? 'Preparing recovery...' : 'Start password recovery'}
+                  {resetLoading ? 'Sending recovery code...' : 'Send recovery code'}
                 </button>
               </form>
 
-              {reset.token ? (
+              {reset.requested ? (
                 <form onSubmit={confirmReset} className="mt-5 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
-                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Recovery code verified for this session.</p>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                    {reset.emailed
+                      ? `We emailed a recovery code to ${reset.email}. Paste it below, then choose a new password.`
+                      : 'Enter the recovery code, then choose a new password.'}
+                  </p>
+                  <div>
+                    <label className="label">Recovery code</label>
+                    <input
+                      type="text"
+                      className="input font-mono text-xs"
+                      placeholder="Paste the code from your email"
+                      value={reset.token}
+                      onChange={(event) => setReset({ ...reset, token: event.target.value })}
+                      autoComplete="one-time-code"
+                      required
+                    />
+                    {reset.token && !reset.emailed ? (
+                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Auto-filled for local development (no email server configured).</p>
+                    ) : null}
+                  </div>
                   <div>
                     <label className="label">New password</label>
                     <input
@@ -242,7 +284,7 @@ export default function LoginPage() {
                       minLength={8}
                     />
                   </div>
-                  <button type="submit" className="btn-primary w-full py-2.5" disabled={resetLoading}>
+                  <button type="submit" className="btn-primary w-full py-2.5" disabled={resetLoading || !reset.token.trim()}>
                     {resetLoading ? 'Updating password...' : 'Update password and sign in'}
                   </button>
                 </form>

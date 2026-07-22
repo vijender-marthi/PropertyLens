@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,10 +10,13 @@ from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 import models
 from database import get_db
+from services.email_service import email_configured, send_password_reset_email
+
+logger = logging.getLogger("propertylens.auth")
 
 SECRET_KEY = os.getenv("PROPERTYLENS_SECRET_KEY", "propertylens-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("PROPERTYLENS_ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 30)))  # 30 days
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("PROPERTYLENS_ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 180)))  # 180 days
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
@@ -57,7 +61,7 @@ class PasswordResetConfirm(BaseModel):
 
 ADMIN_EMAIL = "vijender.marthi@gmail.com"
 ALLOWED_ROLES = {"demo", "premium", "admin", "superuser"}
-PASSWORD_RESET_EXPIRE_MINUTES = 15
+PASSWORD_RESET_EXPIRE_MINUTES = int(os.getenv("PROPERTYLENS_PASSWORD_RESET_EXPIRE_MINUTES", "60"))
 
 
 def _prep(password: str) -> str:
@@ -198,19 +202,43 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @router.post("/password-reset/request")
 def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+    # Always answer with the same generic body so this endpoint can't be used to
+    # enumerate which emails have accounts.
+    generic = {
+        "message": "If the account exists, recovery instructions were sent.",
+        "expires_minutes": PASSWORD_RESET_EXPIRE_MINUTES,
+        "emailed": email_configured(),
+    }
     user = db.query(models.User).filter(models.User.email == payload.email).first()
     if not user:
-        return {
-            "message": "If the account exists, recovery instructions were sent.",
-            "expires_minutes": PASSWORD_RESET_EXPIRE_MINUTES,
-        }
+        return generic
+
     reset_token = create_access_token(
         data={"sub": user.email, "purpose": "password_reset"},
         expires_delta=timedelta(minutes=PASSWORD_RESET_EXPIRE_MINUTES),
     )
+
+    if email_configured():
+        # Deliver the code by email. Crucially, never return the token in the
+        # response — otherwise anyone who knows an email could reset that account.
+        sent = send_password_reset_email(user.email, reset_token, PASSWORD_RESET_EXPIRE_MINUTES)
+        if not sent:
+            logger.error("Password-reset email to %s failed to send.", user.email)
+        return {**generic, "emailed": bool(sent)}
+
+    # Development fallback: no SMTP configured. Return the token so local recovery
+    # still works, but log a loud warning — this is not safe for production.
+    logger.warning(
+        "SMTP is not configured; returning the password-reset token in the API "
+        "response for %s. Set SMTP_HOST (and related SMTP_* vars) in production "
+        "so reset codes are delivered by email instead.",
+        user.email,
+    )
     return {
         "reset_token": reset_token,
         "expires_minutes": PASSWORD_RESET_EXPIRE_MINUTES,
+        "emailed": False,
+        "devFallback": True,
     }
 
 
