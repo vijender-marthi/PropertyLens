@@ -28,6 +28,11 @@ def _compact_money(value: float, *, signed: bool = False) -> str:
     return display
 
 
+def _months_display(value: int) -> str:
+    n = int(value or 0)
+    return f"{n} month" if n == 1 else f"{n} months"
+
+
 def _story_node(key: str, label: str, value: float, start: float, end: float, tone: str, *, total: bool = False, signed: bool = True) -> Dict[str, Any]:
     """A single waterfall node in the Home Summary "value buildup" format."""
     return {
@@ -908,7 +913,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             "capRate": _metric("capRate", "Portfolio Cap Rate", cap_rate, unit="percent", formula="Annual NOI ÷ current market value", status="UNAVAILABLE" if cap_rate is None else "CALCULATED", period=as_of),
             "dscr": _metric("dscr", "Debt Service Coverage Ratio", dscr, unit="ratio", formula="Annual NOI ÷ annual principal-and-interest debt service", status="UNAVAILABLE" if dscr is None else "CALCULATED", period=as_of[:4]),
             "ltv": _metric("ltv", "Loan-to-Value", ltv, unit="percent", formula="Active loan balance ÷ current market value", status="UNAVAILABLE" if ltv is None else "CALCULATED", period=as_of),
-            "occupancy": _metric("occupancy", "Occupancy", occupancy, unit="percent", formula="Occupied months ÷ months available for rent, across all rentals", inputs=[{"label": "Available for rent", "value": available_months, "unit": "months"}, {"label": "Occupied", "value": occupied_months, "unit": "months"}, {"label": "Vacant", "value": vacant_months, "unit": "months"}], status="UNAVAILABLE" if occupancy is None else "CALCULATED", period=as_of[:7]),
+            "occupancy": _metric("occupancy", "Occupancy", occupancy, unit="percent", formula="Occupied months ÷ months available for rent, across all rentals", inputs=[{"label": "Available for rent", "value": available_months, "unit": "months", "display": _months_display(available_months)}, {"label": "Occupied", "value": occupied_months, "unit": "months", "display": _months_display(occupied_months)}, {"label": "Vacant", "value": vacant_months, "unit": "months", "display": _months_display(vacant_months)}], status="UNAVAILABLE" if occupancy is None else "CALCULATED", period=as_of[:7]),
             "principalPaid": loans["kpis"]["principalYtd"],
             "interestPaid": loans["kpis"]["interestToDate"],
         },
