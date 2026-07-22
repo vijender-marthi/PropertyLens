@@ -11648,6 +11648,54 @@ def payoff_planner(
     return report
 
 
+def _rental_occupancy_months(prop, today: date):
+    """Occupied vs available months for a rental, derived from its tenancy
+    (RentalPeriod) records against the window it has been available for rent.
+
+    Returns (available_months, occupied_months). Occupancy over time is the
+    honest measure: a rental with no rent entered on the record but an active
+    tenancy still counts as occupied, and gaps between leases count as vacant.
+    """
+    def _idx(y, m):
+        return y * 12 + (max(1, min(12, int(m))) - 1)
+
+    today_idx = _idx(today.year, today.month)
+    periods = list(getattr(prop, "rental_periods", None) or [])
+
+    # When did this property become available for rent? Earliest of the declared
+    # rental_start_date and the first tenancy start.
+    starts = []
+    rsd = _parse_iso_date(getattr(prop, "rental_start_date", None))
+    if rsd:
+        starts.append(_idx(rsd.year, rsd.month))
+    for p in periods:
+        if p.start_year:
+            starts.append(_idx(p.start_year, p.start_month or 1))
+    if not starts:
+        return 0, 0
+    start_idx = min(starts)
+
+    # Availability ends at a past rental_end_date, otherwise "now".
+    red = _parse_iso_date(getattr(prop, "rental_end_date", None))
+    end_idx = min(today_idx, _idx(red.year, red.month)) if red else today_idx
+    if end_idx < start_idx:
+        return 0, 0
+    available = end_idx - start_idx + 1
+
+    # Union of months covered by any tenancy, clipped to the availability window.
+    occupied_set = set()
+    for p in periods:
+        if not p.start_year:
+            continue
+        p_start = _idx(p.start_year, p.start_month or 1)
+        p_end = _idx(p.end_year, p.end_month or 12) if p.end_year else today_idx
+        lo, hi = max(p_start, start_idx), min(p_end, end_idx)
+        if hi >= lo:
+            occupied_set.update(range(lo, hi + 1))
+    occupied = len(occupied_set)
+    return available, min(occupied, available)
+
+
 @router.get("/analysis/portfolio")
 def portfolio_analysis(
     selected_property_ids: str = "",
@@ -11702,9 +11750,12 @@ def portfolio_analysis(
     normalized_properties: List[Dict[str, Any]] = []
     debts: Dict[int, Dict[str, Any]] = {}
     schedules: Dict[int, Dict[str, Any]] = {}
+    _today = date.today()
     for prop in props:
         canonical = _canonical_property_metric_row(prop, db, current_user)
         raw = canonical.get("raw") or {}
+        _is_primary = str(prop.usage_type or "Rental").lower() == "primary"
+        _avail_m, _occ_m = (0, 0) if _is_primary else _rental_occupancy_months(prop, _today)
         normalized_properties.append({
             "id": prop.id,
             "property_uid": prop.property_uid,
@@ -11719,6 +11770,8 @@ def portfolio_analysis(
             "closing_costs": _schedule_e_number(prop.closing_costs),
             "monthly_rent": _schedule_e_number(prop.monthly_rent),
             "occupancy_rate": _schedule_e_number(prop.occupancy_rate),
+            "occupancy_available_months": _avail_m,
+            "occupancy_occupied_months": _occ_m,
             "metrics": canonical.get("metrics") or {},
             **raw,
         })

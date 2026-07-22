@@ -554,18 +554,24 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
          for prop in rentals),
         Decimal("0"),
     )
-    # Occupancy is driven by each rental's own occupancy_rate — the authoritative
-    # signal for whether a unit is occupied — NOT by whether monthly_rent happens
-    # to be filled in. (Rent is often blank on a record even though the unit is
-    # fully occupied, so a rent-presence heuristic wrongly reported those vacant.)
-    # Portfolio occupancy = the average occupancy_rate across every rental that is
-    # available for rent. A rental is "vacant" only when its occupancy_rate is 0.
-    def _occ_rate(prop):
-        return min(max(_d(prop.get("occupancy_rate")), Decimal("0")), Decimal("100"))
-    available_units = len(rentals)
-    occupied_units = sum(1 for prop in rentals if _occ_rate(prop) > 0)
-    vacant_units = available_units - occupied_units
-    occupancy = (sum((_occ_rate(prop) for prop in rentals), Decimal("0")) / available_units) if available_units else None
+    # Occupancy over time: occupied months ÷ months available for rent, summed
+    # across the rental portfolio. Each rental's occupied/available months are
+    # derived upstream from its tenancy (RentalPeriod) records against the window
+    # it has been available for rent — gaps between leases count as vacant, and a
+    # rental with an active tenancy counts as occupied even if monthly_rent is
+    # blank on the record. Falls back to occupancy_rate only when a rental has no
+    # timeline data at all.
+    available_months = sum(int(prop.get("occupancy_available_months") or 0) for prop in rentals)
+    occupied_months = sum(int(prop.get("occupancy_occupied_months") or 0) for prop in rentals)
+    vacant_months = max(available_months - occupied_months, 0)
+    if available_months > 0:
+        occupancy = Decimal(occupied_months) / Decimal(available_months) * 100
+    elif rentals:
+        # No timeline anywhere — fall back to the average occupancy_rate field.
+        rates = [min(max(_d(p.get("occupancy_rate")), Decimal("0")), Decimal("100")) for p in rentals]
+        occupancy = sum(rates, Decimal("0")) / len(rates) if rates else None
+    else:
+        occupancy = None
 
     gross = _d(income["kpis"]["income"]["value"])
     scheduled_gross = sum((_d(prop.get("monthly_rent")) for prop in rentals), Decimal("0"))
@@ -902,7 +908,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             "capRate": _metric("capRate", "Portfolio Cap Rate", cap_rate, unit="percent", formula="Annual NOI ÷ current market value", status="UNAVAILABLE" if cap_rate is None else "CALCULATED", period=as_of),
             "dscr": _metric("dscr", "Debt Service Coverage Ratio", dscr, unit="ratio", formula="Annual NOI ÷ annual principal-and-interest debt service", status="UNAVAILABLE" if dscr is None else "CALCULATED", period=as_of[:4]),
             "ltv": _metric("ltv", "Loan-to-Value", ltv, unit="percent", formula="Active loan balance ÷ current market value", status="UNAVAILABLE" if ltv is None else "CALCULATED", period=as_of),
-            "occupancy": _metric("occupancy", "Occupancy", occupancy, unit="percent", formula="Average occupancy rate across rentals available for rent", inputs=[{"label": "Available for rent", "value": available_units, "unit": "count"}, {"label": "Occupied", "value": occupied_units, "unit": "count"}, {"label": "Vacant", "value": vacant_units, "unit": "count"}], status="UNAVAILABLE" if occupancy is None else "CALCULATED", period=as_of[:7]),
+            "occupancy": _metric("occupancy", "Occupancy", occupancy, unit="percent", formula="Occupied months ÷ months available for rent, across all rentals", inputs=[{"label": "Available for rent", "value": available_months, "unit": "months"}, {"label": "Occupied", "value": occupied_months, "unit": "months"}, {"label": "Vacant", "value": vacant_months, "unit": "months"}], status="UNAVAILABLE" if occupancy is None else "CALCULATED", period=as_of[:7]),
             "principalPaid": loans["kpis"]["principalYtd"],
             "interestPaid": loans["kpis"]["interestToDate"],
         },
