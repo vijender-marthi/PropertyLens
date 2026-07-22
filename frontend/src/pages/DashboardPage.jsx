@@ -312,6 +312,111 @@ function CashFlowWaterfall({ data }) {
   )
 }
 
+function ValueBuildupWaterfall({ data }) {
+  const steps = data.steps || []
+  // Turn cumulative running totals into floating [from, to] segments. Each
+  // component bar starts where the previous ended; the final "total" bar is a
+  // full column from the zero baseline up to Total Equity.
+  let prev = 0
+  const segs = steps.map((step) => {
+    const running = Number(step.runningTotal || 0)
+    let from
+    let to
+    if (step.type === 'total') {
+      from = 0
+      to = running
+    } else {
+      from = prev
+      to = running
+      prev = running
+    }
+    return { ...step, from, to }
+  })
+
+  const points = segs.flatMap((s) => [s.from, s.to])
+  const maxV = Math.max(...points, 0)
+  const minV = Math.min(...points, 0)
+  const range = maxV - minV || 1
+  const yPct = (v) => ((maxV - v) / range) * 100 // 0 at top, 100 at bottom
+  const zeroPct = yPct(0)
+
+  return (
+    <DashboardCard className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title || 'Value buildup'}</h2>
+          <p className="mt-1 text-xs text-gray-500">{data.subtitle}</p>
+        </div>
+        <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">All properties</span>
+      </div>
+      <div className="mt-4">
+        <div className="relative h-56 rounded-lg border border-gray-100 bg-gray-50 px-3 pb-2 pt-6">
+          {/* Zero baseline */}
+          <div className="absolute left-3 right-3 h-px bg-gray-300" style={{ top: `${zeroPct}%` }} aria-hidden="true" />
+          <div className="grid h-full items-stretch gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(segs.length, 1)}, minmax(3.5rem, 1fr))` }}>
+            {segs.map((step, i) => {
+              const topV = Math.max(step.from, step.to)
+              const bottomV = Math.min(step.from, step.to)
+              const barTop = yPct(topV)
+              const barHeight = Math.max(2, yPct(bottomV) - yPct(topV))
+              const isNegative = step.type === 'decrease'
+              const toneClass =
+                step.type === 'total' ? 'bg-blue-600'
+                : step.type === 'base' ? 'bg-slate-400 dark:bg-slate-500'
+                : isNegative ? 'bg-rose-400'
+                : 'bg-emerald-400'
+              const valueColor =
+                step.type === 'total' ? 'text-blue-700 dark:text-blue-400'
+                : step.type === 'base' ? 'text-slate-600 dark:text-slate-300'
+                : isNegative ? 'text-rose-500 dark:text-rose-400'
+                : 'text-emerald-500 dark:text-emerald-400'
+              const next = segs[i + 1]
+              return (
+                <div key={step.key} className="relative min-w-0">
+                  {/* Connector to the next bar's starting level */}
+                  {next && step.type !== 'total' ? (
+                    <div
+                      className="absolute right-0 z-0 w-3 translate-x-1/2 border-t border-dashed border-gray-300"
+                      style={{ top: `${yPct(step.to)}%` }}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <p
+                    className={`absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold tabular-nums ${valueColor}`}
+                    style={{ top: `${Math.max(1, barTop - 9)}%` }}
+                  >
+                    {step.type === 'total' || step.type === 'base' ? formatCurrencyCompact(step.value) : `${isNegative ? '−' : '+'}${formatCurrencyCompact(Math.abs(step.value))}`}
+                  </p>
+                  <div
+                    className={`absolute left-1/2 w-3/5 -translate-x-1/2 rounded-sm ${toneClass}`}
+                    style={{ top: `${barTop}%`, height: `${barHeight}%` }}
+                    title={`${step.label}: ${formatCurrency(step.value)}`}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        </div>
+        <div className="mt-2 grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(segs.length, 1)}, minmax(3.5rem, 1fr))` }}>
+          {segs.map((step) => (
+            <p key={step.key} className="px-0.5 text-center text-[11px] leading-tight text-gray-600">{step.label}</p>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-slate-400" />Cash in</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />Adds equity</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-rose-400" />Reduces equity</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-blue-600" />Total equity</span>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-gray-200 bg-gray-200 sm:grid-cols-4">
+        {(data.reconciliation || []).map((item) => <div key={item.label} className="bg-white px-3 py-3"><p className="text-xs text-gray-500">{item.label}</p><p className={`mt-1 text-sm font-bold ${item.tone === 'negative' ? 'text-rose-500 dark:text-rose-400' : item.tone === 'positive' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-900'}`}>{formatCurrency(item.value)}</p></div>)}
+      </div>
+      <Link to="/analytics?tab=equity" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View equity analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
+    </DashboardCard>
+  )
+}
+
 function CapitalStructure({ data }) {
   const equity = data.segments?.find((item) => item.key === 'equity')
   return (
@@ -454,7 +559,11 @@ export default function DashboardPage() {
 
         <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,2.2fr)_minmax(0,0.9fr)]">
           <div className="space-y-4"><SummaryPanel section={dashboard.assets} resolveMetric={resolveMetric} kind="assets" /><PortfolioHealth data={dashboard.health} /></div>
-          <CashFlowWaterfall data={dashboard.cashFlowWaterfall} />
+          {dashboard.valueBuildup ? (
+            <ValueBuildupWaterfall data={dashboard.valueBuildup} />
+          ) : (
+            <CashFlowWaterfall data={dashboard.cashFlowWaterfall} />
+          )}
           <div className="space-y-4"><SummaryPanel section={dashboard.liabilities} resolveMetric={resolveMetric} kind="liabilities" /><CapitalStructure data={dashboard.capitalStructure} /></div>
         </section>
 
