@@ -65,7 +65,7 @@ export const propertySetupFlagRows = [
   {
     id: 'hasFinancing',
     title: 'Loan',
-    helper: 'Adds financing and debt details',
+    helper: 'Adds a Loans step for mortgage & debt details',
     icon: 'Landmark',
   },
   {

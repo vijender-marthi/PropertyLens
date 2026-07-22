@@ -641,9 +641,10 @@ function SelectInput({ label, value, onChange, onBlur, children, error, helper, 
 
 function FeatureToggle({ row, checked, onChange }) {
   return (
-    <label className="group cursor-pointer">
+    <label className="group cursor-pointer" title={row.helper}>
       <input type="checkbox" className="peer sr-only" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-      <span className="inline-flex min-w-20 items-center justify-center rounded-full border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors duration-150 peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500/30 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:peer-checked:border-blue-400 dark:peer-checked:bg-blue-950/50 dark:peer-checked:text-blue-300">
+      <span className="inline-flex min-w-20 items-center justify-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors duration-150 peer-checked:border-blue-600 peer-checked:bg-blue-50 peer-checked:text-blue-700 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500/30 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:peer-checked:border-blue-400 dark:peer-checked:bg-blue-950/50 dark:peer-checked:text-blue-300">
+        <span className={`grid h-4 w-4 place-items-center rounded-full text-[10px] font-bold leading-none ${checked ? 'bg-blue-600 text-white dark:bg-blue-400 dark:text-gray-900' : 'border border-gray-400 text-gray-400 dark:border-gray-500 dark:text-gray-500'}`} aria-hidden="true">{checked ? '✓' : '+'}</span>
         {row.title}
       </span>
     </label>
@@ -2914,6 +2915,17 @@ export default function PropertyFormPage() {
     return (
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2.35fr)_minmax(19rem,0.95fr)]">
         <div className="min-w-0 space-y-5">
+          <SetupSubsection title="What does this property have?">
+            <p className="-mt-1 mb-3 text-sm text-gray-500 dark:text-gray-400">
+              Turn on what applies. <span className="font-medium text-gray-700 dark:text-gray-200">Loan</span> adds a Loans step; <span className="font-medium text-gray-700 dark:text-gray-200">HOA</span> and <span className="font-medium text-gray-700 dark:text-gray-200">Solar</span> reveal their expense fields.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {propertySetupFlagRows.map((row) => (
+                <FeatureToggle key={row.id} row={row} checked={Boolean(flags[row.id])} onChange={(checked) => toggleFlag(row.id, checked)} />
+              ))}
+            </div>
+          </SetupSubsection>
+
           <SetupSubsection title="Basic information">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <TextInput fieldKey="name" label="Property name" value={form.name} onChange={(value) => setField('name', value, 'property')} onBlur={() => handleFieldBlur('name')} error={errors.name} helper="Use the name you recognize across dashboards." required={REQUIRED_FIELDS.has('name')} source={settlementSources.name} />
@@ -3015,14 +3027,6 @@ export default function PropertyFormPage() {
                 <option value="imported">Imported estimate</option>
               </SelectInput>
               <TextInput label="Valuation date" type="date" value={form.market_value_updated} onChange={(value) => setField('market_value_updated', value, 'property')} error={errors.market_value_updated} helper="As-of date for the market price." />
-            </div>
-          </SetupSubsection>
-
-          <SetupSubsection title="This property has">
-            <div className="flex flex-wrap gap-2">
-              {propertySetupFlagRows.map((row) => (
-                <FeatureToggle key={row.id} row={row} checked={Boolean(flags[row.id])} onChange={(checked) => toggleFlag(row.id, checked)} />
-              ))}
             </div>
           </SetupSubsection>
 
