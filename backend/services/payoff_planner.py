@@ -164,7 +164,11 @@ def simulate(
             "balance": balance,
             "_idx": idx,
             "open": balance > 0,
+            "started_open": balance > 0,
             "payoff_month": None if balance > 0 else 0,
+            # Attribution of the TOTAL money that clears this loan:
+            "own_paid": 0.0,          # its own P&I payment stream (you pay)
+            "attack_by": {},          # {source loan name / "__external__": $ rolled in}
         })
 
     total_interest = 0.0
@@ -193,6 +197,7 @@ def simulate(
             principal = min(principal, s["balance"])
             s["balance"] -= principal
             principal_paid += principal
+            s["own_paid"] += interest + principal  # the loan's own payment toward itself
             if s["balance"] <= 1e-6:
                 s["balance"] = 0.0
                 s["open"] = False
@@ -228,6 +233,16 @@ def simulate(
 
         # 4. Apply to targets in strategy order; overflow cascades same month.
         if pool > 1e-9:
+            # Composition of this month's pool, for attribution: each already-
+            # cleared home contributes its freed P&I; everything else (income
+            # surplus, extra monthly, lump, recurring) is "__external__" (your
+            # extra money). Each dollar paid to a target is credited back to
+            # these sources proportionally.
+            pool_total_month = pool
+            pool_sources = [(s2["name"], s2["pi"]) for s2 in state if s2["started_open"] and not s2["open"]]
+            ext_amt = pool_total_month - sum(pi for _, pi in pool_sources)
+            if ext_amt > 1e-9:
+                pool_sources.append(("__external__", ext_amt))
             for target in order_targets(open_state(), strategy):
                 if pool <= 1e-9:
                     break
@@ -236,6 +251,9 @@ def simulate(
                 pool -= pay
                 principal_paid += pay
                 attack_paid += pay
+                ab = target["attack_by"]
+                for label, amt in pool_sources:
+                    ab[label] = ab.get(label, 0.0) + pay * amt / pool_total_month
                 if target["balance"] <= 1e-6:
                     target["balance"] = 0.0
                     target["open"] = False
@@ -249,6 +267,9 @@ def simulate(
             "noi": s["noi"],
             "start_balance": s["start_balance"],
             "payoff_month": s["payoff_month"],
+            "own_paid": round(s["own_paid"], 2),
+            "attack_by": {k: round(v, 2) for k, v in s["attack_by"].items()},
+            "total_paid": round(s["own_paid"] + sum(s["attack_by"].values()), 2),
         }
         for s in state
     ]
@@ -596,6 +617,7 @@ def build_report(
     # grows one coin at a time down the payoff order.
     rollover: List[Dict[str, Any]] = []
     freed_coins: List[Dict[str, Any]] = []  # payments freed by loans already cleared
+    name_to_order = {row["name"]: i for i, row in enumerate(ordered, start=1)}
     for k, l in enumerate(ordered, start=1):
         pm = l["payoff_month"]
         never = pm is None or pm > cap
@@ -606,6 +628,22 @@ def build_report(
         # home into the next target.
         coins = [{"name": c["name"], "display": c["display"], "own": False, "order": c["order"], "amount": round(c["payment"], 2)} for c in freed_coins]
         coins.append({"name": l["name"], "display": format_currency(own_pi), "own": True, "order": k, "amount": round(own_pi, 2)})
+
+        # TOTAL money that clears this home over the whole payoff, grouped by
+        # source: "you" (its own P&I plus your extra) + the dollars rolled in
+        # from each already-cleared home. Sums to start balance + interest.
+        attack_by = l.get("attack_by", {}) or {}
+        you_amt = float(l.get("own_paid", 0.0) or 0.0) + float(attack_by.get("__external__", 0.0) or 0.0)
+        total_paid = float(l.get("total_paid", 0.0) or 0.0)
+        groups: List[Dict[str, Any]] = []
+        if you_amt > 1e-6:
+            groups.append({"label": f"{l['name']} · you pay", "amount": round(you_amt, 2), "display": format_currency(you_amt), "order": k, "own": True})
+        for src_name, amt in attack_by.items():
+            if src_name == "__external__" or amt <= 1e-6:
+                continue
+            groups.append({"label": f"from {src_name}", "amount": round(amt, 2), "display": format_currency(amt), "order": name_to_order.get(src_name, k), "own": False})
+        groups.sort(key=lambda g: (not g["own"], g["order"]))
+
         rollover.append({
             "order": k,
             "name": l["name"],
@@ -620,9 +658,14 @@ def build_report(
             "freedPaymentDisplay": format_currency(freed_total),
             "rollingPaymentDisplay": format_currency(freed_total + own_pi),
             "coins": coins,
+            "totalPaid": round(total_paid, 2),
+            "totalPaidDisplay": format_currency(total_paid),
+            "groups": groups,
         })
         if not never:
             freed_coins.append({"name": l["name"], "payment": own_pi, "display": format_currency(own_pi), "order": k})
+
+    rollover_max_total = max((s["totalPaid"] for s in rollover), default=0.0)
 
     # Metric cards.
     cards = {
@@ -718,6 +761,7 @@ def build_report(
         "savingsNote": savings_note,
         "timeline": timeline,
         "rollover": rollover,
+        "rolloverMaxTotal": round(rollover_max_total, 2),
         "warnings": warnings,
         "debtFreeMonth": debt_free_month,
         "baselineMonth": baseline_month,

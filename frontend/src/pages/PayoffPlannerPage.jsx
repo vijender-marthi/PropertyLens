@@ -488,11 +488,11 @@ function ResultsPanel({ report, loading }) {
             </div>
           </div>
           <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
-            When a loan clears, its monthly payment becomes a coin that rolls onto the next — so the money attacking each loan grows one coin at a time.
+            When a loan clears, its monthly payment becomes a coin that rolls onto the next. The bar beside each home shows the <span className="font-medium">total</span> money that clears it, split by source — what you pay versus what rolled in from each cleared home.
           </p>
           <ol className="space-y-3.5">
             {report.rollover.map((step) => (
-              <RolloverStep key={`${step.order}-${step.name}`} step={step} />
+              <RolloverStep key={`${step.order}-${step.name}`} step={step} maxTotal={report.rolloverMaxTotal || 1} />
             ))}
           </ol>
         </div>
@@ -520,19 +520,53 @@ function Coin({ own = false, order, never = false, title }) {
   )
 }
 
-function RolloverStep({ step }) {
+function RolloverStep({ step, maxTotal }) {
   const never = step.neverPaysOff
+  const total = Number(step.totalPaid) || 0
+  const groups = step.groups || []
   return (
     <li className="flex items-start gap-3">
       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600 dark:bg-gray-700 dark:text-gray-200">
         {step.order}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">{step.name}</span>
-          <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</span>
+        {/* Property name (left) + total-paid box bar opposite it (right). Bar
+            length is proportional to the total money that clears this home;
+            each box is a source group (you pay, or rolled in from a home). */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">{step.name}</div>
+            <div className="text-[11px] text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</div>
+          </div>
+          {total > 0 ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <div
+                className="relative w-[6in] max-w-[48vw] overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
+                style={{ height: '0.4in' }}
+                title={`${step.name}: ${step.totalPaidDisplay} total to clear`}
+              >
+                <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((total / maxTotal) * 100, 2)}%` }}>
+                  {groups.map((g, i) => {
+                    const hex = homeAccent(g.order, g.own && never).hex
+                    const segPct = total > 0 ? (Number(g.amount) || 0) / total * 100 : 0
+                    return (
+                      <div
+                        key={`${g.label}-${i}`}
+                        className="h-full border-r border-white/70 last:border-r-0 dark:border-gray-900/50"
+                        style={{ width: `${segPct}%`, backgroundColor: g.own ? hex : `${hex}B3` }}
+                        title={`${g.label}: ${g.display}`}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.totalPaidDisplay}</span>
+            </div>
+          ) : null}
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+
+        {/* Monthly rollover story — the coins that stack up as loans clear. */}
+        <div className="mt-2 flex flex-wrap items-center gap-1">
           {step.coins.map((coin, idx) => (
             <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={`${coin.name}: ${coin.display}/mo`} />
           ))}
@@ -545,31 +579,6 @@ function RolloverStep({ step }) {
             <span className="text-[11px] text-gray-400 dark:text-gray-500">(first target)</span>
           )}
         </div>
-
-        {/* Composition of the monthly attack on this home: solid = its own
-            payment (you pay), lighter = payments rolled in from cleared homes,
-            each tinted in the source home's colour. */}
-        {step.rollingPayment > 0 ? (
-          <div className="mt-1.5 flex items-center gap-2">
-            <div className="flex h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
-              {step.coins.map((coin, idx) => {
-                const hex = homeAccent(coin.order, coin.own && never).hex
-                const pct = Math.max(0, (Number(coin.amount) || 0) / step.rollingPayment * 100)
-                return (
-                  <div
-                    key={`${coin.name}-${idx}`}
-                    className="h-full first:rounded-l-full last:rounded-r-full"
-                    style={{ width: `${pct}%`, backgroundColor: coin.own ? hex : `${hex}80` }}
-                    title={`${coin.name}: ${coin.display}/mo${coin.own ? ' — you pay' : ' — rolled in'}`}
-                  />
-                )
-              })}
-            </div>
-            <span className="shrink-0 text-[10px] tabular-nums text-gray-400 dark:text-gray-500">
-              you {Math.round((step.ownPayment / step.rollingPayment) * 100)}%
-            </span>
-          </div>
-        ) : null}
       </div>
     </li>
   )

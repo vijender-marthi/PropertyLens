@@ -33,6 +33,7 @@ import {
 } from 'recharts'
 import PageContainer from '../components/PageContainer'
 import InfoTooltip from '../components/InfoTooltip'
+import { SummaryIcon } from '../components/RentalPropertySummary'
 import { propAPI } from '../services/api'
 import { formatCurrency, formatCurrencyCompact, formatPercent, formatRatio } from '../utils/formatters'
 import { chartColorRamps, chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
@@ -214,7 +215,10 @@ function SummaryPanel({ section, resolveMetric, kind }) {
   return (
     <DashboardCard className="overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3">
-        <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{section.title}</h2>
+        <div className="flex items-center gap-2">
+          <SummaryIcon name={kind === 'assets' ? 'home' : 'debt-service'} tone={kind === 'assets' ? 'green' : 'orange'} />
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{section.title}</h2>
+        </div>
         <span className="text-base font-bold text-gray-950">{kind === 'assets' ? metricDisplay(resolveMetric('analytics', 'portfolioValue')) : metricDisplay(resolveMetric('loans', 'totalBalance'))}</span>
       </div>
       <dl className="px-4">
