@@ -716,23 +716,30 @@ function PayoffTimeline({ report, timeline }) {
           </div>
         ) : null}
 
-        {/* Green debt-free flag (slides) */}
+        {/* Green debt-free flag (slides). Its label right-/left-aligns near the
+            edges so it never runs out of the frame. */}
         <span className="absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-green-500 bg-white shadow-sm transition-[left] duration-500 dark:bg-gray-900" style={{ left: `${greenPct}%` }}>
           <Flag className="h-3 w-3 text-green-600 dark:text-green-400" />
         </span>
-        <div className="absolute -translate-x-1/2 whitespace-nowrap text-center transition-[left] duration-500" style={{ left: `${greenPct}%`, top: 40 }}>
+        <div className="absolute whitespace-nowrap transition-[left] duration-500" style={{ left: `${greenPct}%`, top: 40, transform: `translateX(${greenPct >= 85 ? '-100%' : greenPct <= 15 ? '0%' : '-50%'})` }}>
           <span className="text-[10px] font-semibold text-green-600 dark:text-green-400">Debt-free </span>
           <span className="text-[10px] text-gray-600 dark:text-gray-300">{report.cards.debtFree.date}</span>
         </div>
 
-        {/* Red original flag (fixed at right) */}
-        <span className="absolute right-0 flex h-6 w-6 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-red-500 bg-white shadow-sm dark:bg-gray-900">
-          <Flag className="h-3 w-3 text-red-500" />
-        </span>
-        <div className="absolute right-0 whitespace-nowrap text-right" style={{ top: 56 }}>
-          <span className="text-[10px] font-semibold text-red-500">Original </span>
-          <span className="text-[10px] text-gray-600 dark:text-gray-300">{report.baselineDate}</span>
-        </div>
+        {/* Red original flag — only when it differs from the debt-free date
+            (with savings). In default mode the two coincide, so one flag is
+            enough and the duplicate is hidden. */}
+        {hasSaved ? (
+          <>
+            <span className="absolute right-0 flex h-6 w-6 translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-red-500 bg-white shadow-sm dark:bg-gray-900">
+              <Flag className="h-3 w-3 text-red-500" />
+            </span>
+            <div className="absolute right-0 whitespace-nowrap text-right" style={{ top: 56 }}>
+              <span className="text-[10px] font-semibold text-red-500">Original </span>
+              <span className="text-[10px] text-gray-600 dark:text-gray-300">{report.baselineDate}</span>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   )
