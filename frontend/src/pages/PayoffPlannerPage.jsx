@@ -536,15 +536,15 @@ function RolloverStep({ step, maxTotal }) {
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">{step.name}</div>
-            <div className="text-[11px] text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</div>
+            <div className="truncate text-[11px] text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</div>
           </div>
           {total > 0 ? (
-            <div className="flex shrink-0 items-center gap-2">
-              {/* Fixed-width, screen-responsive track so every row's bar lines up
-                  on the same right edge regardless of name length or viewport. */}
+            /* A capped fraction of the row (not a fixed size), so the bar stays
+               narrow and every row lines up on the same right edge whatever the
+               panel width. */
+            <div className="flex w-2/5 max-w-[15rem] shrink-0 items-center gap-2">
               <div
-                className="relative overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
-                style={{ width: 'min(4in, 46vw)', height: '0.36in' }}
+                className="relative h-8 min-w-0 flex-1 overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
                 title={`${step.name}: ${step.totalPaidDisplay} total to clear`}
               >
                 <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((total / maxTotal) * 100, 2)}%` }}>
@@ -562,7 +562,7 @@ function RolloverStep({ step, maxTotal }) {
                   })}
                 </div>
               </div>
-              <span className="w-16 shrink-0 text-right text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.totalPaidDisplay}</span>
+              <span className="w-[4.75rem] shrink-0 text-right text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.totalPaidDisplay}</span>
             </div>
           ) : null}
         </div>
