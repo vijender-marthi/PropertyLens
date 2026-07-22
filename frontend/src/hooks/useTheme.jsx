@@ -1,7 +1,7 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 
 // Colour themes (independent of light/dark). Default is "aqua".
-export const COLOR_THEMES = ['aqua', 'glass', 'rose']
+export const COLOR_THEMES = ['aqua', 'glass', 'rose', 'green']
 
 const ThemeContext = createContext({
   dark: false,

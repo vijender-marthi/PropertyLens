@@ -46,13 +46,16 @@ body {
     @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-4;
   }
   .btn-primary {
-    @apply bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded-lg shadow-sm hover:shadow-md transition-all duration-150 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none disabled:active:scale-100;
   }
   .btn-secondary {
-    @apply bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 transition-colors;
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium text-sm px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 shadow-sm hover:shadow-md transition-all duration-150 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900;
   }
   .btn-danger {
-    @apply bg-red-600 hover:bg-red-700 text-white font-medium px-4 py-2 rounded-lg transition-colors;
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap bg-red-600 hover:bg-red-700 text-white font-medium text-sm px-4 py-2 rounded-lg shadow-sm hover:shadow-md transition-all duration-150 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none disabled:active:scale-100;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap bg-transparent hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 font-medium text-sm px-3 py-2 rounded-lg transition-all duration-150 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900;
   }
   .input {
     @apply w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
@@ -183,6 +186,7 @@ body {
 html[data-theme="aqua"]  { --pl-accent:#0891b2; --pl-accent-strong:#0e7490; --pl-accent-ink:#0e7490; --pl-accent-soft:#cffafe; --pl-accent-softer:#ecfeff; --pl-ring:#22d3ee; }
 html[data-theme="glass"] { --pl-accent:#0284c7; --pl-accent-strong:#0369a1; --pl-accent-ink:#0369a1; --pl-accent-soft:#e0f2fe; --pl-accent-softer:#f0f9ff; --pl-ring:#38bdf8; }
 html[data-theme="rose"] { --pl-accent:#db2777; --pl-accent-strong:#be185d; --pl-accent-ink:#be185d; --pl-accent-soft:#fce7f3; --pl-accent-softer:#fdf2f8; --pl-ring:#f472b6; }
+html[data-theme="green"] { --pl-accent:#047857; --pl-accent-strong:#065f46; --pl-accent-ink:#065f46; --pl-accent-soft:#d1fae5; --pl-accent-softer:#ecfdf5; --pl-ring:#10b981; }
 
 /* Accent retarget (all themes, via the variables above) */
 html[data-theme] .btn-primary { background-color: var(--pl-accent); }
@@ -243,3 +247,13 @@ html.dark[data-theme="rose"] body {
   background-image: radial-gradient(1000px 520px at 100% -12%, rgba(219,39,119,0.12), transparent 55%);
 }
 html.dark[data-theme="rose"] .bg-blue-50:not([class*="dark:bg-"]) { background-color: rgb(131 24 67 / 0.30) !important; }
+
+/* Royal Green — deep emerald wash */
+html[data-theme="green"] body {
+  background-image: radial-gradient(1000px 520px at 100% -12%, rgba(5,150,105,0.08), transparent 55%);
+  background-attachment: fixed;
+}
+html.dark[data-theme="green"] body {
+  background-image: radial-gradient(1000px 520px at 100% -12%, rgba(4,120,87,0.14), transparent 55%);
+}
+html.dark[data-theme="green"] .bg-blue-50:not([class*="dark:bg-"]) { background-color: rgb(6 78 59 / 0.35) !important; }
