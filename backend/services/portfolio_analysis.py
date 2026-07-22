@@ -549,8 +549,17 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
     dscr = annual_noi / annual_debt if annual_debt else None
     ltv = total_debt / portfolio_value * 100 if portfolio_value else None
     scheduled_rent = sum((_d(prop.get("monthly_rent")) for prop in rentals), Decimal("0"))
-    effective_rent = sum((_d(prop.get("effective_rent")) for prop in rentals), Decimal("0"))
-    occupancy = effective_rent / scheduled_rent * 100 if scheduled_rent else None
+    # Occupancy = rent-weighted average of each rental's occupancy_rate, derived
+    # from the SAME monthly_rent base as scheduled_rent so it always lands in
+    # 0–100%. The reported effective_rent can exceed the stored monthly_rent
+    # (stale rent, or rent taken from documents), which pushed this ratio well
+    # past 100% (e.g. 596.88%).
+    effective_rent = sum(
+        (_d(prop.get("monthly_rent")) * min(max(_d(prop.get("occupancy_rate")), Decimal("0")), Decimal("100")) / 100
+         for prop in rentals),
+        Decimal("0"),
+    )
+    occupancy = min(effective_rent / scheduled_rent * 100, Decimal("100")) if scheduled_rent else None
 
     gross = _d(income["kpis"]["income"]["value"])
     scheduled_gross = sum((_d(prop.get("monthly_rent")) for prop in rentals), Decimal("0"))
