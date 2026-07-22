@@ -312,102 +312,107 @@ function CashFlowWaterfall({ data }) {
   )
 }
 
-// Palermo Home Summary "Value Buildup Over Time" palette, keyed by component.
-const buildupTone = {
-  downPayment: chartColors.primarySoft,   // acquisition cash
-  principalPaid: chartColors.warningStrong,
+// Same palette + geometry as the primary Home Summary "Value Buildup Over Time"
+// chart, so the portfolio version renders pixel-for-pixel identically.
+const waterfallStoryTone = {
+  acquisition_cash: chartColors.primarySoft,
+  principal_reduction: chartColors.warningStrong,
+  remaining_secured_debt: chartColors.mutedAxis,
   appreciation: chartColors.positiveSoft,
-  financingOther: chartColors.mutedAxis,
-  totalEquity: chartColors.purple,
+  total: chartColors.purple,
+}
+
+function wrapWaterfallLabel(label) {
+  const words = String(label || '').split(' ')
+  if (words.length <= 1) return [label]
+  if (words.length === 2) return words
+  return [words.slice(0, -1).join(' '), words.at(-1)]
+}
+
+function formatWaterfallBarLabel(display) {
+  return typeof display === 'string' ? display.replace(/^\+/, '') : display
 }
 
 function ValueBuildupWaterfall({ data }) {
-  const steps = data.steps || []
-  // Turn cumulative running totals into floating [from, to] segments. Each
-  // component bar starts where the previous ended; the final "total" bar is a
-  // full column from the zero baseline up to Total Equity.
-  let prev = 0
-  const segs = steps.map((step) => {
-    const running = Number(step.runningTotal || 0)
-    let from
-    let to
-    if (step.type === 'total') {
-      from = 0
-      to = running
-    } else {
-      from = prev
-      to = running
-      prev = running
-    }
-    return { ...step, from, to }
-  })
-
-  const points = segs.flatMap((s) => [s.from, s.to])
-  const maxV = Math.max(...points, 0)
-  const minV = Math.min(...points, 0)
-  const range = maxV - minV || 1
-  const yPct = (v) => ((maxV - v) / range) * 100 // 0 at top, 100 at bottom
-  const zeroPct = yPct(0)
+  const available = data?.status === 'available'
+  const nodes = available ? (data.series || []) : []
+  const chartHeight = 400
+  const chartWidth = 680
+  const left = 58
+  const right = 24
+  const top = 28
+  const bottom = 104
+  const plotHeight = chartHeight - top - bottom
+  const barWidth = 48
+  const gap = 56
+  const nodeValues = nodes.flatMap((node) => [node.startValue ?? node.start ?? 0, node.endValue ?? node.end ?? 0])
+  const minValue = Math.min(0, ...nodeValues)
+  const maxValue = Math.max(1, ...nodeValues)
+  const axisMin = minValue < 0 ? minValue * 1.08 : 0
+  const axisMax = maxValue * 1.08
+  const axisRange = Math.max(axisMax - axisMin, 1)
+  const y = (value) => top + ((axisMax - (value || 0)) / axisRange) * plotHeight
+  const ticks = [axisMin, axisMin + axisRange / 2, axisMax]
+  const barCenter = (index) => left + index * (barWidth + gap) + barWidth / 2
+  const barX = (index) => left + index * (barWidth + gap)
+  const nodeById = Object.fromEntries(nodes.map((node, index) => [node.id || node.key, { node, index }]))
 
   return (
     <DashboardCard className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title || 'Value buildup'}</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title || 'Value Buildup Over Time'}</h2>
           <p className="mt-1 text-xs text-gray-500">{data.subtitle}</p>
         </div>
-        <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">All properties</span>
+        <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">All Time</span>
       </div>
-      <div className="mt-4">
-        <div className="relative h-56 rounded-lg border border-gray-100 bg-gray-50 px-3 pb-2 pt-6">
-          {/* Zero baseline */}
-          <div className="absolute left-3 right-3 h-px bg-gray-300" style={{ top: `${zeroPct}%` }} aria-hidden="true" />
-          <div className="grid h-full items-stretch gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(segs.length, 1)}, minmax(3.5rem, 1fr))` }}>
-            {segs.map((step, i) => {
-              const topV = Math.max(step.from, step.to)
-              const bottomV = Math.min(step.from, step.to)
-              const barTop = yPct(topV)
-              const barHeight = Math.max(2, yPct(bottomV) - yPct(topV))
-              const isNegative = step.type === 'decrease'
-              // Colour by component (Palermo pattern); a negative appreciation /
-              // residual falls back to the danger tone so a loss still reads.
-              const barColor = (isNegative && step.key !== 'financingOther')
-                ? chartColors.danger
-                : buildupTone[step.key] || chartColors.purple
-              const next = segs[i + 1]
+      {available ? (
+        <div className="mt-4 overflow-x-auto">
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="mx-auto min-w-[680px]" role="img" aria-label={data.title}>
+            {ticks.map((tick) => <g key={tick}><line x1={left - 6} x2={chartWidth - right} y1={y(tick)} y2={y(tick)} stroke="currentColor" className="text-gray-100 dark:text-gray-800" /><text x={0} y={y(tick) + 4} className="fill-gray-500 text-[11px] dark:fill-gray-400">{formatCurrencyCompact(tick)}</text></g>)}
+            {nodes.map((node, index) => {
+              const startValue = node.startValue ?? node.start ?? 0
+              const endValue = node.endValue ?? node.end ?? 0
+              const isTotal = Boolean(node.isTotal ?? node.total)
+              const topY = y(Math.max(startValue, endValue))
+              const bottomY = y(Math.min(startValue, endValue))
+              const x = barX(index)
+              const next = nodes[index + 1]
+              const nextIsTotal = Boolean(next?.isTotal ?? next?.total)
+              const connectorY = y(endValue)
+              const labelLines = wrapWaterfallLabel(node.label)
               return (
-                <div key={step.key} className="relative min-w-0">
-                  {/* Connector to the next bar's starting level */}
-                  {next && step.type !== 'total' ? (
-                    <div
-                      className="absolute right-0 z-0 w-3 translate-x-1/2 border-t border-dashed border-gray-300"
-                      style={{ top: `${yPct(step.to)}%` }}
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <p
-                    className="absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold tabular-nums text-gray-900 dark:text-white"
-                    style={{ top: `${Math.max(1, barTop - 9)}%` }}
-                  >
-                    {step.type === 'total' || step.type === 'base' ? formatCurrencyCompact(step.value) : `${isNegative ? '−' : '+'}${formatCurrencyCompact(Math.abs(step.value))}`}
-                  </p>
-                  <div
-                    className="absolute left-1/2 w-3/5 -translate-x-1/2 rounded-sm"
-                    style={{ top: `${barTop}%`, height: `${barHeight}%`, backgroundColor: barColor }}
-                    title={`${step.label}: ${formatCurrency(step.value)}`}
-                  />
-                </div>
+                <g key={node.id || node.key}>
+                  <title>{`${node.label}\nAmount: ${node.fullDisplay || node.display}\n${isTotal ? 'Current market value' : `Cumulative value after this step: ${node.tooltip?.cumulativeValue || node.fullDisplay || node.display}`}`}</title>
+                  <rect x={x} y={topY} width={isTotal ? barWidth + 8 : barWidth} height={Math.max(5, bottomY - topY)} rx="3" fill={waterfallStoryTone[node.semanticType] || waterfallStoryTone[node.tone] || waterfallStoryTone.total} />
+                  <text x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={topY - 8} textAnchor="middle" className="fill-gray-900 text-[11px] font-semibold dark:fill-white">{formatWaterfallBarLabel(node.display)}</text>
+                  {labelLines.map((line, lineIndex) => <text key={line} x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={chartHeight - 70 + lineIndex * 12} textAnchor="middle" className="fill-gray-500 text-[11px] dark:fill-gray-400">{line}</text>)}
+                  {next && !nextIsTotal ? <line x1={x + (isTotal ? barWidth + 8 : barWidth)} x2={barX(index + 1)} y1={connectorY} y2={connectorY} stroke="currentColor" className="text-gray-300 dark:text-gray-600" strokeDasharray="3 3" /> : null}
+                </g>
               )
             })}
-          </div>
+            {(data.annotations || []).map((annotation) => {
+              const start = nodeById[annotation.startBarId]
+              const end = nodeById[annotation.endBarId]
+              if (!start || !end) return null
+              const x1 = barCenter(start.index)
+              const x2 = barCenter(end.index)
+              const yBase = chartHeight - 30
+              const colorClass = annotation.semanticType === 'appreciation' ? 'fill-emerald-600 text-emerald-500' : 'fill-gray-500 text-gray-400'
+              return (
+                <g key={`${annotation.startBarId}-${annotation.endBarId}`}>
+                  <path d={`M ${x1} ${yBase - 14} V ${yBase - 4} H ${x2} V ${yBase - 14}`} fill="none" stroke="currentColor" className={annotation.semanticType === 'appreciation' ? 'text-emerald-500' : 'text-gray-400'} strokeWidth="1" />
+                  <text x={(x1 + x2) / 2} y={yBase + 12} textAnchor="middle" className={`${colorClass} text-[11px]`}>{annotation.label}</text>
+                </g>
+              )
+            })}
+          </svg>
         </div>
-        <div className="mt-2 grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.max(segs.length, 1)}, minmax(3.5rem, 1fr))` }}>
-          {segs.map((step) => (
-            <p key={step.key} className="px-0.5 text-center text-[11px] leading-tight text-gray-600">{step.label}</p>
-          ))}
+      ) : (
+        <div className="mt-4 grid h-56 place-items-center rounded-lg border border-gray-100 bg-gray-50 px-6 text-center text-sm text-gray-500">
+          {data.unavailableReason || 'Add purchase prices and market values to see how portfolio value was built.'}
         </div>
-      </div>
-      <Link to="/analytics?tab=equity" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View equity analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
+      )}
     </DashboardCard>
   )
 }

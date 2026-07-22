@@ -13,10 +13,98 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Iterable, List, Optional
 
+from services.formatters import format_currency, format_metric_currency
+
 
 MONEY = Decimal("0.01")
 RATE = Decimal("0.0001")
 CLOSED_STATUSES = {"CLOSED", "REFINANCED", "PAID_OFF"}
+
+
+def _compact_money(value: float, *, signed: bool = False) -> str:
+    display = format_metric_currency(value)
+    if signed and value > 0:
+        return f"+{display}"
+    return display
+
+
+def _story_node(key: str, label: str, value: float, start: float, end: float, tone: str, *, total: bool = False, signed: bool = True) -> Dict[str, Any]:
+    """A single waterfall node in the Home Summary "value buildup" format."""
+    return {
+        "id": key,
+        "key": key,
+        "label": label,
+        "value": value,
+        "display": _compact_money(value, signed=signed and not total),
+        "fullDisplay": format_currency(value),
+        "startValue": start,
+        "endValue": end,
+        "start": start,
+        "end": end,
+        "isTotal": total,
+        "total": total,
+        "semanticType": tone,
+        "tone": tone,
+        "tooltip": {
+            "label": label,
+            "amount": format_currency(value),
+            "cumulativeValue": format_currency(end),
+            "role": "Total portfolio value" if total else "Bridge component",
+        },
+    }
+
+
+def _portfolio_value_buildup_story(*, purchase_price, down_payment, current_debt, current_market_value, appreciation, as_of) -> Dict[str, Any]:
+    """Portfolio-wide "Value Buildup Over Time" waterfall (market-value story).
+
+    Same node/annotation shape as the primary Home Summary chart so the two
+    render identically. Reconciles by construction:
+      down payment + principal reduction + remaining debt = purchase price
+      purchase price + appreciation                       = market value
+    """
+    pp = float(purchase_price or 0)
+    dp = float(down_payment or 0)
+    debt = float(current_debt or 0)
+    mv = float(current_market_value or 0)
+    appr = float(appreciation or 0)
+    acquisition_debt = max(pp - dp, 0.0)
+    principal_reduction = acquisition_debt - debt
+
+    if pp <= 0 or mv <= 0:
+        return {
+            "status": "unavailable",
+            "title": "Value Buildup Over Time",
+            "subtitle": "How your portfolio value has grown",
+            "series": [],
+            "annotations": [],
+            "unavailableReason": "Add purchase prices and current market values to see how portfolio value was built.",
+        }
+
+    cumulative = 0.0
+    series = []
+    for key, label, value, tone in [
+        ("acquisitionCashContribution", "Down payment", dp, "acquisition_cash"),
+        ("principalReductionSinceAcquisition", "Principal reduction", principal_reduction, "principal_reduction"),
+        ("currentPropertyDebt", "Remaining secured debt", debt, "remaining_secured_debt"),
+        ("appreciation", "Appreciation", appr, "appreciation"),
+    ]:
+        start = cumulative
+        end = cumulative + value
+        series.append(_story_node(key, label, value, start, end, tone, signed=key != "acquisitionCashContribution"))
+        cumulative = end
+    series.append(_story_node("currentMarketValue", "Current market value", mv, 0.0, mv, "total", total=True, signed=False))
+    return {
+        "status": "available",
+        "title": "Value Buildup Over Time",
+        "subtitle": "How your portfolio value has grown",
+        "screenReaderSummary": f"Current portfolio market value is {format_currency(mv)}. It consists of a {format_currency(dp)} down payment, {format_currency(principal_reduction)} principal reduction, {format_currency(debt)} remaining secured debt, and {format_currency(appr)} appreciation.",
+        "series": series,
+        "annotations": [
+            {"startBarId": "acquisitionCashContribution", "endBarId": "currentPropertyDebt", "label": f"Purchase price · {format_metric_currency(pp)}", "semanticType": "acquisition"},
+            {"startBarId": "appreciation", "endBarId": "appreciation", "label": f"Gain {_compact_money(appr, signed=True)}", "semanticType": "appreciation"},
+        ],
+        "period": as_of,
+    }
 
 
 def _d(value: Any) -> Decimal:
@@ -578,59 +666,22 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
     total_down_payment = sum((_d(prop.get("down_payment")) for prop in properties), Decimal("0"))
     total_cash_invested = sum((_d(prop.get("down_payment")) + _d(prop.get("closing_costs")) for prop in properties), Decimal("0"))
 
-    # ── Value (equity) buildup waterfall ─────────────────────────────────────
-    # Aggregated across every selected property (home + rentals). Equity is
-    # built from three components: the down payment (cash that became equity),
-    # the loan principal paid down, and market appreciation:
-    #   equity = down_payment + principal_paid + appreciation
-    # Closing costs are excluded from the first bar because they don't convert
-    # into equity. Any residual (refinances, cash-out, second liens, or a
-    # down-payment figure that doesn't equal purchase price − original loan) is
-    # carried in an explicit "Financing & other" step so the bars always
-    # reconcile to the actual Total Equity KPI.
-    buildup_other = equity - (total_down_payment + principal_reduction + total_appreciation)
-    _buildup_other_threshold = max(Decimal("500"), (abs(equity) * Decimal("0.005")))
-    _buildup_defs = [
-        ("downPayment", "Down payment", total_down_payment, "base"),
-        ("principalPaid", "Principal paid", principal_reduction, "increase"),
-        ("appreciation", "Appreciation", total_appreciation, "increase"),
-    ]
-    if abs(buildup_other) >= _buildup_other_threshold:
-        _buildup_defs.append(("financingOther", "Financing & other", buildup_other, "increase"))
-    _buildup_steps = []
-    _running = Decimal("0")
-    for _key, _label, _amount, _kind in _buildup_defs:
-        _running += _amount
-        _step_kind = _kind
-        if _kind != "base":
-            _step_kind = "increase" if _amount >= 0 else "decrease"
-        _buildup_steps.append({
-            "key": _key,
-            "label": _label,
-            "type": _step_kind,
-            "value": _money(_amount),
-            "runningTotal": _money(_running),
-        })
-    _buildup_steps.append({
-        "key": "totalEquity",
-        "label": "Total equity",
-        "type": "total",
-        "value": _money(equity),
-        "runningTotal": _money(equity),
-    })
-    value_buildup = {
-        "title": "Value Buildup",
-        "subtitle": "How your total equity was built across all properties",
-        "steps": _buildup_steps,
-        "finalValue": _money(equity),
-        "period": as_of,
-        "reconciliation": [
-            {"label": "Down payment", "value": _money(total_down_payment)},
-            {"label": "Principal paid", "value": _money(principal_reduction), "tone": "positive"},
-            {"label": "Appreciation", "value": _money(total_appreciation), "tone": "positive" if total_appreciation >= 0 else "negative"},
-            {"label": "Total equity", "value": _money(equity), "tone": "positive" if equity >= 0 else "negative"},
-        ],
-    }
+    # ── Value Buildup Over Time (market-value story waterfall) ───────────────
+    # Aggregated across every selected property (home + rentals), in the SAME
+    # node format the primary Home Summary's value-buildup chart uses so the two
+    # render identically. Market value is decomposed as:
+    #   down payment + principal reduction + remaining secured debt = purchase
+    #   price;  + appreciation = current market value
+    # Every step is defined by a difference, so the bars reconcile by
+    # construction to the purchase price and current market value.
+    value_buildup = _portfolio_value_buildup_story(
+        purchase_price=total_purchase_price,
+        down_payment=total_down_payment,
+        current_debt=total_debt,
+        current_market_value=portfolio_value,
+        appreciation=total_appreciation,
+        as_of=as_of,
+    )
     rental_count = len(rentals)
     primary_count = len(properties) - rental_count
     average_expense = opex / rental_count if rental_count else None
@@ -814,7 +865,10 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
         ],
         "assertions": {
             "waterfallFinalMatchesMonthlyCashFlow": abs(_d(waterfall_steps[-1]["runningTotal"]) - net) <= MONEY,
-            "valueBuildupReconcilesToEquity": abs(_d(_buildup_steps[-2]["runningTotal"]) - equity) <= max(MONEY, _buildup_other_threshold),
+            "valueBuildupReconcilesToMarketValue": (
+                value_buildup.get("status") != "available"
+                or abs(_d(value_buildup["series"][-2]["endValue"]) - _d(value_buildup["series"][-1]["value"])) <= MONEY
+            ),
             "capitalStructureMatchesPortfolioValue": abs(equity + total_debt - portfolio_value) <= MONEY,
             "expenseBreakdownMatchesOperatingExpenses": abs(sum((_d(item["value"]) for item in expense_breakdown), Decimal("0")) - annual_operating) <= MONEY,
             "propertyPerformanceIsBackendRanked": property_rows == sorted(property_rows, key=lambda row: (row["cashOnCash"] is not None, row["cashOnCash"] or -999999), reverse=True),
