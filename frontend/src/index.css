@@ -112,6 +112,8 @@ body {
 .dark .bg-purple-50:not([class*="dark:bg-"]),
 .dark .bg-violet-50:not([class*="dark:bg-"]) { background-color: rgb(88 28 135 / 0.24); }
 
+.dark .text-gray-950:not([class*="dark:text-"]),
+.dark .text-slate-950:not([class*="dark:text-"]),
 .dark .text-gray-900:not([class*="dark:text-"]),
 .dark .text-slate-900:not([class*="dark:text-"]),
 .dark .text-gray-800:not([class*="dark:text-"]),

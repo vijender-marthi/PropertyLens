@@ -392,6 +392,9 @@ function ResultsPanel({ report, loading }) {
   if (!report) return null
 
   const { cards, story, timeline, warnings } = report
+  // Balances/rates are a point-in-time snapshot; label the boxes so a user
+  // returning months later knows when these values were current.
+  const asOf = report.startDate ? new Date(report.startDate).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : null
   const hasLoans = (report.portfolio?.loanCount || 0) > 0
 
   if (!hasLoans) {
@@ -463,7 +466,7 @@ function ResultsPanel({ report, loading }) {
         {/* Message boxes → curved connectors → home icons → dotted colour map → one timeline */}
         <div className="flex w-full items-stretch">
           {timeline.map((row) => (
-            <ChartCard key={`${row.order}-${row.name}`} row={row} />
+            <ChartCard key={`${row.order}-${row.name}`} row={row} asOf={asOf} />
           ))}
         </div>
         <PayoffTimeline report={report} timeline={timeline} />
@@ -647,7 +650,7 @@ function HomeNode({ row }) {
 
 // Evenly-spaced detail card (connected to its time-positioned node by a leader).
 // All cards share the same height; hover the node below for the reason.
-function ChartCard({ row }) {
+function ChartCard({ row, asOf }) {
   const never = row.verdict?.neverPaysOff
   const belowMarket = row.verdict?.belowMarket
   const accent = homeAccent(row.order, never)
@@ -662,6 +665,7 @@ function ChartCard({ row }) {
           </div>
           <div className="mt-0.5 text-[10px] font-medium tabular-nums text-gray-600 dark:text-gray-300">{row.rateDisplay}</div>
           <div className="text-[10px] tabular-nums text-gray-500 dark:text-gray-400" title={row.balanceDisplay}>{row.balanceCompact || row.balanceDisplay}</div>
+          {asOf ? <div className="text-[9px] font-normal leading-tight text-gray-400 dark:text-gray-500">as of {asOf}</div> : null}
           <div className="mt-auto flex flex-wrap justify-center gap-1 pt-1">
             {row.earlierLabel ? (
               <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">{row.earlierLabel} earlier</span>
