@@ -1,3 +1,9 @@
+// Color-blind (deuteranopia/protanopia) safe mode. When the user enables it,
+// <html data-cb="1"> is set and red/green semantics swap to the Okabe-Ito
+// blue/vermillion pair, which stays distinguishable without red-green vision.
+const _cbSafe = (normal, cb) =>
+  (typeof document !== 'undefined' && document.documentElement.getAttribute('data-cb') === '1') ? cb : normal
+
 export const chartColors = {
   grid: '#f0f0f0',
   gridLight: '#f1f5f9',
@@ -22,19 +28,19 @@ export const chartColors = {
   primarySoft: '#3b82f6',
   primaryTint: '#eff6ff',
   primaryBorderSoft: '#93c5fd',
-  principal: '#22c55e',
-  positive: '#059669',
-  positiveSoft: '#10b981',
+  get principal() { return _cbSafe('#22c55e', '#0072B2') },
+  get positive() { return _cbSafe('#059669', '#0072B2') },
+  get positiveSoft() { return _cbSafe('#10b981', '#56A9E8') },
   positiveTint: '#f0fdf4',
   positiveBorderSoft: '#6ee7b7',
-  success: '#16a34a',
-  successStrong: '#15803d',
-  danger: '#ef4444',
-  dangerStrong: '#dc2626',
+  get success() { return _cbSafe('#16a34a', '#0072B2') },
+  get successStrong() { return _cbSafe('#15803d', '#005A8C') },
+  get danger() { return _cbSafe('#ef4444', '#D55E00') },
+  get dangerStrong() { return _cbSafe('#dc2626', '#B34D00') },
   dangerDark: '#b91c1c',
-  expense: '#e11d48',
-  negative: '#f43f5e',
-  negativeSoft: '#fb7185',
+  get expense() { return _cbSafe('#e11d48', '#D55E00') },
+  get negative() { return _cbSafe('#f43f5e', '#D55E00') },
+  get negativeSoft() { return _cbSafe('#fb7185', '#F5793B') },
   warning: '#f97316',
   warningSoft: '#f59e0b',
   warningStrong: '#d97706',
@@ -48,7 +54,7 @@ export const chartColors = {
   purpleTint: '#f5f3ff',
   purpleBorderSoft: '#c4b5fd',
   teal: '#0f766e',
-  rose: '#f43f5e',
+  get rose() { return _cbSafe('#f43f5e', '#D55E00') },
   roseLight: '#fda4af',
   rosePale: '#fecdd3',
   slateDark: '#334155',

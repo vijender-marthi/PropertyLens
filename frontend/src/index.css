@@ -257,3 +257,36 @@ html.dark[data-theme="green"] body {
   background-image: radial-gradient(1000px 520px at 100% -12%, rgba(4,120,87,0.14), transparent 55%);
 }
 html.dark[data-theme="green"] .bg-blue-50:not([class*="dark:bg-"]) { background-color: rgb(6 78 59 / 0.35) !important; }
+
+/* =========================================================================
+   Colour-blind mode (data-cb="1") — remaps the red/green "good vs bad" cue to
+   the Okabe-Ito blue/vermillion pair, which stays distinguishable under
+   deuteranopia & protanopia (red-green colour blindness). Applies to the
+   semantic Tailwind utility classes used for gains/losses, status and badges.
+   ========================================================================= */
+/* Positive / success (green → accessible blue) */
+html[data-cb] .text-green-500, html[data-cb] .text-green-600, html[data-cb] .text-green-700, html[data-cb] .text-green-800,
+html[data-cb] .text-emerald-500, html[data-cb] .text-emerald-600, html[data-cb] .text-emerald-700, html[data-cb] .text-emerald-800 { color: #0072B2 !important; }
+html.dark[data-cb] .text-green-500, html.dark[data-cb] .text-green-600, html.dark[data-cb] .text-green-700, html.dark[data-cb] .text-green-800,
+html.dark[data-cb] .text-emerald-500, html.dark[data-cb] .text-emerald-600, html.dark[data-cb] .text-emerald-700, html.dark[data-cb] .text-emerald-800 { color: #5FB0E6 !important; }
+/* Negative / danger (red → accessible vermillion) */
+html[data-cb] .text-red-500, html[data-cb] .text-red-600, html[data-cb] .text-red-700, html[data-cb] .text-red-800,
+html[data-cb] .text-rose-500, html[data-cb] .text-rose-600, html[data-cb] .text-rose-700 { color: #D55E00 !important; }
+html.dark[data-cb] .text-red-500, html.dark[data-cb] .text-red-600, html.dark[data-cb] .text-red-700, html.dark[data-cb] .text-red-800,
+html.dark[data-cb] .text-rose-500, html.dark[data-cb] .text-rose-600, html.dark[data-cb] .text-rose-700 { color: #F5904B !important; }
+/* Fills */
+html[data-cb] .bg-green-500, html[data-cb] .bg-green-600, html[data-cb] .bg-emerald-500, html[data-cb] .bg-emerald-600 { background-color: #0072B2 !important; }
+html[data-cb] .bg-red-500, html[data-cb] .bg-red-600, html[data-cb] .bg-rose-500, html[data-cb] .bg-rose-600 { background-color: #D55E00 !important; }
+/* Tints */
+html[data-cb]:not(.dark) .bg-green-50, html[data-cb]:not(.dark) .bg-emerald-50 { background-color: #e6f2fa !important; }
+html[data-cb]:not(.dark) .bg-green-100, html[data-cb]:not(.dark) .bg-emerald-100 { background-color: #cfe6f6 !important; }
+html[data-cb]:not(.dark) .bg-red-50, html[data-cb]:not(.dark) .bg-rose-50 { background-color: #fbeadd !important; }
+html[data-cb]:not(.dark) .bg-red-100, html[data-cb]:not(.dark) .bg-rose-100 { background-color: #f7d6bd !important; }
+/* Borders */
+html[data-cb] .border-green-500, html[data-cb] .border-green-600, html[data-cb] .border-emerald-500, html[data-cb] .border-emerald-600 { border-color: #0072B2 !important; }
+html[data-cb] .border-red-500, html[data-cb] .border-red-600, html[data-cb] .border-rose-500 { border-color: #D55E00 !important; }
+/* Badges */
+html[data-cb] .badge-green { background-color: #cfe6f6 !important; color: #005A8C !important; }
+html[data-cb] .badge-red { background-color: #f7d6bd !important; color: #9A4500 !important; }
+html.dark[data-cb] .badge-green { background-color: rgb(0 90 140 / 0.35) !important; color: #7FC0EC !important; }
+html.dark[data-cb] .badge-red { background-color: rgb(154 69 0 / 0.35) !important; color: #F5A66B !important; }

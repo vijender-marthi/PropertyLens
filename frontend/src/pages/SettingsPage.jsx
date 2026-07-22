@@ -14,7 +14,7 @@ const THEME_OPTIONS = [
 ]
 
 function AppearanceSection() {
-  const { dark, toggle, colorTheme, setColorTheme } = useTheme()
+  const { dark, toggle, colorTheme, setColorTheme, colorBlind, setColorBlind } = useTheme()
   return (
     <div className="card">
       <div className="flex items-center gap-2 mb-4">
@@ -35,7 +35,7 @@ function AppearanceSection() {
 
       <p className="text-sm font-medium text-gray-900 dark:text-white">Theme</p>
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Sets the accent colour and surface style across the whole app.</p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {THEME_OPTIONS.map((t) => {
           const selected = colorTheme === t.id
           return (
@@ -50,6 +50,17 @@ function AppearanceSection() {
             </button>
           )
         })}
+      </div>
+
+      <div className="flex items-center justify-between border-t border-gray-100 dark:border-gray-700 pt-4 mt-4">
+        <div className="pr-4">
+          <p className="text-sm font-medium text-gray-900 dark:text-white">Colour-blind friendly</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">Swaps red/green cues for a blue &amp; orange pair that stays clear with red-green colour blindness. Applies to charts, gains/losses and status badges.</p>
+        </div>
+        <button type="button" role="switch" aria-checked={colorBlind} aria-label="Toggle colour-blind friendly mode" onClick={() => setColorBlind(!colorBlind)}
+          className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full px-0.5 transition-colors ${colorBlind ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+          <span className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${colorBlind ? 'translate-x-5' : 'translate-x-0'}`} />
+        </button>
       </div>
     </div>
   )

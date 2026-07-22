@@ -8,6 +8,8 @@ const ThemeContext = createContext({
   toggle: () => {},
   colorTheme: 'aqua',
   setColorTheme: () => {},
+  colorBlind: false,
+  setColorBlind: () => {},
 })
 
 export function ThemeProvider({ children }) {
@@ -22,6 +24,8 @@ export function ThemeProvider({ children }) {
     return COLOR_THEMES.includes(saved) ? saved : 'aqua'
   })
 
+  const [colorBlind, setColorBlindState] = useState(() => localStorage.getItem('pl-colorblind') === '1')
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark)
     localStorage.setItem('pl-theme', dark ? 'dark' : 'light')
@@ -32,10 +36,17 @@ export function ThemeProvider({ children }) {
     localStorage.setItem('pl-color-theme', colorTheme)
   }, [colorTheme])
 
+  useEffect(() => {
+    if (colorBlind) document.documentElement.setAttribute('data-cb', '1')
+    else document.documentElement.removeAttribute('data-cb')
+    localStorage.setItem('pl-colorblind', colorBlind ? '1' : '0')
+  }, [colorBlind])
+
   const setColorTheme = (theme) => setColorThemeState(COLOR_THEMES.includes(theme) ? theme : 'aqua')
+  const setColorBlind = (on) => setColorBlindState(Boolean(on))
 
   return (
-    <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d), colorTheme, setColorTheme }}>
+    <ThemeContext.Provider value={{ dark, toggle: () => setDark((d) => !d), colorTheme, setColorTheme, colorBlind, setColorBlind }}>
       {children}
     </ThemeContext.Provider>
   )
