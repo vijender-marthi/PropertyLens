@@ -312,6 +312,15 @@ function CashFlowWaterfall({ data }) {
   )
 }
 
+// Palermo Home Summary "Value Buildup Over Time" palette, keyed by component.
+const buildupTone = {
+  downPayment: chartColors.primarySoft,   // acquisition cash
+  principalPaid: chartColors.warningStrong,
+  appreciation: chartColors.positiveSoft,
+  financingOther: chartColors.mutedAxis,
+  totalEquity: chartColors.purple,
+}
+
 function ValueBuildupWaterfall({ data }) {
   const steps = data.steps || []
   // Turn cumulative running totals into floating [from, to] segments. Each
@@ -360,16 +369,11 @@ function ValueBuildupWaterfall({ data }) {
               const barTop = yPct(topV)
               const barHeight = Math.max(2, yPct(bottomV) - yPct(topV))
               const isNegative = step.type === 'decrease'
-              const toneClass =
-                step.type === 'total' ? 'bg-blue-600'
-                : step.type === 'base' ? 'bg-slate-400 dark:bg-slate-500'
-                : isNegative ? 'bg-rose-400'
-                : 'bg-emerald-400'
-              const valueColor =
-                step.type === 'total' ? 'text-blue-700 dark:text-blue-400'
-                : step.type === 'base' ? 'text-slate-600 dark:text-slate-300'
-                : isNegative ? 'text-rose-500 dark:text-rose-400'
-                : 'text-emerald-500 dark:text-emerald-400'
+              // Colour by component (Palermo pattern); a negative appreciation /
+              // residual falls back to the danger tone so a loss still reads.
+              const barColor = (isNegative && step.key !== 'financingOther')
+                ? chartColors.danger
+                : buildupTone[step.key] || chartColors.purple
               const next = segs[i + 1]
               return (
                 <div key={step.key} className="relative min-w-0">
@@ -382,14 +386,14 @@ function ValueBuildupWaterfall({ data }) {
                     />
                   ) : null}
                   <p
-                    className={`absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold tabular-nums ${valueColor}`}
+                    className="absolute left-1/2 z-10 -translate-x-1/2 whitespace-nowrap text-[11px] font-bold tabular-nums text-gray-900 dark:text-white"
                     style={{ top: `${Math.max(1, barTop - 9)}%` }}
                   >
                     {step.type === 'total' || step.type === 'base' ? formatCurrencyCompact(step.value) : `${isNegative ? '−' : '+'}${formatCurrencyCompact(Math.abs(step.value))}`}
                   </p>
                   <div
-                    className={`absolute left-1/2 w-3/5 -translate-x-1/2 rounded-sm ${toneClass}`}
-                    style={{ top: `${barTop}%`, height: `${barHeight}%` }}
+                    className="absolute left-1/2 w-3/5 -translate-x-1/2 rounded-sm"
+                    style={{ top: `${barTop}%`, height: `${barHeight}%`, backgroundColor: barColor }}
                     title={`${step.label}: ${formatCurrency(step.value)}`}
                   />
                 </div>
@@ -402,15 +406,6 @@ function ValueBuildupWaterfall({ data }) {
             <p key={step.key} className="px-0.5 text-center text-[11px] leading-tight text-gray-600">{step.label}</p>
           ))}
         </div>
-        <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-slate-400" />Cash in</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />Adds equity</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-rose-400" />Reduces equity</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-blue-600" />Total equity</span>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-px overflow-hidden rounded-lg border border-gray-200 bg-gray-200 sm:grid-cols-4">
-        {(data.reconciliation || []).map((item) => <div key={item.label} className="bg-white px-3 py-3"><p className="text-xs text-gray-500">{item.label}</p><p className={`mt-1 text-sm font-bold ${item.tone === 'negative' ? 'text-rose-500 dark:text-rose-400' : item.tone === 'positive' ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-900'}`}>{formatCurrency(item.value)}</p></div>)}
       </div>
       <Link to="/analytics?tab=equity" className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-blue-600">View equity analysis <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
     </DashboardCard>
