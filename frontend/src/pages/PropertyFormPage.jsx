@@ -13,6 +13,7 @@ import {
   Home,
   KeyRound,
   Landmark,
+  PencilLine,
   Plus,
   Receipt,
   Upload,
@@ -131,6 +132,8 @@ const blankLoan = () => ({
   current_balance: '',
   interest_rate: '',
   monthly_payment: '',
+  purpose: '',
+  maturity_date: '',
   estimated_total_monthly_payment: '',
   extra_monthly_payment: '',
   loan_term_years: '30',
@@ -219,6 +222,12 @@ function toNumber(value) {
 
 function numberOrEmpty(value) {
   return value === 0 || value ? String(value) : ''
+}
+
+function annualSolarExpense(form) {
+  const ownership = String(form?.solar_ownership || 'None').toLowerCase()
+  if (ownership === 'none') return 0
+  return toNumber(form?.solar_monthly_payment) * 12
 }
 
 function normalizeAnnualExpense(row, year = CURRENT_YEAR) {
@@ -326,8 +335,31 @@ function setupImportRoleLabel(document) {
 
 function settlementDocumentsFromDocuments(documents) {
   return [...documents]
-    .filter((doc) => doc.doc_category === 'closing_statement')
+    .filter((doc) => doc.doc_category === 'closing_statement' && !(doc.module_tags || []).includes('SETUP_DELINKED'))
     .sort((left, right) => new Date(right.upload_date || 0) - new Date(left.upload_date || 0))
+}
+
+function propertySetupDocumentType(document) {
+  if (document?.documentType) return document.documentType
+  return setupImportRole(document) === 'settlement_document' ? 'SETTLEMENT_STATEMENT' : 'CLOSING_DISCLOSURE'
+}
+
+function propertySetupDisplayDocuments(lifecycle, documents) {
+  const grouped = (lifecycle?.documentGroups || [])
+    .flatMap((group) => (group.documents || []).map((document) => ({ ...document, group })))
+    .filter((document) => ['CLOSING_DISCLOSURE', 'SETTLEMENT_STATEMENT'].includes(propertySetupDocumentType(document)))
+  const groupedIds = new Set(grouped.map((document) => Number(document.documentId)))
+  const repositoryOnly = documents
+    .filter((document) => !groupedIds.has(Number(document.id)))
+    .map((document) => ({
+      documentId: document.id,
+      name: document.name || document.display_name || document.original_filename || 'Property document',
+      originalFilename: document.original_filename,
+      documentType: propertySetupDocumentType(document),
+      statementDate: document.extracted_data?.settlement_date || document.extracted_data?.closing_date || null,
+      group: { usageLabel: 'Available in Property Setup' },
+    }))
+  return [...grouped, ...repositoryOnly]
 }
 
 function selectedPurchasePriceComponentIds(selection) {
@@ -635,13 +667,16 @@ function SaveStatusChip({ state, dirty }) {
   )
 }
 
-function PropertySetupRecords({ title, description, children }) {
+function PropertySetupRecords({ title, description, actions, className = '', children }) {
   if (!children) return null
   return (
-    <section className="border-t border-gray-200 pt-5 dark:border-gray-800">
-      <div className="mb-3">
-        <h3 className="text-base font-semibold text-gray-950 dark:text-white">{title}</h3>
-        {description ? <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{description}</p> : null}
+    <section className={`border-t border-gray-200 pt-5 dark:border-gray-800 ${className}`}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-gray-950 dark:text-white">{title}</h3>
+          {description ? <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{description}</p> : null}
+        </div>
+        {actions}
       </div>
       {children}
     </section>
@@ -660,35 +695,47 @@ function PropertySetupEditor({ title, description, children }) {
   )
 }
 
-function SetupSubsection({ title, children }) {
+function SetupSubsection({ title, actions, children }) {
   return (
     <section className="border-t border-gray-200 pt-4 first:border-t-0 first:pt-0 dark:border-gray-800">
-      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</h4>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</h4>
+        {actions}
+      </div>
       {children}
     </section>
   )
 }
 
-function PropertySetupFooter({ isFinalSection, nextSection, saving, onCancel, onSaveDraft, onSaveProperty, onNext }) {
+function PropertySetupFooter({ isFinalSection, nextSection, previousSection, saving, onCancel, onSaveDraft, onSaveProperty, onNext, onBack }) {
   return (
-    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
-      <div className="flex flex-col-reverse gap-3 sm:flex-row">
-        {isFinalSection ? (
-          <button type="button" className="btn-primary" onClick={onSaveProperty} disabled={saving}>
-            Save Property
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <button
+        type="button"
+        className="inline-flex h-9 items-center justify-center rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-medium text-orange-700 transition hover:border-orange-300 hover:bg-orange-100 hover:text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-300/50 dark:border-orange-900/70 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:border-orange-800 dark:hover:bg-orange-950/50 dark:hover:text-orange-200"
+        onClick={onCancel}
+      >
+        Cancel
+      </button>
+      {previousSection ? (
+        <button type="button" className="btn-secondary inline-flex h-9 items-center justify-center gap-1.5 py-0" onClick={onBack} disabled={saving}>
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+      ) : null}
+      {isFinalSection ? (
+        <button type="button" className="btn-primary inline-flex h-9 items-center justify-center py-0" onClick={onSaveProperty} disabled={saving}>
+          Done
+        </button>
+      ) : (
+        <>
+          <button type="button" className="btn-secondary inline-flex h-9 items-center justify-center py-0" onClick={onSaveDraft} disabled={saving}>
+            Save Draft
           </button>
-        ) : (
-          <>
-            <button type="button" className="btn-secondary" onClick={onSaveDraft} disabled={saving}>
-              Save Draft
-            </button>
-            <button type="button" className="btn-primary flex items-center justify-center gap-2" onClick={onNext} disabled={!nextSection}>
-              Next <ChevronRight className="h-4 w-4" />
-            </button>
-          </>
-        )}
-      </div>
+          <button type="button" className="btn-primary inline-flex h-9 items-center justify-center gap-1.5 py-0" onClick={onNext} disabled={!nextSection}>
+            Next <ChevronRight className="h-4 w-4" />
+          </button>
+        </>
+      )}
     </div>
   )
 }
@@ -847,7 +894,10 @@ function propertyPayload(form) {
     rental_start_date_origin: form.rental_start_date_origin || null,
     property_tax: toNumber(form.property_tax),
     insurance: toNumber(form.insurance),
-    hoa_flag: Boolean(form.hoa_flag),
+    // The hasHoa toggle doesn't write form.hoa_flag directly, so derive the
+    // persisted flag from an explicit flag OR any HOA data present — matching
+    // how hasHoa is derived on load. Otherwise hoa_flag always saved as false.
+    hoa_flag: Boolean(form.hoa_flag || toNumber(form.hoa_fee) || toNumber(form.hoa_special_assessment) || (form.hoa_history && form.hoa_history !== '[]')),
     hoa_fee: toNumber(form.hoa_fee),
     hoa_history: form.hoa_history || '[]',
     hoa_special_assessment: toNumber(form.hoa_special_assessment),
@@ -885,6 +935,8 @@ function loanPayload(loan) {
     current_balance: toNumber(loan.current_balance),
     interest_rate: toNumber(loan.interest_rate),
     monthly_payment: toNumber(loan.monthly_payment),
+    purpose: loan.purpose || '',
+    maturity_date: normalizeDateInput(loan.maturity_date),
     estimated_total_monthly_payment: toNumber(loan.estimated_total_monthly_payment || loan.monthly_payment),
     extra_monthly_payment: toNumber(loan.extra_monthly_payment),
     loan_term_years: Math.max(1, Math.round(toNumber(loan.loan_term_years) || 30)),
@@ -937,6 +989,7 @@ export default function PropertyFormPage() {
   const [settlementSources, setSettlementSources] = useState({})
   const [settlementUploading, setSettlementUploading] = useState(false)
   const [settlementReview, setSettlementReview] = useState(null)
+  const [settlementReviewSummaries, setSettlementReviewSummaries] = useState({})
   const [settlementDocuments, setSettlementDocuments] = useState([])
   const [settlementDocument, setSettlementDocument] = useState(null)
   const [loanLifecycle, setLoanLifecycle] = useState(null)
@@ -951,8 +1004,9 @@ export default function PropertyFormPage() {
   const [settlementAddressOverride, setSettlementAddressOverride] = useState(false)
   const [settlementDelinkConfirm, setSettlementDelinkConfirm] = useState(false)
   const [settlementDelinking, setSettlementDelinking] = useState(false)
-  const [escrowDisableTarget, setEscrowDisableTarget] = useState(null)
   const [expenseAddressReview, setExpenseAddressReview] = useState(null)
+  const [expenseDocumentReviews, setExpenseDocumentReviews] = useState([])
+  const [expandedExpenseReviewId, setExpandedExpenseReviewId] = useState(null)
   const [valuationDateOrigin, setValuationDateOrigin] = useState('auto_purchase_date')
   const [rentalAvailableFromOrigin, setRentalAvailableFromOrigin] = useState('backend_existing')
   const activeHeadingRef = useRef(null)
@@ -990,6 +1044,7 @@ export default function PropertyFormPage() {
 
   const activeVisibleSections = visibleSections.length ? visibleSections : [SETUP_SECTIONS[0]]
   const nextSection = activeVisibleSections.find((section) => activeVisibleSections.findIndex((item) => item.id === section.id) > activeVisibleSections.findIndex((item) => item.id === activeSection))
+  const previousSection = [...activeVisibleSections].reverse().find((section) => activeVisibleSections.findIndex((item) => item.id === section.id) < activeVisibleSections.findIndex((item) => item.id === activeSection))
   const setupProgress = useMemo(() => {
     const total = activeVisibleSections.length
     if (!total) return { percent: 0, complete: 0, total: 0 }
@@ -1041,6 +1096,7 @@ export default function PropertyFormPage() {
           const setupDocuments = settlementDocumentsFromDocuments(documentResponse.data || [])
 	        const settlement = selectBackendAcquisitionDocument(setupDocuments, lifecycleResponse.data)
           setSettlementDocuments(setupDocuments)
+	        refreshSettlementReviewSummaries(setupDocuments)
 	        setSettlementDocument(settlement)
 	        if (settlement?.id) {
 	          docAPI.setupImportReview(settlement.id)
@@ -1107,6 +1163,12 @@ export default function PropertyFormPage() {
   }, [loanEditorIndex, propertyId, loans[loanEditorIndex]?.id])
 
   useEffect(() => {
+    if (activeSection !== 'financing' || loanEditorIndex != null || loans.length === 0) return
+    const activeLoanIndex = loans.findIndex((loan) => !CLOSED_LOAN_STATUSES.has(loan.status))
+    setLoanEditorIndex(activeLoanIndex >= 0 ? activeLoanIndex : 0)
+  }, [activeSection, loanEditorIndex, loans])
+
+  useEffect(() => {
     if (!propertyId || !['property', 'rental', 'expenses'].includes(activeSection)) return undefined
     if (dirtySection !== activeSection) return undefined
     const requestId = previewRequestRef.current + 1
@@ -1152,7 +1214,9 @@ export default function PropertyFormPage() {
       rental_start_date_origin: prop.rental_start_date_origin || (prop.rental_start_date ? 'backend_existing' : ''),
       property_tax: numberOrEmpty(prop.property_tax),
       insurance: numberOrEmpty(prop.insurance),
+      hoa_flag: Boolean(prop.hoa_flag),
       hoa_fee: numberOrEmpty(prop.hoa_fee),
+      hoa_history: prop.hoa_history || '[]',
       hoa_special_assessment: numberOrEmpty(prop.hoa_special_assessment),
       maintenance: numberOrEmpty(prop.maintenance),
       property_management_fee: numberOrEmpty(prop.property_management_fee),
@@ -1160,6 +1224,7 @@ export default function PropertyFormPage() {
       vacancy_allowance: numberOrEmpty(prop.vacancy_allowance),
       capex_reserve: numberOrEmpty(prop.capex_reserve),
       other_expenses: numberOrEmpty(prop.other_expenses),
+      solar_ownership: prop.solar_ownership || 'None',
       solar_monthly_payment: numberOrEmpty(prop.solar_monthly_payment),
       solar_purchase_price: numberOrEmpty(prop.solar_purchase_price),
       land_value: numberOrEmpty(prop.land_value),
@@ -1186,7 +1251,9 @@ export default function PropertyFormPage() {
       transfer_reason: loan.transfer_reason || '',
       is_current_servicer: loan.is_current_servicer !== false,
       interest_rate: numberOrEmpty(loan.interest_rate),
-      monthly_payment: numberOrEmpty(loan.monthly_payment),
+	      monthly_payment: numberOrEmpty(loan.monthly_payment),
+	      purpose: loan.purpose || '',
+	      maturity_date: normalizeDateInput(loan.maturity_date),
       estimated_total_monthly_payment: numberOrEmpty(loan.estimated_total_monthly_payment),
       extra_monthly_payment: numberOrEmpty(loan.extra_monthly_payment),
 	      loan_term_years: numberOrEmpty(loan.loan_term_years || 30),
@@ -1212,11 +1279,11 @@ export default function PropertyFormPage() {
     setLoans(loadedLoans)
     setLoanGroups(prop.loan_groups || [])
     setLoanEditorIndex(null)
-    setFlags({
-      hasFinancing: loadedLoans.length > 0,
-      hasHoa: Boolean(prop.hoa_flag || toNumber(prop.hoa_fee) || toNumber(prop.hoa_special_assessment) || prop.hoa_history !== '[]'),
-      hasSolar: Boolean((prop.solar_ownership || 'None') !== 'None' || toNumber(prop.solar_monthly_payment) || toNumber(prop.solar_purchase_price)),
-    })
+    setFlags((current) => ({
+      hasFinancing: current.hasFinancing || loadedLoans.length > 0,
+      hasHoa: current.hasHoa || Boolean(prop.hoa_flag || toNumber(prop.hoa_fee) || toNumber(prop.hoa_special_assessment) || prop.hoa_history !== '[]'),
+      hasSolar: current.hasSolar || Boolean((prop.solar_ownership || 'None') !== 'None' || toNumber(prop.solar_monthly_payment) || toNumber(prop.solar_purchase_price)),
+    }))
   }
 
   function previewDraft(sectionId) {
@@ -1401,6 +1468,8 @@ export default function PropertyFormPage() {
       EXPENSE_FIELDS.forEach(({ key }) => {
         if (toNumber(selectedExpenseRow[key]) < 0) next[key] = 'Amount cannot be negative.'
       })
+      if (flags.hasSolar && toNumber(form.solar_monthly_payment) < 0) next.solar_monthly_payment = 'Amount cannot be negative.'
+      if (flags.hasSolar && toNumber(form.solar_purchase_price) < 0) next.solar_purchase_price = 'Amount cannot be negative.'
     }
     const displayErrors = { ...requiredMissing, ...prompts, ...next }
     setErrors(displayErrors)
@@ -1480,6 +1549,7 @@ export default function PropertyFormPage() {
     const setupDocuments = settlementDocumentsFromDocuments(documentResponse.data || [])
     const settlement = selectBackendAcquisitionDocument(setupDocuments, lifecycleResponse.data)
     setSettlementDocuments(setupDocuments)
+    refreshSettlementReviewSummaries(setupDocuments)
     setSettlementDocument(settlement)
     await refreshLoanTransferSuggestions(targetId)
     if (options.focusImportedLoanDocumentId) {
@@ -1726,6 +1796,7 @@ export default function PropertyFormPage() {
   }
 
   async function saveAnnualExpense(targetId) {
+    await propAPI.update(targetId, propertyPayload(form))
     const payload = annualExpensePayload(selectedExpenseRow, expenseYear)
     const response = await propAPI.upsertAnnualExpense(targetId, expenseYear, payload)
     replaceExpenseRow(response.data)
@@ -1759,6 +1830,7 @@ export default function PropertyFormPage() {
               field: response.data.detectedField,
               year: response.data.expenseYear,
             })
+            addExpenseDocumentReview(response.data, file.name)
             continue
           }
           const appliedExpenseRows = response.data?.annualExpenses || []
@@ -1775,6 +1847,7 @@ export default function PropertyFormPage() {
           })
           imported += 1
           preserved += response.data?.expenseApplication?.preserved?.length || 0
+          addExpenseDocumentReview(response.data, file.name)
         } catch (err) {
           failures.push(`${file.name}: ${apiErrorMessage(err, 'Upload failed')}`)
         }
@@ -1788,6 +1861,90 @@ export default function PropertyFormPage() {
       setEscrowUploading(false)
       if (escrowAnalysisInputRef.current) escrowAnalysisInputRef.current.value = ''
     }
+  }
+
+  function addExpenseDocumentReview(uploadResult, fallbackName) {
+    const document = uploadResult?.document || {}
+    const escrowPayment = uploadResult?.escrowPayment || {}
+    const reviewId = document.id || escrowPayment.documentId || `${fallbackName || 'expense-document'}-${Date.now()}`
+    const review = {
+      id: reviewId,
+      status: uploadResult?.status || 'review',
+      documentId: document.id || escrowPayment.documentId || null,
+      documentName: document.name || escrowPayment.documentName || fallbackName || 'Expense document',
+      category: document.category || uploadResult?.documentType || 'expense_document',
+      detectedField: uploadResult?.detectedField || null,
+      expenseYear: uploadResult?.expenseYear || escrowPayment.expenseYear || uploadResult?.fiscalYear || null,
+      annualExpense: uploadResult?.annualExpense || null,
+      expenseApplication: uploadResult?.expenseApplication || null,
+      escrowPayment,
+      addressValidation: uploadResult?.addressValidation || null,
+    }
+    setExpenseDocumentReviews((current) => [review, ...current.filter((item) => String(item.id) !== String(reviewId))].slice(0, 6))
+    setExpandedExpenseReviewId(reviewId)
+  }
+
+  function expenseReviewFieldLabel(fieldKey) {
+    if (fieldKey === 'escrow_analysis') return 'Escrow analysis'
+    if (fieldKey === 'supplemental_property_tax') return 'Supplemental property tax'
+    return EXPENSE_FIELDS.find((field) => field.key === fieldKey)?.label.replace(' / yr', '') || fieldKey?.replaceAll('_', ' ') || 'Detected field'
+  }
+
+  function expenseReviewValue(review) {
+    const field = review.detectedField
+    if (field && review.annualExpense?.[field] != null) return formatCurrency(toNumber(review.annualExpense[field]))
+    if (field === 'supplemental_property_tax') return 'Stored as supplemental tax bill'
+    if (review.escrowPayment?.projectedTax != null || review.escrowPayment?.projectedInsurance != null) {
+      return [
+        review.escrowPayment.projectedTax != null ? `Tax ${formatCurrency(review.escrowPayment.projectedTax)}` : null,
+        review.escrowPayment.projectedInsurance != null ? `Insurance ${formatCurrency(review.escrowPayment.projectedInsurance)}` : null,
+      ].filter(Boolean).join(' · ')
+    }
+    return '—'
+  }
+
+  function renderExpenseDocumentReviewDetails(review) {
+    const applied = review.expenseApplication?.applied || []
+    const preservedFields = review.expenseApplication?.preserved || []
+    const address = review.addressValidation || {}
+    return (
+      <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/50 p-3 text-xs dark:border-blue-900/60 dark:bg-blue-950/20">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div>
+            <p className="font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Detected field</p>
+            <p className="mt-1 font-medium text-gray-950 dark:text-white">{expenseReviewFieldLabel(review.detectedField)}</p>
+          </div>
+          <div>
+            <p className="font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Backend value</p>
+            <p className="mt-1 font-medium text-gray-950 dark:text-white">{expenseReviewValue(review)}</p>
+          </div>
+          <div>
+            <p className="font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Expense year</p>
+            <p className="mt-1 font-medium text-gray-950 dark:text-white">{review.expenseYear || '—'}</p>
+          </div>
+          <div>
+            <p className="font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Address status</p>
+            <p className="mt-1 font-medium text-gray-950 dark:text-white">{address.status === 'match' ? 'Matched' : address.status ? address.status.replaceAll('_', ' ') : '—'}</p>
+          </div>
+        </div>
+        {applied.length || preservedFields.length ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {applied.map((field) => <span key={`applied-${field}`} className="rounded-full bg-green-100 px-2 py-1 font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300">Applied {expenseReviewFieldLabel(field)}</span>)}
+            {preservedFields.map((field) => <span key={`preserved-${field}`} className="rounded-full bg-amber-100 px-2 py-1 font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">Preserved existing {expenseReviewFieldLabel(field)}</span>)}
+          </div>
+        ) : null}
+        {review.documentId ? (
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-1.5 font-medium text-blue-700 hover:underline dark:text-blue-300"
+            onClick={() => navigate(`/properties/${propertyId}/documents?documentId=${review.documentId}`)}
+          >
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            Open document record
+          </button>
+        ) : null}
+      </div>
+    )
   }
 
   async function acceptExpenseAddressReview() {
@@ -1892,6 +2049,10 @@ export default function PropertyFormPage() {
 	    navigateToSection(nextSection?.id)
 	  }
 
+	  function handleBackSection() {
+	    navigateToSection(previousSection?.id)
+	  }
+
 	  function blocksPropertyNext() {
 	    if (!settlementDocument || !settlementAddressValidation) return false
 	    const status = settlementAddressValidation.status
@@ -1935,8 +2096,24 @@ export default function PropertyFormPage() {
     if (flag === 'hasHoa' && !enabled && (toNumber(form.hoa_fee) || toNumber(form.hoa_special_assessment) || form.hoa_history !== '[]')) {
       toast.error('HOA data exists. It will be preserved; review it before disabling HOA fields.')
     }
-    if (flag === 'hasSolar' && !enabled && ((form.solar_ownership || 'None') !== 'None' || toNumber(form.solar_monthly_payment) || toNumber(form.solar_purchase_price))) {
-      toast.error('Solar data exists. It will be preserved; review it before disabling solar fields.')
+    if (flag === 'hasSolar') {
+      // hasSolar has no backing DB column — it is derived from solar_ownership.
+      // The toggle must therefore write that field, or nothing persists and the
+      // toggle reverts to off on reload. Enable -> seed a real ownership value
+      // (user changes it in the Expenses tab); disable -> clear solar data.
+      if (enabled) {
+        if ((form.solar_ownership || 'None') === 'None') {
+          setForm((current) => ({ ...current, solar_ownership: 'Leased' }))
+        }
+      } else {
+        setForm((current) => ({
+          ...current,
+          solar_ownership: 'None',
+          solar_monthly_payment: '',
+          solar_purchase_price: '',
+        }))
+        setErrors((current) => ({ ...current, solar_monthly_payment: undefined, solar_purchase_price: undefined }))
+      }
     }
     setFlags((current) => ({ ...current, [flag]: enabled }))
     setDirtySection(activeSection)
@@ -1988,38 +2165,6 @@ export default function PropertyFormPage() {
 	    setFinalValidation(null)
 	    setErrors((current) => ({ ...current, [`loan_${index}_${key}`]: undefined }))
 	  }
-
-  function loanHasEscrowValues(loan) {
-    return ['escrow_amount', 'monthly_property_tax_escrow', 'monthly_insurance_escrow', 'monthly_mortgage_insurance', 'monthly_other_escrow', 'estimated_total_monthly_payment']
-      .some((field) => toNumber(loan?.[field]) > 0)
-  }
-
-  function toggleLoanEscrow(index, checked) {
-    const loan = loans[index]
-    if (!checked && loanHasEscrowValues(loan)) {
-      setEscrowDisableTarget(index)
-      return
-    }
-    updateLoan(index, 'escrow_included', checked)
-  }
-
-  function disableEscrow(index, { clear = false } = {}) {
-    setLoans((current) => current.map((loan, itemIndex) => {
-      if (itemIndex !== index) return loan
-      const next = { ...loan, escrow_included: false }
-      if (clear) {
-        next.escrow_amount = ''
-        next.monthly_property_tax_escrow = ''
-        next.monthly_insurance_escrow = ''
-        next.monthly_mortgage_insurance = ''
-        next.monthly_other_escrow = ''
-        next.estimated_total_monthly_payment = ''
-      }
-      return next
-    }))
-    setEscrowDisableTarget(null)
-    setDirtySection('financing')
-  }
 
   function editRentalPeriod(period) {
     setRentalDraft({
@@ -2104,6 +2249,10 @@ export default function PropertyFormPage() {
       applyLifecycleDraft(lifecycle)
       setSettlementDocument(selectedDocument)
       setSettlementReview(null)
+      setSettlementDocuments((current) => current.filter((document) => Number(document.id) !== Number(documentId)))
+      setSettlementReviewSummaries((current) => Object.fromEntries(
+        Object.entries(current).filter(([id]) => Number(id) !== Number(documentId)),
+      ))
       setSettlementAddressValidation(null)
       setSettlementAddressConfirmed(false)
       setSettlementAddressOverride(false)
@@ -2158,6 +2307,13 @@ export default function PropertyFormPage() {
           : (form[field.targetKey] || ''),
       sourceLabel: field.sourceLabel || field.label,
       confidence: field.confidence,
+    }))
+    setSettlementReviewSummaries((current) => ({
+      ...current,
+      [documentId]: {
+        document: review.document,
+        fields: review.propertyFields || [],
+      },
     }))
     const purchasePriceSelection = hasPurchasePriceSelection ? {
       ...review.purchasePriceSelection,
@@ -2216,6 +2372,25 @@ export default function PropertyFormPage() {
 	    }
 	    return review
 	  }
+
+  async function refreshSettlementReviewSummaries(documents) {
+    if (!documents.length) {
+      setSettlementReviewSummaries({})
+      return
+    }
+    const results = await Promise.all(documents.map(async (document) => {
+      try {
+        const response = await docAPI.setupImportReview(document.id)
+        return [document.id, {
+          document: response.data.document,
+          fields: response.data.propertyFields || [],
+        }]
+      } catch {
+        return [document.id, { document, fields: [] }]
+      }
+    }))
+    setSettlementReviewSummaries(Object.fromEntries(results))
+  }
 
   function updateSettlementReviewField(targetKey, selected) {
     setSettlementReview((current) => current ? {
@@ -2284,11 +2459,10 @@ export default function PropertyFormPage() {
     formData.append('file', file)
     const previewResponse = await docAPI.previewUpload(formData)
     const preview = previewResponse.data
-    const extracted = preview.extracted_data || {}
+    // Closing/settlement statements are loan documents even when extraction is
+    // thin (e.g. a scanned PDF). Accept them and let the review open for manual
+    // entry rather than blocking the import with an error.
     const isLoanBearingClosingDocument = preview.category === 'closing_statement'
-      && Number(extracted.original_amount || extracted.loan_amount || 0) > 0
-      && ['account_number', 'loan_id', 'interest_rate', 'monthly_payment', 'loan_term_years']
-        .some((key) => extracted[key] !== null && extracted[key] !== undefined && extracted[key] !== '')
     if (!['mortgage_statement', '1098', 'loan_disclosure'].includes(preview.category) && !isLoanBearingClosingDocument) {
       await docAPI.cancelUpload({
         pending_upload_id: preview.pending_upload_id,
@@ -2394,7 +2568,7 @@ export default function PropertyFormPage() {
         currentValue: currentLoan?.[field.targetKey],
         currentDisplay: ['current_balance', 'monthly_property_tax_escrow', 'monthly_insurance_escrow', 'monthly_mortgage_insurance', 'monthly_other_escrow', 'escrow_amount', 'estimated_total_monthly_payment'].includes(field.targetKey)
           ? (toNumber(currentLoan?.[field.targetKey]) ? formatCurrency(toNumber(currentLoan?.[field.targetKey])) : '')
-          : ['statement_date', 'origination_date', 'servicer_start_date'].includes(field.targetKey)
+          : ['statement_date', 'origination_date', 'servicer_start_date', 'maturity_date'].includes(field.targetKey)
             ? (currentLoan?.[field.targetKey] ? formatDate(currentLoan[field.targetKey]) : '')
             : (currentLoan?.[field.targetKey] || ''),
         sourceLabel: field.sourceLabel || field.label,
@@ -2552,11 +2726,13 @@ export default function PropertyFormPage() {
               <PropertySetupFooter
                 isFinalSection={isFinalSection}
                 nextSection={nextSection}
+                previousSection={previousSection}
                 saving={sectionState[activeSection] === 'Saving'}
                 onCancel={requestCancel}
                 onSaveDraft={() => saveSection(activeSection)}
 	                onSaveProperty={savePropertyFinal}
                 onNext={handleNextSection}
+                onBack={handleBackSection}
               />
             )}
           />
@@ -2612,19 +2788,6 @@ export default function PropertyFormPage() {
 	        </div>
 	      ) : null}
 
-      {escrowDisableTarget !== null ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-900/40 px-4 py-6 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="disable-escrow-title">
-          <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-5 shadow-lg dark:border-gray-700 dark:bg-gray-800">
-            <h2 id="disable-escrow-title" className="text-lg font-semibold text-gray-900 dark:text-white">Disable escrow?</h2>
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">The current escrow details will be hidden but preserved unless you clear them.</p>
-            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
-              <button type="button" className="btn-secondary" onClick={() => setEscrowDisableTarget(null)}>Keep Escrow</button>
-              <button type="button" className="btn-secondary" onClick={() => disableEscrow(escrowDisableTarget, { clear: false })}>Disable and Preserve</button>
-              <button type="button" className="btn-primary" onClick={() => disableEscrow(escrowDisableTarget, { clear: true })}>Disable and Clear</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 	    </div>
 	  )
 
@@ -2683,17 +2846,17 @@ export default function PropertyFormPage() {
   }
 
   function renderSectionRecords(sectionId) {
-    if (sectionId === 'financing') return renderFinancingRecords()
-    if (sectionId === 'expenses') return renderExpenseHistoryRecords()
+    if (sectionId === 'financing') return null
+    if (sectionId === 'expenses') return null
     return null
   }
 
   function renderSectionEditor(sectionId) {
     const body = (() => {
       if (sectionId === 'property') return renderPropertySection()
-      if (sectionId === 'financing') return renderFinancingEditor()
+      if (sectionId === 'financing') return renderFinancingWorkspace()
       if (sectionId === 'rental') return renderRentalEditor()
-      if (sectionId === 'expenses') return <PropertySetupEditor title="Expenses" description="Upload documents for any year, then review or manually edit the selected annual expense row.">{renderExpensesSection()}</PropertySetupEditor>
+      if (sectionId === 'expenses') return renderExpensesWorkspace()
       return null
     })()
     return (
@@ -2708,106 +2871,128 @@ export default function PropertyFormPage() {
   function renderPropertySection() {
 	const acquisitionCostBreakdown = loanLifecycle?.acquisition?.closingAndTitleCosts
     return (
-      <div className="space-y-4">
-        <SetupSubsection title="Basics">
-          <div className="grid gap-4 md:grid-cols-3">
-            <TextInput fieldKey="name" label="Property name" value={form.name} onChange={(value) => setField('name', value, 'property')} error={errors.name} helper="Use the name you recognize across dashboards." required={REQUIRED_FIELDS.has('name')} source={settlementSources.name} />
-            <SelectInput
-              label="Home Type"
-              value={normalizeHomeType(form.property_type)}
-              onChange={(value) => setField('property_type', value, 'property')}
-              error={errors.property_type}
-              fieldKey="property_type"
-              helper="The physical type of property."
-              required={REQUIRED_FIELDS.has('property_type')}
-            >
-              {HOME_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </SelectInput>
-            <SelectInput
-              label="Original Residency Status"
-              value={form.original_residency_status || ''}
-              onChange={(value) => setField('original_residency_status', value, 'property')}
-              error={errors.original_residency_status}
-              fieldKey="original_residency_status"
-              helper="How the property was originally acquired or first used."
-              required={REQUIRED_FIELDS.has('original_residency_status')}
-            >
-              <option value="">Select status</option>
-              {ORIGINAL_RESIDENCY_OPTIONS.map((option) => <option key={option.originalValue} value={option.originalValue}>{option.label}</option>)}
-            </SelectInput>
-            <SelectInput
-              label="Current Residency Status"
-              value={form.usage_type}
-              onChange={(value) => setField('usage_type', value, 'property')}
-              error={errors.usage_type}
-              fieldKey="usage_type"
-              helper="How the property is being used today."
-              required={REQUIRED_FIELDS.has('usage_type')}
-            >
-              {CURRENT_RESIDENCY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </SelectInput>
-            <TextInput label="Street" value={form.address} onChange={(value) => setField('address', value, 'property')} />
-            {normalizeHomeType(form.property_type) === 'other' ? (
-              <TextInput label="Other Home Type" value={form.property_type_raw} onChange={(value) => setField('property_type_raw', value, 'property')} error={errors.property_type_raw} />
-            ) : null}
-            <TextInput label="City" value={form.city} onChange={(value) => setField('city', value, 'property')} />
-            <TextInput label="State" value={form.state} onChange={(value) => setField('state', value, 'property')} />
-            <TextInput label="ZIP code" value={form.zip_code} onChange={(value) => setField('zip_code', value, 'property')} />
-          </div>
-        </SetupSubsection>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2.35fr)_minmax(19rem,0.95fr)]">
+        <div className="min-w-0 space-y-5">
+          <SetupSubsection title="Basic information">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <TextInput fieldKey="name" label="Property name" value={form.name} onChange={(value) => setField('name', value, 'property')} error={errors.name} helper="Use the name you recognize across dashboards." required={REQUIRED_FIELDS.has('name')} source={settlementSources.name} />
+              <SelectInput
+                label="Home type"
+                value={normalizeHomeType(form.property_type)}
+                onChange={(value) => setField('property_type', value, 'property')}
+                error={errors.property_type}
+                fieldKey="property_type"
+                helper="The physical type of property."
+                required={REQUIRED_FIELDS.has('property_type')}
+              >
+                {HOME_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </SelectInput>
+              <SelectInput
+                label="Original residency status"
+                value={form.original_residency_status || ''}
+                onChange={(value) => setField('original_residency_status', value, 'property')}
+                error={errors.original_residency_status}
+                fieldKey="original_residency_status"
+                helper="How the property was originally acquired or first used."
+                required={REQUIRED_FIELDS.has('original_residency_status')}
+              >
+                <option value="">Select status</option>
+                {ORIGINAL_RESIDENCY_OPTIONS.map((option) => <option key={option.originalValue} value={option.originalValue}>{option.label}</option>)}
+              </SelectInput>
+              <SelectInput
+                label="Current residency status"
+                value={form.usage_type}
+                onChange={(value) => setField('usage_type', value, 'property')}
+                error={errors.usage_type}
+                fieldKey="usage_type"
+                helper="How the property is being used today."
+                required={REQUIRED_FIELDS.has('usage_type')}
+              >
+                {CURRENT_RESIDENCY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </SelectInput>
+              {normalizeHomeType(form.property_type) === 'other' ? (
+                <div className="md:col-span-2 xl:col-span-4">
+                  <TextInput label="Other home type" value={form.property_type_raw} onChange={(value) => setField('property_type_raw', value, 'property')} error={errors.property_type_raw} />
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(18rem,2fr)_minmax(10rem,1fr)_minmax(5.5rem,0.45fr)_minmax(7rem,0.65fr)]">
+              <TextInput label="Street address" value={form.address} onChange={(value) => setField('address', value, 'property')} source={settlementSources.address} />
+              <TextInput label="City" value={form.city} onChange={(value) => setField('city', value, 'property')} source={settlementSources.city} />
+              <TextInput label="State" value={form.state} onChange={(value) => setField('state', value, 'property')} source={settlementSources.state} />
+              <TextInput label="ZIP code" value={form.zip_code} onChange={(value) => setField('zip_code', value, 'property')} source={settlementSources.zip_code} />
+            </div>
+          </SetupSubsection>
 
-        <SetupSubsection title="Purchase">
+          <SetupSubsection
+            title="Purchase details"
+            actions={(
+              <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-gray-700 dark:bg-gray-950">
+                <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">Enter manually</span>
+                <button type="button" className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium text-gray-600 hover:bg-white hover:text-gray-950 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white" onClick={openSettlementUpload} disabled={settlementUploading}>
+                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                  {settlementUploading ? 'Uploading...' : 'Upload document'}
+                </button>
+              </div>
+            )}
+          >
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <TextInput fieldKey="purchase_date" label="Purchase date" type="date" value={form.purchase_date} onChange={(value) => setField('purchase_date', value, 'property')} error={errors.purchase_date} required={REQUIRED_FIELDS.has('purchase_date')} source={settlementSources.purchase_date} />
+              <MoneyInput fieldKey="purchase_price" label="Purchase price" value={form.purchase_price} onChange={(value) => setField('purchase_price', value, 'property')} error={errors.purchase_price} helper="Original contract price, excluding later improvements." emphasis required={REQUIRED_FIELDS.has('purchase_price')} source={settlementSources.purchase_price} />
+              <MoneyInput fieldKey="down_payment" label="Down payment" value={form.down_payment} onChange={(value) => setField('down_payment', value, 'property')} error={errors.down_payment} helper="Cash contribution at purchase." source={settlementSources.down_payment} />
+              <MoneyInput
+	            fieldKey="closing_costs"
+	            label="Closing & title costs"
+	            value={form.closing_costs}
+	            onChange={(value) => setField('closing_costs', value, 'property')}
+	            error={errors.closing_costs}
+	            helper={acquisitionCostBreakdown
+	              ? `Closing costs ${acquisitionCostBreakdown.closingCosts.display}; remaining title costs ${acquisitionCostBreakdown.titleCosts.display}.`
+	              : 'Combined closing and title costs. A linked settlement statement supplies the backend-calculated breakdown.'}
+	            source={settlementSources.settlement_accounting_total || settlementSources.closing_costs}
+	          />
+              <ReadOnlyMoneyField
+                fieldKey="settlement_total_amount"
+                label="Settlement accounting total"
+                display={loanLifecycle?.acquisition?.settlementAccountingTotal?.display || (form.settlement_total_amount ? formatCurrency(toNumber(form.settlement_total_amount)) : '—')}
+                helper="Buyer debit total or buyer credit total from the settlement accounting statement."
+                source={settlementSources.settlement_accounting_total}
+              />
+            </div>
+          </SetupSubsection>
+
+          <SetupSubsection title="Valuation">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <MoneyInput fieldKey="market_value" label="Market price" value={form.market_value} onChange={(value) => setField('market_value', value, 'property')} error={errors.market_value} helper={form.market_value_source === 'estimated_6pct' ? 'Backend estimate using 6% annual appreciation from the purchase year. Edit this field to override manually.' : 'Manual or reported market price used for equity and LTV.'} emphasis required={REQUIRED_FIELDS.has('market_value')} />
+              <SelectInput label="Valuation source" value={form.market_value_source} onChange={(value) => setField('market_value_source', value, 'property')} helper="Automatic estimate or a user-provided override.">
+                <option value="estimated_6pct">Automatic · 6% yearly</option>
+                <option value="manual">Manual</option>
+                <option value="appraisal">Appraisal</option>
+                <option value="imported">Imported estimate</option>
+              </SelectInput>
+              <TextInput label="Valuation date" type="date" value={form.market_value_updated} onChange={(value) => setField('market_value_updated', value, 'property')} error={errors.market_value_updated} helper="As-of date for the market price." />
+            </div>
+          </SetupSubsection>
+
+          <SetupSubsection title="This property has">
+            <div className="flex flex-wrap gap-2">
+              {propertySetupFlagRows.map((row) => (
+                <FeatureToggle key={row.id} row={row} checked={Boolean(flags[row.id])} onChange={(checked) => toggleFlag(row.id, checked)} />
+              ))}
+            </div>
+          </SetupSubsection>
+
+          {Object.keys(settlementSources).length ? (
+            <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2.5 text-sm text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-200">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div><p className="font-medium">We pre-filled available fields from your uploaded documents.</p><p className="mt-0.5 text-xs text-blue-700/80 dark:text-blue-300/80">Review the extracted information and adjust any field manually when needed.</p></div>
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="min-w-0 xl:sticky xl:top-0">
           {renderSettlementUploadPanel()}
-          <div className="mb-4 flex items-center gap-3 text-xs font-medium text-gray-400 dark:text-gray-500">
-            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-800" />
-            <span>or enter manually</span>
-            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-800" />
-          </div>
-          <div className="grid gap-4 md:grid-cols-3">
-            <TextInput fieldKey="purchase_date" label="Purchase date" type="date" value={form.purchase_date} onChange={(value) => setField('purchase_date', value, 'property')} error={errors.purchase_date} required={REQUIRED_FIELDS.has('purchase_date')} source={settlementSources.purchase_date} />
-            <MoneyInput fieldKey="purchase_price" label="Purchase price" value={form.purchase_price} onChange={(value) => setField('purchase_price', value, 'property')} error={errors.purchase_price} helper="Original contract price, excluding later improvements." emphasis required={REQUIRED_FIELDS.has('purchase_price')} source={settlementSources.purchase_price} />
-            <MoneyInput fieldKey="down_payment" label="Down payment" value={form.down_payment} onChange={(value) => setField('down_payment', value, 'property')} error={errors.down_payment} helper="Cash contribution at purchase." source={settlementSources.down_payment} />
-            <MoneyInput
-	          fieldKey="closing_costs"
-	          label="Closing & Title costs"
-	          value={form.closing_costs}
-	          onChange={(value) => setField('closing_costs', value, 'property')}
-	          error={errors.closing_costs}
-	          helper={acquisitionCostBreakdown
-	            ? `Closing costs ${acquisitionCostBreakdown.closingCosts.display}; remaining title costs ${acquisitionCostBreakdown.titleCosts.display}.`
-	            : 'Combined closing and title costs. A linked settlement statement supplies the backend-calculated breakdown.'}
-	          source={settlementSources.settlement_accounting_total || settlementSources.closing_costs}
-	        />
-            <ReadOnlyMoneyField
-              fieldKey="settlement_total_amount"
-              label="Settlement accounting total"
-              display={loanLifecycle?.acquisition?.settlementAccountingTotal?.display || '—'}
-              helper="Buyer debit total or buyer credit total from the settlement accounting statement."
-              source={settlementSources.settlement_accounting_total}
-            />
-          </div>
-        </SetupSubsection>
-
-        <SetupSubsection title="Valuation">
-          <div className="grid gap-4 md:grid-cols-3">
-            <MoneyInput fieldKey="market_value" label="Market Price" value={form.market_value} onChange={(value) => setField('market_value', value, 'property')} error={errors.market_value} helper={form.market_value_source === 'estimated_6pct' ? 'Backend estimate using 6% annual appreciation from the purchase year. Edit this field to override manually.' : 'Manual or reported market price used for equity and LTV.'} emphasis required={REQUIRED_FIELDS.has('market_value')} />
-            <SelectInput label="Valuation source" value={form.market_value_source} onChange={(value) => setField('market_value_source', value, 'property')} helper="Automatic estimate or a user-provided override.">
-              <option value="estimated_6pct">Automatic · 6% yearly</option>
-              <option value="manual">Manual</option>
-              <option value="appraisal">Appraisal</option>
-              <option value="imported">Imported estimate</option>
-            </SelectInput>
-            <TextInput label="Valuation date" type="date" value={form.market_value_updated} onChange={(value) => setField('market_value_updated', value, 'property')} error={errors.market_value_updated} helper="As-of date for the market price." />
-          </div>
-        </SetupSubsection>
-
-        <SetupSubsection title="This property has">
-          <div className="flex flex-wrap gap-2">
-            {propertySetupFlagRows.map((row) => (
-              <FeatureToggle key={row.id} row={row} checked={Boolean(flags[row.id])} onChange={(checked) => toggleFlag(row.id, checked)} />
-            ))}
-          </div>
-        </SetupSubsection>
+        </aside>
       </div>
     )
   }
@@ -2815,10 +3000,31 @@ export default function PropertyFormPage() {
   function renderSettlementUploadPanel() {
     const documentUrl = propertyId ? `/properties/${propertyId}/documents` : '/uploads'
     const documentById = new Map(settlementDocuments.map((document) => [document.id, document]))
-    const displayGroups = loanLifecycle?.documentGroups || []
-    const hasDocuments = displayGroups.some((group) => (group.documents || []).length > 0)
+    const resolvedDocuments = propertySetupDisplayDocuments(loanLifecycle, settlementDocuments)
+    const hasDocuments = resolvedDocuments.length > 0
+    const selectedFields = (loanLifecycle?.acquisition?.selectedFields || []).filter((field) => field?.field || field?.key)
+    const reviewFields = Object.entries(settlementReviewSummaries).flatMap(([documentId, summary]) => (
+      (summary.fields || []).map((field) => ({ ...field, documentId }))
+    ))
+    const extractedFields = [...selectedFields, ...reviewFields].filter((field, index, fields) => {
+      const key = field.field || field.key || field.targetKey
+      return key && fields.findIndex((candidate) => (
+        (candidate.field || candidate.key || candidate.targetKey) === key
+      )) === index
+    })
+    const extractedFieldLabels = {
+      purchase_date: 'Purchase date',
+      purchase_price: 'Purchase price',
+      down_payment: 'Down payment',
+      closing_costs: 'Closing costs',
+      settlement_accounting_total: 'Settlement total',
+      address: 'Property address',
+      city: 'City',
+      state: 'State',
+      zip_code: 'ZIP code',
+    }
     return (
-      <div className={`mb-4 rounded-lg border p-3 ${hasDocuments ? 'border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950/40' : 'border-blue-200 bg-blue-50/70 dark:border-blue-900/60 dark:bg-blue-950/20'}`}>
+      <div className={`overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-gray-950 ${hasDocuments ? 'border-gray-200 dark:border-gray-800' : 'border-blue-200 dark:border-blue-900/60'}`}>
         <input
           ref={settlementInputRef}
           type="file"
@@ -2827,41 +3033,37 @@ export default function PropertyFormPage() {
           onChange={(event) => handleSettlementUpload(event.target.files?.[0])}
         />
         {hasDocuments ? (
-          <div className="space-y-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Resolved setup documents</p>
-                <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Purchase sources populate Property Setup. Refinance and current-loan sources remain grouped with the loan history they support.</p>
+                <p className="text-sm font-semibold text-gray-950 dark:text-white">Documents uploaded</p>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{resolvedDocuments.length} linked to this setup</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm" onClick={openSettlementUpload} disabled={settlementUploading}>
-                  <Upload className="h-4 w-4" />
-                  {settlementUploading ? 'Uploading...' : 'Upload document'}
-                </button>
-              </div>
+              <button type="button" className="btn-secondary inline-flex h-8 items-center gap-1.5 px-2.5 py-0 text-xs" onClick={() => {
+                const resolvedDocument = resolvedDocuments[0]
+                const document = documentById.get(resolvedDocument.documentId) || resolvedDocument
+                navigate(resolvedDocument.openUrl || document.displayUrl || documentUrl)
+              }}>
+                <Eye className="h-3.5 w-3.5" aria-hidden="true" /> Preview
+              </button>
             </div>
-            <div className="space-y-3">
-              {displayGroups.map((group, groupIndex) => (
-                <div key={group.transactionId || `${group.purpose}-${groupIndex}`} className="overflow-hidden rounded-md border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950/30">
-                  <div className="border-b border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/60">
-                    <p className="text-sm font-semibold text-gray-950 dark:text-white">{group.title}</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">{group.usageLabel}</p>
-                  </div>
-                  <div className="divide-y divide-gray-100 dark:divide-gray-800">
-              {(group.documents || []).map((resolvedDocument) => {
+            <div className="divide-y divide-gray-100 dark:divide-gray-800">
+              {resolvedDocuments.map((resolvedDocument) => {
                 const document = documentById.get(resolvedDocument.documentId) || resolvedDocument
                 const documentId = document.id || resolvedDocument.documentId
                 const active = settlementDocument?.id === documentId
                 const documentName = resolvedDocument.name || document.display_name || document.original_filename
                 const hasAddressIssue = active && ['mismatch', 'missing', 'document_address_missing'].includes(settlementAddressValidation?.status)
                 return (
-                  <div key={documentId} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 gap-2">
-                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
+                  <div key={documentId} className="p-4">
+                    <div className="flex min-w-0 gap-3">
+                      <span className="grid h-14 w-11 shrink-0 place-items-center rounded-md border border-gray-200 bg-gray-50 text-blue-600 dark:border-gray-700 dark:bg-gray-900 dark:text-blue-300">
+                        <FileText className="h-5 w-5" aria-hidden="true" />
+                      </span>
                       <div className="min-w-0">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-semibold text-gray-900 dark:text-white" title={documentName}>{documentName}</p>
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-900 dark:text-gray-300">{(resolvedDocument.documentType || setupImportRoleLabel(document)).replaceAll('_', ' ')}</span>
+                          <p className="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-white" title={documentName}>{documentName}</p>
+                          <span className="rounded-md bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">Processed</span>
                           {hasAddressIssue ? (
                             <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-300">
                               {settlementAddressValidation.status === 'mismatch' ? 'Address mismatch' : 'Address unconfirmed'}
@@ -2869,38 +3071,54 @@ export default function PropertyFormPage() {
                           ) : null}
                         </div>
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          {resolvedDocument.role ? resolvedDocument.role.replaceAll('_', ' ').toLowerCase() : 'Linked property document'}
+                          {(resolvedDocument.documentType || setupImportRoleLabel(document)).replaceAll('_', ' ')} · {resolvedDocument.group?.usageLabel || 'Property setup source'}
                         </p>
+                        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium">
+                          {['CLOSING_DISCLOSURE', 'SETTLEMENT_STATEMENT'].includes(resolvedDocument.documentType) ? <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => loadSettlementReview(documentId, { openReview: true })}>Review extracted data</button> : null}
+                          {documentId ? <button type="button" className="text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" onClick={() => {
+                            setSettlementDocument({ ...document, id: documentId })
+                            setSettlementDelinkConfirm(true)
+                          }}>Delink</button> : null}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 text-xs font-medium">
-                      <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => navigate(resolvedDocument.openUrl || document.displayUrl || documentUrl)}>Open</button>
-                      {['CLOSING_DISCLOSURE', 'SETTLEMENT_STATEMENT'].includes(resolvedDocument.documentType) ? <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={() => loadSettlementReview(documentId, { openReview: true })}>Review import</button> : null}
-                      {documentId ? <button type="button" className="text-gray-600 hover:underline dark:text-gray-300" onClick={() => {
-                        setSettlementDocument({ ...document, id: documentId })
-                        setSettlementDelinkConfirm(true)
-                      }}>Delink</button> : null}
                     </div>
                   </div>
                 )
               })}
-                  </div>
-                </div>
-              ))}
+            </div>
+            <div className="border-t border-gray-200 bg-gray-50/80 p-4 dark:border-gray-800 dark:bg-gray-900/40">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-gray-900 dark:text-white">Extracted information</p>
+                <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"><CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> {extractedFields.length} fields populated</span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {extractedFields.slice(0, 5).map((field) => {
+                  const key = field.field || field.key || field.targetKey
+                  return <span key={`${key}-${field.documentId || ''}`} className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300">{extractedFieldLabels[key] || String(key).replaceAll('_', ' ')}</span>
+                })}
+                {extractedFields.length > 5 ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-blue-700 dark:border-gray-700 dark:bg-gray-950 dark:text-blue-300">+{extractedFields.length - 5} more</span> : null}
+              </div>
+              <button type="button" className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:border-blue-300 hover:bg-blue-100 dark:border-blue-900/70 dark:bg-blue-950/40 dark:text-blue-300" onClick={() => {
+                const reviewDocument = resolvedDocuments.find((document) => ['CLOSING_DISCLOSURE', 'SETTLEMENT_STATEMENT'].includes(propertySetupDocumentType(document)))
+                if (reviewDocument) loadSettlementReview(reviewDocument.documentId, { openReview: true })
+              }}>
+                <PencilLine className="h-3.5 w-3.5" aria-hidden="true" /> Review &amp; edit extracted data
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-gray-200 px-4 py-3 dark:border-gray-800">
+              <p className="text-xs text-gray-500 dark:text-gray-400">Every populated field remains editable.</p>
+              <button type="button" className="text-xs font-medium text-blue-700 hover:underline dark:text-blue-300" onClick={openSettlementUpload} disabled={settlementUploading}>{settlementUploading ? 'Uploading...' : 'Add another'}</button>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-gray-950 dark:text-white">Upload setup documents</p>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">Upload a closing or settlement document. Its document type and available fields are identified automatically.</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={openSettlementUpload} disabled={settlementUploading}>
-                <Upload className="h-4 w-4" />
-                {settlementUploading ? 'Uploading...' : 'Upload document'}
-              </button>
-            </div>
+          <div className="p-5 text-center">
+            <span className="mx-auto grid h-11 w-11 place-items-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><FileText className="h-5 w-5" /></span>
+            <p className="mt-3 text-sm font-semibold text-gray-950 dark:text-white">Upload property documents</p>
+            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">Closing disclosures and settlement statements can populate purchase, address, and valuation fields.</p>
+            <button type="button" className="btn-primary mt-4 inline-flex items-center gap-2 text-sm" onClick={openSettlementUpload} disabled={settlementUploading}>
+              <Upload className="h-4 w-4" />
+              {settlementUploading ? 'Uploading...' : 'Upload document'}
+            </button>
           </div>
         )}
         {settlementDelinkConfirm ? (
@@ -2947,7 +3165,9 @@ export default function PropertyFormPage() {
       const purchasePriceSelection = settlementReview.purchasePriceSelection
       const calculationRows = settlementReview.settlementCalculations || []
 	    return (
-	      <div className="mt-4 border-t border-blue-200 pt-4 dark:border-blue-900/60">
+	      <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/45 p-3 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label="Review extracted property data">
+          <div className="max-h-[90vh] w-full max-w-5xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="max-h-[90vh] overflow-y-auto p-5 sm:p-6">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
 	            <p className="text-sm font-semibold text-gray-950 dark:text-white">Property details found</p>
@@ -3121,7 +3341,9 @@ export default function PropertyFormPage() {
           <button type="button" className="btn-secondary" onClick={() => setSettlementReview(null)}>Keep current values</button>
 	          <button type="button" className="btn-primary" onClick={applySettlementReview} disabled={addressBlocksApply}>Apply selected values</button>
 	        </div>
+            </div>
 	      </div>
+      </div>
     )
   }
 
@@ -3131,8 +3353,79 @@ export default function PropertyFormPage() {
       const label = loanStatusLabel(loan.status || 'OPEN')
       return CLOSED_LOAN_STATUSES.has(loan.status) && loan.closed_date ? `${label} ${formatDate(loan.closed_date)}` : label
     }
+    const loanRecords = loans.map((loan, index) => ({ ...loan, draftIndex: index }))
+    const activeLoans = loanRecords.filter((loan) => !CLOSED_LOAN_STATUSES.has(loan.status))
+    const historicalLoans = loanRecords.filter((loan) => CLOSED_LOAN_STATUSES.has(loan.status))
+    const renderLoanCard = (loan, historical = false) => {
+      const resolved = resolvedLoanById.get(Number(loan.id))
+      const purpose = resolved?.purpose || loan.purpose
+      const selected = loan.draftIndex === loanEditorIndex
+      return (
+        <article
+          key={loan.id || `new-${loan.draftIndex}`}
+          className={`cursor-pointer rounded-lg border p-4 transition focus:outline-none focus:ring-2 focus:ring-blue-500/40 ${selected ? 'border-blue-500 bg-blue-50/40 ring-1 ring-blue-100 dark:border-blue-500 dark:bg-blue-950/20 dark:ring-blue-900' : historical ? 'border-gray-200 bg-gray-50/70 dark:border-gray-800 dark:bg-gray-950/40' : 'border-gray-200 bg-white hover:border-blue-300 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-blue-800'}`}
+          role="button"
+          tabIndex={0}
+          aria-pressed={selected}
+          onClick={() => setLoanEditorIndex(loan.draftIndex)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setLoanEditorIndex(loan.draftIndex)
+            }
+          }}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="truncate text-sm font-semibold text-gray-950 dark:text-white">{loan.lender_name || 'New loan'}</h4>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${historical ? 'bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-200' : 'bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-200'}`}>
+                  {loanLifecycleText(loan)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {loan.account_number ? `#${loan.account_number}` : 'Loan number not entered'}
+                {loan.loan_type ? ` · ${loan.loan_type}` : ''}
+                {purpose ? ` · ${purpose}` : ''}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3 text-sm">
+              <button type="button" className="font-medium text-blue-600 hover:underline dark:text-blue-400" onClick={(event) => { event.stopPropagation(); setLoanEditorIndex(loan.draftIndex) }}>Edit</button>
+              <button type="button" className="font-medium text-red-600 hover:underline dark:text-red-400" onClick={(event) => { event.stopPropagation(); removeLoan(loan, loan.draftIndex) }}>Delete</button>
+            </div>
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+            {[
+              [historical ? 'Final balance' : 'Balance', formatCurrency(toNumber(loan.current_balance))],
+              ['Rate', formatInterestRate(toNumber(loan.interest_rate))],
+              ['Monthly P&I', formatCurrency(toNumber(loan.monthly_payment))],
+              ['Loan type', loan.loan_type || '—'],
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <dt className="text-xs text-gray-500 dark:text-gray-400">{label}</dt>
+                <dd className="mt-0.5 truncate text-sm font-medium text-gray-900 dark:text-white" title={String(value)}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {resolved ? (
+            <button type="button" className="mt-3 text-left text-xs font-medium text-blue-700 hover:underline dark:text-blue-300" onClick={(event) => { event.stopPropagation(); setLoanSourceDetails(resolved) }}>
+              {resolved.sourceSummary?.label || 'View source documents'}
+            </button>
+          ) : null}
+        </article>
+      )
+    }
     return (
-      <PropertySetupRecords title="Existing Loans" description="Review existing loans before editing or adding a loan.">
+      <PropertySetupRecords
+        title="Your Loans"
+        description="Select a loan to view or edit details."
+        className="rounded-lg border border-gray-200 p-4 pt-4 dark:border-gray-800"
+        actions={(
+          <button type="button" className="btn-secondary inline-flex items-center gap-1.5 text-sm" onClick={addLoan}>
+            <Plus className="h-4 w-4" /> Add New Loan
+          </button>
+        )}
+      >
         {loanTransferSuggestions.length ? (
           <div className="mb-4 space-y-2">
             {loanTransferSuggestions.map((suggestion) => (
@@ -3192,63 +3485,59 @@ export default function PropertyFormPage() {
         ) : null}
         {!loans.length ? (
           <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
-            No loans recorded. Add your first loan below.
+            No loans recorded. Add a loan manually or upload a loan document.
           </div>
         ) : (
-          <DataTable
-            rows={loans.map((loan, index) => ({ ...loan, draftIndex: index }))}
-            getRowKey={(loan, index) => loan.id || `new-${index}`}
-            getRowProps={(loan) => ({
-              className: CLOSED_LOAN_STATUSES.has(loan.status) ? 'opacity-70' : undefined,
-            })}
-            columns={[
-              { id: 'lender_name', header: 'Lender', render: (loan) => loan.lender_name || 'New loan' },
-              { id: 'account_number', header: 'Loan #', render: (loan) => loan.account_number || '—' },
-              { id: 'status', header: 'Status', render: (loan) => loanLifecycleText(loan) },
-              { id: 'purpose', header: 'Purpose', render: (loan) => resolvedLoanById.get(Number(loan.id))?.purpose || loan.purpose || '—' },
-              { id: 'origination_date', header: 'Origination Date', render: (loan) => loan.origination_date ? formatDate(loan.origination_date) : '—' },
-              { id: 'servicer_start_date', header: 'Acquisition Date', render: (loan) => loan.servicer_start_date ? formatDate(loan.servicer_start_date) : '—' },
-              { id: 'closed_date', header: 'Closed Date', render: (loan) => loan.closed_date ? formatDate(loan.closed_date) : '—' },
-	              { id: 'original_amount', header: 'Original Amount', align: 'right', render: (loan) => formatCurrency(toNumber(loan.original_amount)) },
-	              { id: 'current_balance', header: 'Current/Final Balance', align: 'right', render: (loan) => formatCurrency(toNumber(loan.current_balance)) },
-	              { id: 'interest_rate', header: 'Rate', align: 'right', render: (loan) => formatInterestRate(toNumber(loan.interest_rate)) },
-	              { id: 'monthly_payment', header: 'P&I / mo', align: 'right', render: (loan) => formatCurrency(toNumber(loan.monthly_payment)) },
-              { id: 'source', header: 'Source', sortable: false, render: (loan) => {
-                const resolved = resolvedLoanById.get(Number(loan.id))
-                return resolved ? <button type="button" className="text-left text-sm font-medium text-blue-700 hover:underline dark:text-blue-300" onClick={() => setLoanSourceDetails(resolved)}>{resolved.sourceSummary?.label || 'View sources'}</button> : 'Manual'
-              } },
-              { id: 'actions', header: 'Actions', sortable: false, render: (loan) => <div className="flex justify-end gap-3"><button type="button" className="text-blue-600 hover:underline" onClick={() => setLoanEditorIndex(loan.draftIndex)}>Edit</button><button type="button" className="text-red-600 hover:underline" onClick={() => removeLoan(loan, loan.draftIndex)}>Delete</button></div> },
-            ]}
-          />
+          <div className="space-y-4">
+            {activeLoans.length ? (
+              <div className="grid gap-3 xl:grid-cols-2">{activeLoans.map((loan) => renderLoanCard(loan))}</div>
+            ) : (
+              <p className="rounded-lg border border-gray-200 bg-gray-50/70 p-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-950/40 dark:text-gray-300">No active loans.</p>
+            )}
+            {historicalLoans.length ? (
+              <details className="group rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">
+                  <span>Historical loans ({historicalLoans.length})</span>
+                  <span className="text-xs font-normal text-gray-500 group-open:hidden dark:text-gray-400">Expand</span>
+                  <span className="hidden text-xs font-normal text-gray-500 group-open:inline dark:text-gray-400">Collapse</span>
+                </summary>
+                <div className="grid gap-3 border-t border-gray-200 p-3 dark:border-gray-800 xl:grid-cols-2">
+                  {historicalLoans.map((loan) => renderLoanCard(loan, true))}
+                </div>
+              </details>
+            ) : null}
+          </div>
         )}
       </PropertySetupRecords>
     )
   }
 
-  function renderLoanStatementUploadPanel(loan = null) {
+  function renderLoanStatementUploadPanel() {
+    const supportedTypes = ['Closing Disclosure', 'Mortgage Statement', '1098', 'Refinance Package', 'Loan Estimate', 'Payoff Statement']
     return (
-      <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-900/60 dark:bg-blue-950/20">
+      <div>
         <input
           ref={loanStatementInputRef}
           type="file"
           multiple
-          accept=".pdf,.xlsx,.xls,.csv"
+          accept=".pdf"
           className="sr-only"
           onChange={(event) => handleLoanStatementUpload(event.target.files)}
         />
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-gray-950 dark:text-white">Upload multiple loan documents</p>
-            {loan?.source_type === 'mortgage_statement' ? (
-              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">Upload a loan disclosure, 1098 form, or mortgage statement. Latest statement values are marked as reported and remain editable.</p>
-            ) : (
-              <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">Upload loan disclosures, 1098 forms, or mortgage statements. Review extracted loan terms before they are applied.</p>
-            )}
+        <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50/40 p-5 text-center dark:border-blue-800 dark:bg-blue-950/20">
+          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg border border-blue-200 bg-white text-blue-600 dark:border-blue-800 dark:bg-gray-900 dark:text-blue-300">
+            <Upload className="h-5 w-5" />
           </div>
-          <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={() => loanStatementInputRef.current?.click()} disabled={loanStatementUploading}>
-            <Upload className="h-4 w-4" />
-            {loanStatementUploading ? 'Uploading...' : 'Upload loan documents'}
+          <p className="mt-3 text-sm font-semibold text-gray-950 dark:text-white">Upload loan documents</p>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Upload one or multiple PDF files.</p>
+          <button type="button" className="btn-primary mt-3 inline-flex items-center gap-2" onClick={() => loanStatementInputRef.current?.click()} disabled={loanStatementUploading}>
+            {loanStatementUploading ? 'Uploading...' : 'Upload Files'}
           </button>
+          <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+            {supportedTypes.map((type) => (
+              <span key={type} className="rounded-full border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">{type}</span>
+            ))}
+          </div>
         </div>
         {loanStatementConflict ? renderLoanStatementConflict() : null}
         {loanConsolidatedReview ? renderLoanConsolidatedReview() : null}
@@ -3259,62 +3548,39 @@ export default function PropertyFormPage() {
 
   function renderLinkedLoanDocuments() {
     const documents = linkedLoanDocuments.documents || []
-    const displayMoney = (value) => value === null || value === undefined || value === '' ? '—' : formatCurrency(Number(value))
     return (
-      <SetupSubsection title="Linked statements">
+      <div>
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Uploaded Documents</h4>
         {linkedLoanDocuments.status === 'loading' ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">Loading linked statements...</p>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading loan documents...</p>
         ) : linkedLoanDocuments.status === 'failed' ? (
-          <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">Linked statements could not be loaded.</p>
+          <p className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200">Loan documents could not be loaded.</p>
         ) : documents.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400">No mortgage statements or 1098 forms are linked to this loan account.</p>
+          <p className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-500 dark:border-gray-800 dark:bg-gray-950/40 dark:text-gray-400">No documents are linked to the selected loan.</p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
-            <div className="overflow-x-auto">
-              <table className="min-w-[980px] w-full text-left text-sm">
-                <thead className="bg-gray-50 text-xs font-medium text-gray-500 dark:bg-gray-950/60 dark:text-gray-400">
-                  <tr>
-                    <th className="px-3 py-2.5">Document</th>
-                    <th className="px-3 py-2.5">Period</th>
-                    <th className="px-3 py-2.5">Account</th>
-                    <th className="px-3 py-2.5 text-right">Balance</th>
-                    <th className="px-3 py-2.5 text-right">Principal YTD</th>
-                    <th className="px-3 py-2.5 text-right">Interest YTD</th>
-                    <th className="px-3 py-2.5 text-right">Escrow / mo</th>
-                    <th className="px-3 py-2.5 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-800 dark:bg-gray-900">
-                  {documents.map((document) => (
-                    <tr key={document.documentId}>
-                      <td className="px-3 py-3">
-                        <div className="flex min-w-0 items-start gap-2">
-                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
-                          <div className="min-w-0">
-                            <p className="max-w-[300px] truncate font-medium text-gray-950 dark:text-white" title={document.filename}>{document.filename}</p>
-                            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{document.docTypeLabel}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-700 dark:text-gray-300">{document.statementDate ? formatDate(document.statementDate) : document.year}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-gray-700 dark:text-gray-300">{document.accountNumber || '—'}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right font-medium text-gray-950 dark:text-white">{displayMoney(document.endBalance ?? document.box2Balance)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700 dark:text-gray-300">{displayMoney(document.ytdPrincipal)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700 dark:text-gray-300">{displayMoney(document.ytdInterest ?? document.box1Interest)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right text-gray-700 dark:text-gray-300">{displayMoney(document.monthlyEscrow)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right">
-                        <button type="button" className="font-medium text-blue-600 hover:underline dark:text-blue-400" onClick={() => loadLoanStatementReview(document.documentId)}>
-                          Review fields
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="mt-3 divide-y divide-gray-200 rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+            {documents.map((document) => (
+              <div key={document.documentId} className="flex min-w-0 items-center gap-3 p-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-300">
+                  <FileText className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-gray-950 dark:text-white" title={document.filename}>{document.filename}</p>
+                  <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
+                    {document.docTypeLabel || 'Loan document'}{document.statementDate ? ` · ${formatDate(document.statementDate)}` : document.year ? ` · ${document.year}` : ''}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <span className="rounded-full bg-green-50 px-2 py-1 text-[11px] font-medium text-green-700 dark:bg-green-950/30 dark:text-green-300">Processed</span>
+                  <button type="button" className="mt-1 block text-xs font-medium text-blue-600 hover:underline dark:text-blue-400" onClick={() => loadLoanStatementReview(document.documentId)}>
+                    Review
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-      </SetupSubsection>
+      </div>
     )
   }
 
@@ -3481,30 +3747,19 @@ export default function PropertyFormPage() {
       ? loans.some((candidate, index) => index !== loanEditorIndex && (candidate.status || 'OPEN') === 'OPEN')
       : false
     return (
-      <PropertySetupEditor title={loan ? 'Edit Loan' : 'Add Loan'} description="Loan records remain saved through the loan API.">
+      <PropertySetupEditor title="Loan Details" description="Enter or verify the details for the selected loan.">
         {!loan ? (
-          <div className="space-y-4">
-            {renderLoanStatementUploadPanel()}
-            <div className="flex flex-col gap-3 rounded-lg border border-dashed border-gray-300 bg-white p-6 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400 sm:flex-row sm:items-center sm:justify-between">
-              <span>Prefer manual entry? Add a loan record and enter the values yourself.</span>
-              <button type="button" className="btn-primary flex items-center justify-center gap-1.5" onClick={addLoan}>
-                <Plus className="h-4 w-4" /> Add Loan Manually
-              </button>
-            </div>
+          <div className="rounded-lg border border-dashed border-gray-300 bg-white p-6 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+            Select a loan above, add a new loan, or upload a loan document to populate financing fields.
           </div>
         ) : (
           <div className="space-y-4">
-            {renderLinkedLoanDocuments()}
-            {renderLoanStatementUploadPanel(loan)}
             {otherOpenLoans && (loan.status || 'OPEN') === 'OPEN' ? (
               <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/20 dark:text-yellow-200">
                 This property already has an open loan. Close or refinance the prior loan if this new loan replaces it.
               </div>
             ) : null}
-            <div className="flex justify-end">
-              <button type="button" className="btn-secondary text-sm" onClick={() => setLoanEditorIndex(null)}>Cancel</button>
-            </div>
-	            <SetupSubsection title="Loan Details">
+	            <SetupSubsection title="Financing fields">
 	              <div className="grid gap-4 md:grid-cols-3">
 	                <TextInput label="Lender" value={loan.lender_name} onChange={(value) => updateLoan(loanEditorIndex, 'lender_name', value)} />
 	                <TextInput label="Loan Account Number" value={loan.account_number} onChange={(value) => updateLoan(loanEditorIndex, 'account_number', value)} />
@@ -3514,6 +3769,7 @@ export default function PropertyFormPage() {
 	                <SelectInput label="Status" value={loan.status || 'OPEN'} onChange={(value) => updateLoan(loanEditorIndex, 'status', value)}>
 	                  {LOAN_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 	                </SelectInput>
+	                <TextInput label="Purpose" value={loan.purpose} onChange={(value) => updateLoan(loanEditorIndex, 'purpose', value)} placeholder="Purchase, refinance, HELOC..." />
 	                <MoneyInput fieldKey={`loan_${loanEditorIndex}_original_amount`} label="Original Loan Amount" value={loan.original_amount} onChange={(value) => updateLoan(loanEditorIndex, 'original_amount', value)} error={errors[`loan_${loanEditorIndex}_original_amount`]} />
 	                <div>
 	                  <MoneyInput fieldKey={`loan_${loanEditorIndex}_current_balance`} label="Current Balance" value={loan.current_balance} onChange={(value) => updateLoan(loanEditorIndex, 'current_balance', value)} error={errors[`loan_${loanEditorIndex}_current_balance`]} source={statementSources.current_balance} />
@@ -3524,6 +3780,7 @@ export default function PropertyFormPage() {
 	                <PercentInput fieldKey={`loan_${loanEditorIndex}_interest_rate`} label="Interest Rate" value={loan.interest_rate} onChange={(value) => updateLoan(loanEditorIndex, 'interest_rate', value)} error={errors[`loan_${loanEditorIndex}_interest_rate`]} />
 	                <TextInput fieldKey={`loan_${loanEditorIndex}_loan_term_years`} label="Term" value={loan.loan_term_years} onChange={(value) => updateLoan(loanEditorIndex, 'loan_term_years', value.replace(/[^0-9]/g, ''))} error={errors[`loan_${loanEditorIndex}_loan_term_years`]} />
 	                <TextInput fieldKey={`loan_${loanEditorIndex}_origination_date`} label="Origination Date" type="date" value={loan.origination_date} onChange={(value) => updateLoan(loanEditorIndex, 'origination_date', value)} error={errors[`loan_${loanEditorIndex}_origination_date`]} />
+	                <TextInput fieldKey={`loan_${loanEditorIndex}_maturity_date`} label="Maturity Date" type="date" value={loan.maturity_date} onChange={(value) => updateLoan(loanEditorIndex, 'maturity_date', value)} />
 	                <TextInput fieldKey={`loan_${loanEditorIndex}_servicer_start_date`} label="Mortgage Acquisition Date" type="date" value={loan.servicer_start_date} onChange={(value) => updateLoan(loanEditorIndex, 'servicer_start_date', value)} />
 	                <MoneyInput fieldKey={`loan_${loanEditorIndex}_monthly_payment`} label="Monthly Principal & Interest" value={loan.monthly_payment} onChange={(value) => updateLoan(loanEditorIndex, 'monthly_payment', value)} error={errors[`loan_${loanEditorIndex}_monthly_payment`]} />
 	                {statusRequiresClosedDate ? (
@@ -3546,6 +3803,37 @@ export default function PropertyFormPage() {
           </div>
         )}
       </PropertySetupEditor>
+    )
+  }
+
+  function renderFinancingWorkspace() {
+    const selectedLoan = loanEditorIndex != null ? loans[loanEditorIndex] : null
+    return (
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,0.9fr)]">
+        <div className="min-w-0 space-y-4">
+          {renderFinancingRecords()}
+          <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+            {renderFinancingEditor()}
+          </div>
+        </div>
+        <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
+          <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div className="mb-4">
+              <h3 className="text-base font-semibold text-gray-950 dark:text-white">Loan Documents</h3>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Upload loan documents to auto-fill important fields.</p>
+            </div>
+            {renderLoanStatementUploadPanel()}
+            <div className="mt-5 border-t border-gray-200 pt-4 dark:border-gray-800">
+              {selectedLoan ? renderLinkedLoanDocuments() : (
+                <p className="text-sm text-gray-500 dark:text-gray-400">Select a loan to view its linked documents.</p>
+              )}
+            </div>
+          </section>
+          <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-200">
+            Escrow, property taxes, insurance, and HOA amounts are managed in the Expenses step.
+          </div>
+        </aside>
+      </div>
     )
   }
 
@@ -3636,6 +3924,7 @@ export default function PropertyFormPage() {
 
   function renderExpenseHistoryRecords() {
     const tableRows = expenseYears.map((year) => expenseRows.find((row) => Number(row.year) === Number(year)) || blankAnnualExpense(year))
+    const solarAnnual = flags.hasSolar ? annualSolarExpense(form) : 0
     const expenseTableColumns = [
       { id: 'year', header: 'Year', accessor: 'year', defaultDirection: 'asc' },
       ...EXPENSE_FIELDS.filter((field) => !field.feature || flags[field.feature]).map((field) => ({
@@ -3645,11 +3934,18 @@ export default function PropertyFormPage() {
         align: 'right',
         render: (_row, value) => toNumber(value) ? formatCurrency(toNumber(value)) : '—',
       })),
+      ...(flags.hasSolar ? [{
+        id: 'solar',
+        header: 'Solar',
+        sortable: false,
+        align: 'right',
+        render: () => solarAnnual ? formatCurrency(solarAnnual) : '—',
+      }] : []),
       {
         id: 'status',
         header: 'Status',
         sortable: false,
-        render: (row) => row.entered || EXPENSE_FIELDS.some((field) => toNumber(row[field.key]) > 0) ? 'Entered' : 'Blank',
+        render: (row) => row.entered || EXPENSE_FIELDS.some((field) => toNumber(row[field.key]) > 0) || solarAnnual > 0 ? 'Entered' : 'Blank',
       },
       {
         id: 'actions',
@@ -3663,7 +3959,7 @@ export default function PropertyFormPage() {
       },
     ]
     const currentRow = tableRows.find((row) => Number(row.year) === CURRENT_YEAR) || blankAnnualExpense(CURRENT_YEAR)
-    const currentStatus = currentRow.entered || EXPENSE_FIELDS.some((field) => toNumber(currentRow[field.key]) > 0) ? 'Entered' : 'Blank'
+    const currentStatus = currentRow.entered || EXPENSE_FIELDS.some((field) => toNumber(currentRow[field.key]) > 0) || solarAnnual > 0 ? 'Entered' : 'Blank'
     return (
       <PropertySetupRecords title="Current Year Summary" description={`${CURRENT_YEAR} expenses are ${currentStatus.toLowerCase()}. Review existing years before editing the selected row.`}>
         <DataTable
@@ -3682,9 +3978,9 @@ export default function PropertyFormPage() {
     )
   }
 
-  function renderExpensesSection() {
+  function renderExpenseDocumentsPanel() {
     return (
-      <div className="space-y-5">
+      <div>
         <input
           ref={escrowAnalysisInputRef}
           type="file"
@@ -3693,36 +3989,78 @@ export default function PropertyFormPage() {
           className="sr-only"
           onChange={(event) => handleEscrowAnalysisUpload(event.target.files)}
         />
-        <section className="border-b border-gray-200 pb-5 dark:border-gray-800" aria-labelledby="expense-documents-heading">
-          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 id="expense-documents-heading" className="text-sm font-semibold text-gray-950 dark:text-white">Expense documents</h3>
-                <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">All years</span>
-              </div>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Select one or more escrow analyses, property-tax statements, or insurance declarations. The backend detects each document type and assigns values using its tax year or covered period.</p>
-            </div>
-            <button
-              type="button"
-              className="btn-secondary inline-flex shrink-0 items-center gap-2 text-sm"
-              onClick={() => escrowAnalysisInputRef.current?.click()}
-              disabled={escrowUploading || !propertyId}
-            >
-              <Upload className="h-4 w-4" aria-hidden="true" />
-              {escrowUploading ? 'Importing documents...' : 'Upload documents'}
-            </button>
+        <div className="rounded-lg border border-dashed border-blue-300 bg-blue-50/40 p-5 text-center dark:border-blue-800 dark:bg-blue-950/20">
+          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg border border-blue-200 bg-white text-blue-600 dark:border-blue-800 dark:bg-gray-900 dark:text-blue-300">
+            <Upload className="h-5 w-5" aria-hidden="true" />
           </div>
-          {expenseAddressReview ? (
-            <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
-              <p className="font-semibold">Confirm document address</p>
-              <p className="mt-1">{expenseAddressReview.addressValidation?.normalizedDocumentAddress || 'No address found'} · {expenseAddressReview.expenseYear || expenseAddressReview.year}</p>
-              <div className="mt-2 flex flex-wrap gap-3 font-medium">
-                <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptExpenseAddressReview}>Same property — apply</button>
-                <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeExpenseAddressReview}>Remove document</button>
-              </div>
+          <p className="mt-3 text-sm font-semibold text-gray-950 dark:text-white">Upload expense documents</p>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Upload escrow analyses, property-tax statements, or insurance declarations.</p>
+          <button
+            type="button"
+            className="btn-primary mt-3 inline-flex items-center gap-2"
+            onClick={() => escrowAnalysisInputRef.current?.click()}
+            disabled={escrowUploading || !propertyId}
+          >
+            {escrowUploading ? 'Importing documents...' : 'Upload Files'}
+          </button>
+          <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+            {['Escrow Analysis', 'Property Tax Statement', 'Insurance Declaration'].map((type) => (
+              <span key={type} className="rounded-full border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">{type}</span>
+            ))}
+          </div>
+        </div>
+        {expenseAddressReview ? (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-100">
+            <p className="font-semibold">Confirm document address</p>
+            <p className="mt-1">{expenseAddressReview.addressValidation?.normalizedDocumentAddress || 'No address found'} · {expenseAddressReview.expenseYear || expenseAddressReview.year}</p>
+            <div className="mt-2 flex flex-wrap gap-3 font-medium">
+              <button type="button" className="text-blue-700 hover:underline dark:text-blue-300" onClick={acceptExpenseAddressReview}>Same property — apply</button>
+              <button type="button" className="text-red-700 hover:underline dark:text-red-300" onClick={removeExpenseAddressReview}>Remove document</button>
             </div>
-          ) : null}
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Escrow payment history</p>
+          </div>
+        ) : null}
+        {expenseDocumentReviews.length ? (
+          <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Recent upload review</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Review extracted fields before relying on imported expense values.</p>
+              </div>
+              <button type="button" className="text-xs font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" onClick={() => setExpenseDocumentReviews([])}>
+                Clear
+              </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {expenseDocumentReviews.map((review) => {
+                const expanded = String(expandedExpenseReviewId) === String(review.id)
+                return (
+                  <div key={review.id} className="rounded-md border border-gray-100 p-3 dark:border-gray-800">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-gray-950 dark:text-white">{review.documentName}</p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {expenseReviewFieldLabel(review.detectedField)} · {review.expenseYear || 'Year not detected'} · {review.status === 'reused' ? 'Existing document reused' : 'Uploaded'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
+                        onClick={() => setExpandedExpenseReviewId(expanded ? null : review.id)}
+                        aria-expanded={expanded}
+                      >
+                        <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                        {expanded ? 'Hide' : 'Review'}
+                      </button>
+                    </div>
+                    {expanded ? renderExpenseDocumentReviewDetails(review) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+        <div className="mt-5 border-t border-gray-200 pt-4 dark:border-gray-800">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Uploaded Documents</p>
           <DataTable
             rows={escrowPayments}
             getRowKey={(row) => row.id}
@@ -3782,20 +4120,45 @@ export default function PropertyFormPage() {
                 id: 'documentName',
                 header: 'Source',
                 render: (row) => row.documentId ? (
-                  <button
-                    type="button"
-                    className="inline-flex max-w-48 items-center gap-1.5 text-left text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
-                    title={row.documentName || 'Escrow analysis'}
-                    onClick={() => navigate(`/properties/${propertyId}/documents?documentId=${row.documentId}`)}
-                  >
-                    <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{row.documentName || 'Escrow analysis'}</span>
-                  </button>
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      className="inline-flex max-w-48 items-center gap-1.5 text-left text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
+                      title={row.documentName || 'Escrow analysis'}
+                      onClick={() => navigate(`/properties/${propertyId}/documents?documentId=${row.documentId}`)}
+                    >
+                      <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{row.documentName || 'Escrow analysis'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-left text-xs font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+                      onClick={() => {
+                        addExpenseDocumentReview({
+                          status: 'review',
+                          document: { id: row.documentId, name: row.documentName || 'Escrow analysis', category: 'escrow_analysis' },
+                          detectedField: 'escrow_analysis',
+                          expenseYear: row.expenseYear,
+                          escrowPayment: row,
+                        }, row.documentName || 'Escrow analysis')
+                      }}
+                    >
+                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                      Review fields
+                    </button>
+                  </div>
                 ) : '—',
               },
             ]}
           />
-        </section>
+        </div>
+      </div>
+    )
+  }
+
+  function renderExpensesSection() {
+    return (
+      <div className="space-y-5">
         <div className="flex flex-wrap items-center gap-3">
           <label className="label mb-0" htmlFor="expense-year">Edit year</label>
           <select id="expense-year" className="input max-w-40" value={expenseYear} onChange={(event) => setExpenseYear(Number(event.target.value))}>
@@ -3824,10 +4187,37 @@ export default function PropertyFormPage() {
               <option value="Included in Purchase">Included in Purchase</option>
             </SelectInput>
           ) : null}
-          {flags.hasSolar && form.solar_ownership === 'Leased' ? <MoneyInput label="Solar lease" value={form.solar_monthly_payment} onChange={(value) => setField('solar_monthly_payment', value, 'expenses')} /> : null}
-          {flags.hasSolar && ['Purchased', 'Included in Purchase'].includes(form.solar_ownership) ? <MoneyInput label="Solar purchase price" value={form.solar_purchase_price} onChange={(value) => setField('solar_purchase_price', value, 'expenses')} /> : null}
+          {flags.hasSolar ? <MoneyInput label="Solar payment / mo" value={form.solar_monthly_payment} onChange={(value) => setField('solar_monthly_payment', value, 'expenses')} error={errors.solar_monthly_payment} helper="Recurring solar payments are shown annually in the summary table." /> : null}
+          {flags.hasSolar && ['Purchased', 'Included in Purchase'].includes(form.solar_ownership) ? <MoneyInput label="Solar purchase price" value={form.solar_purchase_price} onChange={(value) => setField('solar_purchase_price', value, 'expenses')} error={errors.solar_purchase_price} /> : null}
         </div>
         <p className="text-sm text-gray-500 dark:text-gray-400">Blank years are not assumed to be $0. Current-year expenses are optional during setup; entered values drive current-year metrics.</p>
+      </div>
+    )
+  }
+
+  function renderExpensesWorkspace() {
+    return (
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,0.9fr)]">
+        <div className="min-w-0 space-y-4">
+          {renderExpenseHistoryRecords()}
+          <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+            <PropertySetupEditor title="Expenses" description="Review or manually edit the selected annual expense row.">
+              {renderExpensesSection()}
+            </PropertySetupEditor>
+          </div>
+        </div>
+        <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
+          <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <div className="mb-4">
+              <h3 className="text-base font-semibold text-gray-950 dark:text-white">Expense Documents</h3>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Upload expense documents to auto-fill annual fields by document period.</p>
+            </div>
+            {renderExpenseDocumentsPanel()}
+          </section>
+          <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-sm text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-200">
+            Blank years are not assumed to be $0. Entered values drive current-year metrics.
+          </div>
+        </aside>
       </div>
     )
   }
