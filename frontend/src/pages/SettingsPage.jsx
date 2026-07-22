@@ -2,8 +2,57 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { authAPI, sharingAPI } from '../services/api'
 import toast from 'react-hot-toast'
-import { User, Key, Info, Share2, X, UserCheck, UserPlus, ArrowRight, ArrowLeft, Home } from 'lucide-react'
+import { User, Key, Info, Share2, X, UserCheck, UserPlus, ArrowRight, ArrowLeft, Home, Palette, Check } from 'lucide-react'
 import { APP_VERSION } from '../version'
+import { useTheme } from '../hooks/useTheme'
+
+const THEME_OPTIONS = [
+  { id: 'aqua', name: 'Aqua', desc: 'Calm blue-green — the default.', swatch: 'linear-gradient(135deg,#22d3ee,#0891b2)' },
+  { id: 'glass', name: 'Liquid Glass', desc: 'Frosted, translucent panels.', swatch: 'linear-gradient(135deg,rgba(255,255,255,.85),#7dd3fc 60%,#0ea5e9)' },
+  { id: 'women', name: 'Women-centric', desc: 'Warm rose & violet tones.', swatch: 'linear-gradient(135deg,#f472b6,#a855f7)' },
+]
+
+function AppearanceSection() {
+  const { dark, toggle, colorTheme, setColorTheme } = useTheme()
+  return (
+    <div className="card">
+      <div className="flex items-center gap-2 mb-4">
+        <Palette className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+        <h2 className="font-semibold text-gray-900 dark:text-white">Appearance</h2>
+      </div>
+
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-4 mb-4">
+        <div>
+          <p className="text-sm font-medium text-gray-900 dark:text-white">Mode</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">{dark ? 'Dark' : 'Light'} — follows your system by default.</p>
+        </div>
+        <button type="button" role="switch" aria-checked={dark} aria-label="Toggle dark mode" onClick={toggle}
+          className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full px-0.5 transition-colors ${dark ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+          <span className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${dark ? 'translate-x-5' : 'translate-x-0'}`} />
+        </button>
+      </div>
+
+      <p className="text-sm font-medium text-gray-900 dark:text-white">Theme</p>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Sets the accent colour and surface style across the whole app.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {THEME_OPTIONS.map((t) => {
+          const selected = colorTheme === t.id
+          return (
+            <button key={t.id} type="button" onClick={() => setColorTheme(t.id)} aria-pressed={selected}
+              className={`text-left rounded-xl border p-3 transition ${selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'}`}>
+              <span className="mb-2 block h-12 w-full rounded-lg border border-black/5 shadow-inner dark:border-white/10" style={{ backgroundImage: t.swatch }} />
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-gray-900 dark:text-white">{t.name}</span>
+                {selected ? <Check className="h-4 w-4 text-blue-600" aria-hidden="true" /> : null}
+              </span>
+              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">{t.desc}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 export default function SettingsPage() {
   const { user } = useAuth()
@@ -17,6 +66,9 @@ export default function SettingsPage() {
   return (
 <div className="w-full max-w-2xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+
+      {/* Appearance / Themes */}
+      <AppearanceSection />
 
       {/* Profile */}
       <div className="card">
