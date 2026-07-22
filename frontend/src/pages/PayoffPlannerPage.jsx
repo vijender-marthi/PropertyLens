@@ -483,8 +483,8 @@ function ResultsPanel({ report, loading }) {
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Payment rollover</h2>
             <div className="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-              <span className="flex items-center gap-1.5"><Coin own /> its own payment</span>
-              <span className="flex items-center gap-1.5"><Coin /> freed from a cleared loan</span>
+              <span className="flex items-center gap-1.5"><Coin own order={2} /> its own payment</span>
+              <span className="flex items-center gap-1.5"><Coin order={1} /> freed from a cleared home (its colour)</span>
             </div>
           </div>
           <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
@@ -501,15 +501,19 @@ function ResultsPanel({ report, loading }) {
   )
 }
 
-function Coin({ own = false, title }) {
+// A coin is coloured by the home the money comes from: the target's own payment
+// (solid, current home's colour) plus lighter coins in the colour of each
+// already-cleared home whose freed payment now rolls into this target.
+function Coin({ own = false, order, never = false, title }) {
+  const hex = homeAccent(order, never).hex
+  const style = own
+    ? { backgroundColor: hex, color: '#fff', boxShadow: '0 0 0 1px rgba(0,0,0,0.12)' }
+    : { backgroundColor: `${hex}26`, color: hex, boxShadow: `inset 0 0 0 1px ${hex}66` }
   return (
     <span
       title={title}
-      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ring-1 ${
-        own
-          ? 'bg-blue-500 text-white ring-blue-600'
-          : 'bg-green-100 text-green-700 ring-green-300 dark:bg-green-900/50 dark:text-green-300 dark:ring-green-700'
-      }`}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+      style={style}
     >
       $
     </span>
@@ -530,7 +534,7 @@ function RolloverStep({ step }) {
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {step.coins.map((coin, idx) => (
-            <Coin key={`${coin.name}-${idx}`} own={coin.own} title={`${coin.name}: ${coin.display}/mo`} />
+            <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={`${coin.name}: ${coin.display}/mo`} />
           ))}
           <span className="ml-2 text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{step.rollingPaymentDisplay}/mo</span>
           {step.freedCount > 0 ? (

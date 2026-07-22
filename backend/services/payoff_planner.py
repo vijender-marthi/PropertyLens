@@ -601,8 +601,11 @@ def build_report(
         never = pm is None or pm > cap
         own_pi = float(l.get("pi", 0.0) or 0.0)
         freed_total = sum(c["payment"] for c in freed_coins)
-        coins = [{"name": c["name"], "display": c["display"], "own": False} for c in freed_coins]
-        coins.append({"name": l["name"], "display": format_currency(own_pi), "own": True})
+        # Each freed coin carries the payoff order of the home it came from, so
+        # the UI can tint it in that home's colour — money flowing from a cleared
+        # home into the next target.
+        coins = [{"name": c["name"], "display": c["display"], "own": False, "order": c["order"]} for c in freed_coins]
+        coins.append({"name": l["name"], "display": format_currency(own_pi), "own": True, "order": k})
         rollover.append({
             "order": k,
             "name": l["name"],
@@ -616,7 +619,7 @@ def build_report(
             "coins": coins,
         })
         if not never:
-            freed_coins.append({"name": l["name"], "payment": own_pi, "display": format_currency(own_pi)})
+            freed_coins.append({"name": l["name"], "payment": own_pi, "display": format_currency(own_pi), "order": k})
 
     # Metric cards.
     cards = {
