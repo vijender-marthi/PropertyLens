@@ -423,7 +423,7 @@ function statusLabel(status) {
   if (status === 'complete') return 'Complete'
   if (status === 'partial') return 'Partial'
   if (status === 'needs_review') return 'Needs review'
-  return 'Empty'
+  return 'Not started'
 }
 
 function sectionPresentation(sectionId) {
@@ -558,34 +558,35 @@ function LoanSourceDetailsDialog({ loan, onClose }) {
   )
 }
 
-function TextInput({ label, value, onChange, type = 'text', error, helper, placeholder, emphasis = false, required = false, source, fieldKey }) {
+function TextInput({ label, value, onChange, onBlur, type = 'text', error, helper, placeholder, emphasis = false, required = false, source, fieldKey }) {
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
       <input
-        className={`h-10 w-full rounded-lg border bg-gray-100 px-3 text-sm text-gray-950 outline-none transition-colors duration-150 placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-950 dark:text-white dark:placeholder:text-gray-600 ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}
+        className={`h-10 w-full rounded-lg border bg-white px-3 text-sm text-gray-950 outline-none transition-colors duration-150 placeholder:text-gray-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25 dark:bg-gray-800 dark:text-white dark:placeholder:text-gray-500 ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'}`}
         type={type}
         value={value ?? ''}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
         aria-invalid={Boolean(error)}
       />
     </Field>
   )
 }
 
-function MoneyInput({ label, value, onChange, error, helper, emphasis = false, required = false, source, fieldKey }) {
+function MoneyInput({ label, value, onChange, onBlur, error, helper, emphasis = false, required = false, source, fieldKey }) {
   const [focused, setFocused] = useState(false)
   const displayValue = focused || value === '' || value == null ? (value ?? '') : formatCurrency(toNumber(value))
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
-      <div className={`flex h-10 items-center rounded-lg border bg-gray-100 transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:bg-gray-950 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}>
+      <div className={`flex h-10 items-center rounded-lg border bg-white transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/25 dark:bg-gray-800 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'}`}>
         <input
           className={`w-full rounded-lg border-0 bg-transparent px-3 text-sm text-gray-950 outline-none dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'}`}
           type="text"
           inputMode="decimal"
           value={displayValue}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onBlur={() => { setFocused(false); onBlur?.() }}
           onChange={(event) => {
             const next = event.target.value.replace(/[$,\s]/g, '')
             if (isDecimalDraft(next)) onChange(next)
@@ -610,7 +611,7 @@ function ReadOnlyMoneyField({ label, display, helper, source, fieldKey }) {
 function PercentInput({ label, value, onChange, error, helper, emphasis = false, required = false, source, fieldKey }) {
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
-      <div className={`flex h-10 items-center rounded-lg border bg-gray-100 transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 dark:bg-gray-950 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`}>
+      <div className={`flex h-10 items-center rounded-lg border bg-white transition-colors duration-150 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/25 dark:bg-gray-800 ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'}`}>
         <input
           className={`w-full rounded-l-lg border-0 bg-transparent px-3 text-sm text-gray-950 outline-none dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'}`}
           type="text"
@@ -628,10 +629,10 @@ function PercentInput({ label, value, onChange, error, helper, emphasis = false,
   )
 }
 
-function SelectInput({ label, value, onChange, children, error, helper, emphasis = false, required = false, source, fieldKey }) {
+function SelectInput({ label, value, onChange, onBlur, children, error, helper, emphasis = false, required = false, source, fieldKey }) {
   return (
     <Field label={label} error={error} helper={helper} emphasis={emphasis} required={required} source={source} fieldKey={fieldKey}>
-      <select className={`h-10 w-full rounded-lg border bg-gray-100 px-3 text-sm text-gray-950 outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:bg-gray-950 dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-700'}`} value={value ?? ''} onChange={(event) => onChange(event.target.value)} aria-invalid={Boolean(error)}>
+      <select className={`h-10 w-full rounded-lg border bg-white px-3 text-sm text-gray-950 outline-none transition-colors duration-150 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/25 dark:bg-gray-800 dark:text-white ${emphasis ? 'font-semibold' : 'font-medium'} ${error ? 'border-red-400' : 'border-gray-300 dark:border-gray-600'}`} value={value ?? ''} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} aria-invalid={Boolean(error)}>
         {children}
       </select>
     </Field>
@@ -649,20 +650,41 @@ function FeatureToggle({ row, checked, onChange }) {
   )
 }
 
-function SaveStatusChip({ state, dirty }) {
+function SaveStatusChip({ state, dirty, started = true }) {
   const saving = state === 'Saving'
   const failed = state === 'Save failed'
   const warning = state === 'Validation warning'
-  const label = saving ? 'Saving' : failed ? 'Save failed' : warning ? 'Review' : dirty ? 'Unsaved' : 'Saved'
-  const className = failed
+  // Nothing entered or saved yet — don't claim "Saved" on an untouched form.
+  const notStarted = started === false && !dirty && !saving && !failed && !warning && state !== 'Saved'
+  const label = notStarted ? 'Not started' : saving ? 'Saving' : failed ? 'Save failed' : warning ? 'Review' : dirty ? 'Unsaved' : 'Saved'
+  const tone = failed ? 'red' : (warning || dirty || saving) ? 'yellow' : notStarted ? 'gray' : 'green'
+  const className = tone === 'red'
     ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300'
-    : warning || dirty || saving
+    : tone === 'yellow'
       ? 'border-yellow-200 bg-yellow-50 text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-300'
-      : 'border-green-200 bg-green-50 text-green-700 dark:border-green-900/60 dark:bg-green-950/30 dark:text-green-300'
+      : tone === 'gray'
+        ? 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300'
+        : 'border-green-200 bg-green-50 text-green-700 dark:border-green-900/60 dark:bg-green-950/30 dark:text-green-300'
+  const dotClass = tone === 'red' ? 'bg-red-500' : tone === 'yellow' ? 'bg-yellow-500' : tone === 'gray' ? 'bg-gray-400' : 'bg-green-500'
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`} aria-live="polite">
-      <span className={`h-1.5 w-1.5 rounded-full ${failed ? 'bg-red-500' : warning || dirty || saving ? 'bg-yellow-500' : 'bg-green-500'}`} aria-hidden="true" />
+      <span className={`h-1.5 w-1.5 rounded-full ${dotClass}`} aria-hidden="true" />
       {label}
+    </span>
+  )
+}
+
+function SectionCompletionBadge({ status }) {
+  const map = {
+    complete: { label: 'Complete', cls: 'border-green-200 bg-green-50 text-green-700 dark:border-green-900/60 dark:bg-green-950/30 dark:text-green-300', dot: 'bg-green-500' },
+    partial: { label: 'In progress', cls: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300', dot: 'bg-blue-500' },
+    needs_review: { label: 'Needs review', cls: 'border-yellow-200 bg-yellow-50 text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-300', dot: 'bg-yellow-500' },
+  }
+  const s = map[status] || { label: 'Not started', cls: 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-300', dot: 'bg-gray-400' }
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${s.cls}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} aria-hidden="true" />
+      {s.label}
     </span>
   )
 }
@@ -845,13 +867,12 @@ function PropertySetupSection({
                 <h2 id="active-section-heading" ref={headingRef} tabIndex={-1} className="text-xl font-semibold tracking-tight text-gray-950 outline-none dark:text-white">
                   {activePresentation.title}
                 </h2>
-                <SaveStatusChip state={saveState} dirty={dirty} />
+                <SectionCompletionBadge status={status} />
               </div>
               <p className="mt-1 max-w-2xl text-sm leading-5 text-gray-500 dark:text-gray-400">{activePresentation.subtitle}</p>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Fields marked <span className="font-semibold text-red-600">*</span> are required.</p>
             </div>
           </div>
-          <span className="text-sm font-medium text-gray-500 dark:text-gray-400">{statusLabel(status)}</span>
         </div>
 
         <div className="space-y-4">
@@ -1313,6 +1334,23 @@ export default function PropertyFormPage() {
       }
     }
     return {}
+  }
+
+  // F11: validate a single required field on blur (inline, per-field) so users
+  // get feedback as they go — without lighting up every empty field at once.
+  function handleFieldBlur(key) {
+    if (!REQUIRED_FIELDS.has(key)) return
+    const value = form[key]
+    const empty = String(value ?? '').trim() === '' || (['purchase_price', 'market_value'].includes(key) && toNumber(value) <= 0)
+    setErrors((current) => {
+      if (empty) return current[key] ? current : { ...current, [key]: 'Required field.' }
+      if (current[key] === 'Required field.') {
+        const next = { ...current }
+        delete next[key]
+        return next
+      }
+      return current
+    })
   }
 
   function setField(key, value, section = activeSection, options = {}) {
@@ -2665,6 +2703,9 @@ export default function PropertyFormPage() {
   const pageTitle = id ? 'Edit Property' : 'Property Setup'
   const isFinalSection = activeVisibleSections.findIndex((section) => section.id === activeSection) === activeVisibleSections.length - 1
   const activeDirty = dirtySection === activeSection
+  // "Started" = the active section has been edited, saved, or already holds data
+  // (so an untouched new form reads "Not started", not "Saved").
+  const activeStarted = activeDirty || Boolean(sectionState[activeSection]) || (statusById.get(activeSection)?.status && statusById.get(activeSection)?.status !== 'empty')
   const unsavedSectionTitle = SETUP_SECTIONS.find((section) => section.id === dirtySection)?.title || activePresentation.title
 
   useEffect(() => {
@@ -2693,7 +2734,7 @@ export default function PropertyFormPage() {
                 <h1 className="truncate text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{pageTitle}</h1>
                 <span className="text-sm text-gray-500 dark:text-gray-400">{propertyHeaderName}</span>
                 <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Setup {progressPercent}% complete · {setupProgress.complete} of {setupProgress.total} sections complete</span>
-                <span className="pb-0.5"><SaveStatusChip state={sectionState[activeSection]} dirty={activeDirty} /></span>
+                <span className="pb-0.5"><SaveStatusChip state={sectionState[activeSection]} dirty={activeDirty} started={activeStarted} /></span>
               </div>
             </div>
           </div>
@@ -2875,11 +2916,12 @@ export default function PropertyFormPage() {
         <div className="min-w-0 space-y-5">
           <SetupSubsection title="Basic information">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <TextInput fieldKey="name" label="Property name" value={form.name} onChange={(value) => setField('name', value, 'property')} error={errors.name} helper="Use the name you recognize across dashboards." required={REQUIRED_FIELDS.has('name')} source={settlementSources.name} />
+              <TextInput fieldKey="name" label="Property name" value={form.name} onChange={(value) => setField('name', value, 'property')} onBlur={() => handleFieldBlur('name')} error={errors.name} helper="Use the name you recognize across dashboards." required={REQUIRED_FIELDS.has('name')} source={settlementSources.name} />
               <SelectInput
                 label="Home type"
                 value={normalizeHomeType(form.property_type)}
                 onChange={(value) => setField('property_type', value, 'property')}
+                onBlur={() => handleFieldBlur('property_type')}
                 error={errors.property_type}
                 fieldKey="property_type"
                 helper="The physical type of property."
@@ -2891,6 +2933,7 @@ export default function PropertyFormPage() {
                 label="Original residency status"
                 value={form.original_residency_status || ''}
                 onChange={(value) => setField('original_residency_status', value, 'property')}
+                onBlur={() => handleFieldBlur('original_residency_status')}
                 error={errors.original_residency_status}
                 fieldKey="original_residency_status"
                 helper="How the property was originally acquired or first used."
@@ -2903,6 +2946,7 @@ export default function PropertyFormPage() {
                 label="Current residency status"
                 value={form.usage_type}
                 onChange={(value) => setField('usage_type', value, 'property')}
+                onBlur={() => handleFieldBlur('usage_type')}
                 error={errors.usage_type}
                 fieldKey="usage_type"
                 helper="How the property is being used today."
@@ -2937,8 +2981,8 @@ export default function PropertyFormPage() {
             )}
           >
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <TextInput fieldKey="purchase_date" label="Purchase date" type="date" value={form.purchase_date} onChange={(value) => setField('purchase_date', value, 'property')} error={errors.purchase_date} required={REQUIRED_FIELDS.has('purchase_date')} source={settlementSources.purchase_date} />
-              <MoneyInput fieldKey="purchase_price" label="Purchase price" value={form.purchase_price} onChange={(value) => setField('purchase_price', value, 'property')} error={errors.purchase_price} helper="Original contract price, excluding later improvements." emphasis required={REQUIRED_FIELDS.has('purchase_price')} source={settlementSources.purchase_price} />
+              <TextInput fieldKey="purchase_date" label="Purchase date" type="date" value={form.purchase_date} onChange={(value) => setField('purchase_date', value, 'property')} onBlur={() => handleFieldBlur('purchase_date')} error={errors.purchase_date} required={REQUIRED_FIELDS.has('purchase_date')} source={settlementSources.purchase_date} />
+              <MoneyInput fieldKey="purchase_price" label="Purchase price" value={form.purchase_price} onChange={(value) => setField('purchase_price', value, 'property')} onBlur={() => handleFieldBlur('purchase_price')} error={errors.purchase_price} helper="Original contract price, excluding later improvements." emphasis required={REQUIRED_FIELDS.has('purchase_price')} source={settlementSources.purchase_price} />
               <MoneyInput fieldKey="down_payment" label="Down payment" value={form.down_payment} onChange={(value) => setField('down_payment', value, 'property')} error={errors.down_payment} helper="Cash contribution at purchase." source={settlementSources.down_payment} />
               <MoneyInput
 	            fieldKey="closing_costs"
@@ -2963,7 +3007,7 @@ export default function PropertyFormPage() {
 
           <SetupSubsection title="Valuation">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <MoneyInput fieldKey="market_value" label="Market price" value={form.market_value} onChange={(value) => setField('market_value', value, 'property')} error={errors.market_value} helper={form.market_value_source === 'estimated_6pct' ? 'Backend estimate using 6% annual appreciation from the purchase year. Edit this field to override manually.' : 'Manual or reported market price used for equity and LTV.'} emphasis required={REQUIRED_FIELDS.has('market_value')} />
+              <MoneyInput fieldKey="market_value" label="Market price" value={form.market_value} onChange={(value) => setField('market_value', value, 'property')} onBlur={() => handleFieldBlur('market_value')} error={errors.market_value} helper={form.market_value_source === 'estimated_6pct' ? 'Backend estimate using 6% annual appreciation from the purchase year. Edit this field to override manually.' : 'Manual or reported market price used for equity and LTV.'} emphasis required={REQUIRED_FIELDS.has('market_value')} />
               <SelectInput label="Valuation source" value={form.market_value_source} onChange={(value) => setField('market_value_source', value, 'property')} helper="Automatic estimate or a user-provided override.">
                 <option value="estimated_6pct">Automatic · 6% yearly</option>
                 <option value="manual">Manual</option>
@@ -3111,13 +3155,15 @@ export default function PropertyFormPage() {
             </div>
           </div>
         ) : (
-          <div className="p-5 text-center">
-            <span className="mx-auto grid h-11 w-11 place-items-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><FileText className="h-5 w-5" /></span>
-            <p className="mt-3 text-sm font-semibold text-gray-950 dark:text-white">Upload property documents</p>
-            <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">Closing disclosures and settlement statements can populate purchase, address, and valuation fields.</p>
-            <button type="button" className="btn-primary mt-4 inline-flex items-center gap-2 text-sm" onClick={openSettlementUpload} disabled={settlementUploading}>
-              <Upload className="h-4 w-4" />
-              {settlementUploading ? 'Uploading...' : 'Upload document'}
+          <div className="flex items-center gap-3 p-4">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"><FileText className="h-4 w-4" /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-gray-900 dark:text-white">Have a closing or settlement doc?</p>
+              <p className="mt-0.5 text-xs leading-5 text-gray-500 dark:text-gray-400">Upload it to auto-fill purchase, address &amp; valuation.</p>
+            </div>
+            <button type="button" className="btn-secondary inline-flex shrink-0 items-center gap-1.5 text-xs" onClick={openSettlementUpload} disabled={settlementUploading}>
+              <Upload className="h-3.5 w-3.5" />
+              {settlementUploading ? 'Uploading…' : 'Upload'}
             </button>
           </div>
         )}
