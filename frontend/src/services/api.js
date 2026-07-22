@@ -12,14 +12,17 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Redirect to login on 401
+// Redirect to login only when the API has confirmed that the session is invalid.
+// Bootstrap session verification handles its own 401 so a backend restart or
+// temporary network failure cannot erase an otherwise valid local session.
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     const requestUrl = err.config?.url || ''
     const isAuthRequest = requestUrl.includes('/auth/token') || requestUrl.includes('/auth/register') || requestUrl.includes('/auth/password-reset')
     const isAlreadyOnLogin = window.location.pathname === '/login'
-    if (err.response?.status === 401 && !isAuthRequest) {
+    const skipAuthRedirect = err.config?.skipAuthRedirect === true
+    if (err.response?.status === 401 && !isAuthRequest && !skipAuthRedirect) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       if (!isAlreadyOnLogin) {
@@ -42,7 +45,7 @@ export const authAPI = {
   },
   requestPasswordReset: (email) => api.post('/auth/password-reset/request', { email }),
   confirmPasswordReset: (token, newPassword) => api.post('/auth/password-reset/confirm', { token, new_password: newPassword }),
-  me: () => api.get('/auth/me'),
+  me: () => api.get('/auth/me', { skipAuthRedirect: true }),
   listUsers: () => api.get('/auth/admin/users'),
   updateUserRole: (userId, role) => api.patch(`/auth/admin/users/${userId}/role`, { role }),
 }
@@ -80,6 +83,11 @@ export const propAPI = {
   dashboard: (excludeIds = '') => api.get('/properties/dashboard/summary', { params: { exclude_ids: excludeIds } }),
   portfolioAnalysis: (params = {}, config = {}) => api.get('/properties/analysis/portfolio', { ...config, params }),
   payoffPlanner: (params = {}, config = {}) => api.get('/properties/analysis/payoff-planner', { ...config, params }),
+  // Saved payoff scenarios (per user)
+  listScenarios: () => api.get('/payoff/scenarios'),
+  createScenario: (data) => api.post('/payoff/scenarios', data),
+  updateScenario: (id, data) => api.put(`/payoff/scenarios/${id}`, data),
+  deleteScenario: (id) => api.delete(`/payoff/scenarios/${id}`),
   // Loans
   addLoan: (propId, data) => api.post(`/properties/${propId}/loans`, data),
   updateLoan: (propId, loanId, data) => api.put(`/properties/${propId}/loans/${loanId}`, data),

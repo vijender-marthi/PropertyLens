@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag } from 'lucide-react'
+import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare } from 'lucide-react'
+import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
 
@@ -22,25 +23,63 @@ const DEFAULT_INPUTS = {
   selectedIds: null,
 }
 
+// Coerce an arbitrary parsed object (from storage or a saved scenario) into a
+// valid, clamped inputs shape.
+function normalizeInputs(parsed) {
+  if (!parsed || typeof parsed !== 'object') return { ...DEFAULT_INPUTS }
+  return {
+    strategy: parsed.strategy === 'snowball' ? 'snowball' : 'avalanche',
+    lumpSum: clamp(Number(parsed.lumpSum) || 0, 0, 300_000),
+    extraMonthly: clamp(Number(parsed.extraMonthly) || 0, 0, 8_000),
+    recurringLump: clamp(Number(parsed.recurringLump) || 0, 0, 100_000),
+    recurringMonth: clamp(Number(parsed.recurringMonth) || 12, 1, 12),
+    recurringYears: clamp(Number(parsed.recurringYears) || 10, 1, 30),
+    includePrimary: Boolean(parsed.includePrimary),
+    selectedIds: Array.isArray(parsed.selectedIds)
+      ? parsed.selectedIds.map(Number).filter(Number.isFinite)
+      : null,
+  }
+}
+
 function loadInputs() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULT_INPUTS }
-    const parsed = JSON.parse(raw)
-    return {
-      strategy: parsed.strategy === 'snowball' ? 'snowball' : 'avalanche',
-      lumpSum: clamp(Number(parsed.lumpSum) || 0, 0, 300_000),
-      extraMonthly: clamp(Number(parsed.extraMonthly) || 0, 0, 8_000),
-      recurringLump: clamp(Number(parsed.recurringLump) || 0, 0, 100_000),
-      recurringMonth: clamp(Number(parsed.recurringMonth) || 12, 1, 12),
-      recurringYears: clamp(Number(parsed.recurringYears) || 10, 1, 30),
-      includePrimary: Boolean(parsed.includePrimary),
-      selectedIds: Array.isArray(parsed.selectedIds)
-        ? parsed.selectedIds.map(Number).filter(Number.isFinite)
-        : null,
-    }
+    return normalizeInputs(JSON.parse(raw))
   } catch {
     return { ...DEFAULT_INPUTS }
+  }
+}
+
+// Compact, order-independent signature so we can tell whether the live inputs
+// still match a saved scenario.
+function inputsSignature(inp) {
+  const n = normalizeInputs(inp)
+  return JSON.stringify({
+    strategy: n.strategy,
+    lumpSum: n.lumpSum,
+    extraMonthly: n.extraMonthly,
+    recurringLump: n.recurringLump,
+    recurringMonth: n.recurringMonth,
+    recurringYears: n.recurringYears,
+    includePrimary: n.includePrimary,
+    selectedIds: n.selectedIds ? [...n.selectedIds].sort((a, b) => a - b) : null,
+  })
+}
+
+// Snapshot the headline results for a scenario, with numeric fields for ranking.
+function buildSnapshot(report) {
+  const c = report?.cards
+  if (!c) return null
+  return {
+    debtFreeDate: c.debtFree?.date ?? null,
+    debtFreeDisplay: c.debtFree?.display ?? null,
+    allPayOff: Boolean(c.debtFree?.allPayOff),
+    debtFreeMonth: Number.isFinite(report?.debtFreeMonth) ? report.debtFreeMonth : null,
+    interestSavedDisplay: c.interestSaved?.display ?? null,
+    interestSavedValue: Number.isFinite(c.interestSaved?.value) ? c.interestSaved.value : null,
+    timeSavedDisplay: c.timeSaved?.display ?? null,
+    timeSavedValue: Number.isFinite(c.timeSaved?.value) ? c.timeSaved.value : null,
   }
 }
 
@@ -109,6 +148,103 @@ export default function PayoffPlannerPage() {
 
   const update = (patch) => setInputs((prev) => ({ ...prev, ...patch }))
 
+  // ---- Saved scenarios ----
+  const [scenarios, setScenarios] = useState([])
+  const [activeScenarioId, setActiveScenarioId] = useState(null)
+  const [scenarioBusy, setScenarioBusy] = useState(false)
+  const [saveOpen, setSaveOpen] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
+  const [exportView, setExportView] = useState(null) // {mode, columns} while printing
+
+  const refreshScenarios = () =>
+    propAPI.listScenarios().then((r) => setScenarios(r.data || [])).catch(() => {})
+
+  useEffect(() => { refreshScenarios() }, [])
+
+  const currentSig = useMemo(() => inputsSignature(inputs), [inputs])
+  const activeScenario = scenarios.find((s) => s.id === activeScenarioId) || null
+  const activeMatches = activeScenario ? inputsSignature(activeScenario.inputs) === currentSig : false
+
+  const saveScenario = async (name) => {
+    setScenarioBusy(true)
+    try {
+      const res = await propAPI.createScenario({ name, inputs, results: buildSnapshot(report) })
+      await refreshScenarios()
+      setActiveScenarioId(res.data.id)
+      setSaveOpen(false)
+      toast.success(`Saved “${res.data.name}”`)
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Could not save the scenario.')
+    } finally { setScenarioBusy(false) }
+  }
+
+  const updateActiveScenario = async () => {
+    if (!activeScenario) return
+    setScenarioBusy(true)
+    try {
+      await propAPI.updateScenario(activeScenario.id, { inputs, results: buildSnapshot(report) })
+      await refreshScenarios()
+      toast.success(`Updated “${activeScenario.name}”`)
+    } catch {
+      toast.error('Could not update the scenario.')
+    } finally { setScenarioBusy(false) }
+  }
+
+  const applyScenario = (sc) => {
+    setInputs(normalizeInputs(sc.inputs))
+    setActiveScenarioId(sc.id)
+  }
+
+  const deleteScenario = async (id) => {
+    setScenarioBusy(true)
+    try {
+      await propAPI.deleteScenario(id)
+      if (activeScenarioId === id) setActiveScenarioId(null)
+      await refreshScenarios()
+    } catch {
+      toast.error('Could not delete the scenario.')
+    } finally { setScenarioBusy(false) }
+  }
+
+  // Columns for the comparison / export: the live "current plan" first, then
+  // each saved scenario (skipping the one that equals the current plan).
+  const compareColumns = useMemo(() => {
+    const cols = []
+    if (report?.cards) {
+      cols.push({
+        id: '__current__',
+        name: activeMatches && activeScenario ? activeScenario.name : 'Current plan',
+        inputs: normalizeInputs(inputs),
+        snapshot: buildSnapshot(report),
+        current: true,
+      })
+    }
+    scenarios.forEach((s) => {
+      if (activeMatches && activeScenario && s.id === activeScenario.id) return
+      cols.push({ id: s.id, name: s.name, inputs: normalizeInputs(s.inputs), snapshot: s.results || null, savedAt: s.updatedAt || s.createdAt })
+    })
+    return cols
+  }, [report, scenarios, inputs, activeMatches, activeScenario])
+
+  // Print flow for export: render the print doc, then trigger the browser dialog.
+  useEffect(() => {
+    if (!exportView) return
+    const done = () => setExportView(null)
+    window.addEventListener('afterprint', done, { once: true })
+    const t = setTimeout(() => window.print(), 80)
+    return () => { clearTimeout(t); window.removeEventListener('afterprint', done) }
+  }, [exportView])
+
+  const exportSingle = () => {
+    const col = compareColumns.find((c) => c.current) || compareColumns[0]
+    if (!col) { toast.error('Nothing to export yet.'); return }
+    setExportView({ mode: 'single', columns: [col] })
+  }
+  const exportCompare = () => {
+    if (compareColumns.length < 2) { toast.error('Save at least one scenario to compare.'); return }
+    setExportView({ mode: 'compare', columns: compareColumns })
+  }
+
   // Toggle a property in/out of the plan. The first toggle promotes the
   // selection from "backend default" (null) to an explicit id list seeded from
   // whatever is currently included, so nothing else silently changes.
@@ -126,6 +262,7 @@ export default function PayoffPlannerPage() {
 
   return (
     <PageContainer>
+      <div className="pp-screen space-y-6">
       <header>
         <h1 className="text-xl font-bold text-gray-900 dark:text-white">Payoff planner</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -133,6 +270,25 @@ export default function PayoffPlannerPage() {
           cascade from each cleared loan into the next.
         </p>
       </header>
+
+      <ScenarioBar
+        scenarios={scenarios}
+        activeScenario={activeScenario}
+        activeMatches={activeMatches}
+        busy={scenarioBusy}
+        onSave={() => setSaveOpen(true)}
+        onUpdate={updateActiveScenario}
+        onApply={applyScenario}
+        onDelete={deleteScenario}
+        onCompare={() => setCompareOpen((v) => !v)}
+        compareOpen={compareOpen}
+        onExport={exportSingle}
+        canExport={Boolean(report?.cards)}
+      />
+
+      {compareOpen ? (
+        <ComparePanel columns={compareColumns} onExport={exportCompare} onClose={() => setCompareOpen(false)} />
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* Results (left) */}
@@ -161,8 +317,43 @@ export default function PayoffPlannerPage() {
           </div>
         </aside>
       </div>
+      </div>
+
+      {saveOpen ? (
+        <SaveDialog
+          busy={scenarioBusy}
+          defaultName={suggestScenarioName(inputs, scenarios)}
+          onCancel={() => setSaveOpen(false)}
+          onSave={saveScenario}
+        />
+      ) : null}
+
+      {exportView ? <ScenarioPrintDoc view={exportView} /> : null}
+      <style>{`@media print {
+        body * { visibility: hidden !important; }
+        .pp-print { display: block !important; }
+        .pp-print, .pp-print * { visibility: visible !important; }
+        .pp-print { position: absolute; left: 0; top: 0; width: 100%; }
+        @page { margin: 14mm; }
+      }`}</style>
     </PageContainer>
   )
+}
+
+// Suggest a distinct default name for a new scenario.
+function suggestScenarioName(inputs, scenarios) {
+  const used = new Set((scenarios || []).map((s) => (s.name || '').toLowerCase()))
+  const base =
+    inputs.extraMonthly >= 1500 || inputs.lumpSum >= 50_000 ? 'Aggressive'
+    : inputs.extraMonthly === 0 && inputs.lumpSum === 0 && inputs.recurringLump === 0 ? 'Baseline'
+    : inputs.recurringLump > 0 ? 'Recurring bonus'
+    : 'Plan'
+  if (!used.has(base.toLowerCase())) return base
+  for (let i = 2; i < 50; i += 1) {
+    const cand = `${base} ${i}`
+    if (!used.has(cand.toLowerCase())) return cand
+  }
+  return base
 }
 
 // ---------------------------------------------------------------------------
@@ -781,6 +972,234 @@ function PayoffTimeline({ report, timeline }) {
           </>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios: toolbar, compare, save dialog, print doc
+// ---------------------------------------------------------------------------
+const strategyLabel = (s) => (s === 'snowball' ? 'Snowball' : 'Avalanche')
+
+function scenarioInputRows(inp) {
+  const rec = inp.recurringLump > 0
+    ? `${usd(inp.recurringLump)} · ${MONTHS[(inp.recurringMonth || 12) - 1].slice(0, 3)} ×${inp.recurringYears}y`
+    : '—'
+  return {
+    strategy: strategyLabel(inp.strategy),
+    extra: inp.extraMonthly ? `${usd(inp.extraMonthly)}/mo` : '—',
+    lump: inp.lumpSum ? usd(inp.lumpSum) : '—',
+    recurring: rec,
+    properties: Array.isArray(inp.selectedIds) ? `${inp.selectedIds.length} selected` : 'Default',
+  }
+}
+
+// Indices of the best column for a given snapshot key. dir 'min' (earlier) or 'max'.
+function bestIndices(columns, key, dir) {
+  const vals = columns.map((c) => (c.snapshot && Number.isFinite(c.snapshot[key]) ? c.snapshot[key] : null))
+  const valid = vals.filter((v) => v !== null)
+  if (valid.length < 2) return new Set()
+  const best = dir === 'min' ? Math.min(...valid) : Math.max(...valid)
+  const out = new Set()
+  vals.forEach((v, i) => { if (v === best) out.add(i) })
+  return out
+}
+
+function ScenarioBar({ scenarios, activeScenario, activeMatches, busy, onSave, onUpdate, onApply, onDelete, onCompare, compareOpen, onExport, canExport }) {
+  return (
+    <div className="card-sm">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">Scenarios</span>
+          {activeScenario && !activeMatches ? (
+            <span className="text-[11px] text-amber-600 dark:text-amber-400">· “{activeScenario.name}” modified</span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {activeScenario && !activeMatches ? (
+            <button type="button" onClick={onUpdate} disabled={busy} className="btn-secondary text-xs px-2.5 py-1.5">
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />Update “{activeScenario.name}”
+            </button>
+          ) : null}
+          <button type="button" onClick={onSave} disabled={busy || !canExport} className="btn-secondary text-xs px-2.5 py-1.5">
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />Save current
+          </button>
+          <button type="button" onClick={onCompare} disabled={!scenarios.length} aria-pressed={compareOpen}
+            className={`btn-secondary text-xs px-2.5 py-1.5 ${compareOpen ? 'ring-2 ring-blue-500/40' : ''}`}>
+            <GitCompare className="h-3.5 w-3.5" aria-hidden="true" />Compare
+          </button>
+          <button type="button" onClick={onExport} disabled={!canExport} className="btn-secondary text-xs px-2.5 py-1.5">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />Export
+          </button>
+        </div>
+      </div>
+
+      {scenarios.length ? (
+        <div className="flex flex-wrap gap-2">
+          {scenarios.map((s) => {
+            const isActive = activeScenario?.id === s.id && activeMatches
+            return (
+              <span key={s.id}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
+                  isActive
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+                }`}>
+                {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
+                <button type="button" onClick={() => onApply(s)} className="font-medium" title="Apply this scenario">{s.name}</button>
+                <button type="button" onClick={() => onDelete(s.id)} disabled={busy} aria-label={`Delete ${s.name}`}
+                  className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              </span>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400 dark:text-gray-500">No saved scenarios yet. Tune the inputs, then “Save current” to keep this plan and compare it against others.</p>
+      )}
+    </div>
+  )
+}
+
+function ComparePanel({ columns, onExport, onClose }) {
+  if (!columns.length) return null
+  const bestDebt = bestIndices(columns, 'debtFreeMonth', 'min')
+  const bestTime = bestIndices(columns, 'timeSavedValue', 'max')
+  const bestInterest = bestIndices(columns, 'interestSavedValue', 'max')
+  const rows = columns.map((c) => ({ col: c, io: scenarioInputRows(c.inputs) }))
+
+  const cell = 'px-3 py-2.5 text-sm whitespace-nowrap border-t border-gray-100 dark:border-gray-700/70'
+  const bestCls = 'bg-green-50 font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300'
+  const outcome = (label, pick, best) => (
+    <tr>
+      <th scope="row" className={`${cell} text-left font-normal text-gray-500 dark:text-gray-400`}>{label}</th>
+      {rows.map((r, i) => (
+        <td key={r.col.id} className={`${cell} ${best.has(i) ? bestCls : 'text-gray-900 dark:text-gray-100'}`}>
+          <span className="inline-flex items-center gap-1">
+            {best.has(i) ? <Trophy className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+            {pick(r.col) || '—'}
+          </span>
+        </td>
+      ))}
+    </tr>
+  )
+
+  return (
+    <div className="card">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+          <GitCompare className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Compare scenarios
+        </h2>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onExport} className="btn-secondary text-xs px-2.5 py-1.5">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />Export comparison
+          </button>
+          <button type="button" onClick={onClose} aria-label="Close comparison" className="btn-ghost px-2 py-1.5">
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+      <div className="table-scroll">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <th className="px-3 py-2 text-left text-xs font-medium text-gray-400 dark:text-gray-500">Metric</th>
+              {rows.map((r) => (
+                <th key={r.col.id} className="px-3 py-2 text-left text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                  {r.col.name}{r.col.current ? <span className="ml-1 text-[10px] font-normal text-blue-600 dark:text-blue-400">live</span> : null}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {outcome('Strategy', (c) => scenarioInputRows(c.inputs).strategy, new Set())}
+            {outcome('Extra / month', (c) => scenarioInputRows(c.inputs).extra, new Set())}
+            {outcome('One-time lump', (c) => scenarioInputRows(c.inputs).lump, new Set())}
+            {outcome('Recurring', (c) => scenarioInputRows(c.inputs).recurring, new Set())}
+            {outcome('Properties', (c) => scenarioInputRows(c.inputs).properties, new Set())}
+            {outcome('Debt-free date', (c) => c.snapshot?.debtFreeDisplay || c.snapshot?.debtFreeDate, bestDebt)}
+            {outcome('Time saved', (c) => c.snapshot?.timeSavedDisplay, bestTime)}
+            {outcome('Interest saved', (c) => c.snapshot?.interestSavedDisplay, bestInterest)}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+        <Info className="h-3 w-3" aria-hidden="true" />
+        Best value in each outcome row is highlighted. Saved columns show the results captured when you saved them.
+      </p>
+    </div>
+  )
+}
+
+function SaveDialog({ busy, defaultName, onCancel, onSave }) {
+  const [name, setName] = useState(defaultName || '')
+  const inputRef = useRef(null)
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
+  const submit = (e) => { e.preventDefault(); const n = name.trim(); if (n) onSave(n) }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Save scenario">
+      <form onSubmit={submit} className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-gray-800">
+        <h3 className="mb-1 text-base font-semibold text-gray-900 dark:text-white">Save scenario</h3>
+        <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">Keeps the current inputs and results so you can switch back and compare.</p>
+        <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Name</label>
+        <input ref={inputRef} value={name} onChange={(e) => setName(e.target.value)} maxLength={80}
+          placeholder="Aggressive"
+          className="mb-4 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-gray-600 dark:bg-gray-900 dark:text-white" />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="btn-secondary text-sm">Cancel</button>
+          <button type="submit" disabled={busy || !name.trim()} className="btn-primary text-sm">{busy ? 'Saving…' : 'Save'}</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+// Print-only document (single scenario or comparison). Hidden on screen; the
+// page's @media print rules reveal it and hide the app chrome.
+function ScenarioPrintDoc({ view }) {
+  const { mode, columns } = view
+  const now = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const outcomeRows = [
+    ['Strategy', (c) => scenarioInputRows(c.inputs).strategy],
+    ['Extra / month', (c) => scenarioInputRows(c.inputs).extra],
+    ['One-time lump', (c) => scenarioInputRows(c.inputs).lump],
+    ['Recurring', (c) => scenarioInputRows(c.inputs).recurring],
+    ['Properties', (c) => scenarioInputRows(c.inputs).properties],
+    ['Debt-free date', (c) => c.snapshot?.debtFreeDisplay || c.snapshot?.debtFreeDate || '—'],
+    ['Time saved', (c) => c.snapshot?.timeSavedDisplay || '—'],
+    ['Interest saved', (c) => c.snapshot?.interestSavedDisplay || '—'],
+  ]
+  return (
+    <div className="pp-print hidden" style={{ color: '#111', background: '#fff' }}>
+      <div style={{ borderBottom: '2px solid #111', paddingBottom: 8, marginBottom: 16 }}>
+        <div style={{ fontSize: 20, fontWeight: 700 }}>Payoff planner — {mode === 'compare' ? 'scenario comparison' : columns[0]?.name || 'scenario'}</div>
+        <div style={{ fontSize: 12, color: '#555' }}>PropertyLens · generated {now}</div>
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid #999' }}>Metric</th>
+            {columns.map((c) => (
+              <th key={c.id} style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid #999', fontWeight: 700 }}>{c.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {outcomeRows.map(([label, pick]) => (
+            <tr key={label}>
+              <td style={{ padding: '6px 8px', borderBottom: '1px solid #ddd', color: '#555' }}>{label}</td>
+              {columns.map((c) => (
+                <td key={c.id} style={{ padding: '6px 8px', borderBottom: '1px solid #ddd' }}>{pick(c)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p style={{ fontSize: 10, color: '#888', marginTop: 12 }}>
+        Results reflect each plan as saved. Balances and rates are a point-in-time snapshot from your loan data.
+      </p>
     </div>
   )
 }

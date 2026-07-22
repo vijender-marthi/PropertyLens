@@ -809,3 +809,18 @@ class UserSharing(Base):
 
     owner = relationship("User", foreign_keys=[owner_id], back_populates="shares_given")
     shared_with = relationship("User", foreign_keys=[shared_with_id], back_populates="shares_received")
+
+
+class PayoffScenario(Base):
+    """A saved Payoff-planner scenario: the full input set plus a snapshot of
+    the headline results at save time, so the user can quickly switch between
+    plans and compare them side by side."""
+    __tablename__ = "payoff_scenarios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    inputs = Column(Text, nullable=False)   # JSON: {strategy, lumpSum, extraMonthly, recurringLump, recurringMonth, recurringYears, includePrimary, selectedPropertyIds, selectionExplicit}
+    results = Column(Text)                   # JSON: headline snapshot {debtFree, timeSaved, interestSaved, peakMonthly, ...}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

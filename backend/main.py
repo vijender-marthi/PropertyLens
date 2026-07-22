@@ -7,7 +7,7 @@ from sqlalchemy import text
 import uuid
 import models
 from database import engine
-from routers import auth, properties, documents, sharing, help as help_router
+from routers import auth, properties, documents, sharing, help as help_router, scenarios
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -727,6 +727,7 @@ app.include_router(documents.router)
 app.include_router(documents.property_tax_router)
 app.include_router(sharing.router)
 app.include_router(help_router.router)
+app.include_router(scenarios.router)
 
 
 @app.get("/api/health")
