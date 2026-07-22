@@ -733,6 +733,9 @@ function SetupSubsection({ title, actions, children }) {
 function PropertySetupFooter({ isFinalSection, nextSection, previousSection, saving, onCancel, onSaveDraft, onSaveProperty, onNext, onBack }) {
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
+      {!isFinalSection ? (
+        <span className="mr-auto hidden text-xs text-gray-400 dark:text-gray-500 sm:inline">Your progress saves automatically when you continue.</span>
+      ) : null}
       <button
         type="button"
         className="inline-flex h-9 items-center justify-center rounded-lg border border-orange-200 bg-orange-50 px-3 text-sm font-medium text-orange-700 transition hover:border-orange-300 hover:bg-orange-100 hover:text-orange-800 focus:outline-none focus:ring-2 focus:ring-orange-300/50 dark:border-orange-900/70 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:border-orange-800 dark:hover:bg-orange-950/50 dark:hover:text-orange-200"
@@ -751,11 +754,11 @@ function PropertySetupFooter({ isFinalSection, nextSection, previousSection, sav
         </button>
       ) : (
         <>
-          <button type="button" className="btn-secondary inline-flex h-9 items-center justify-center py-0" onClick={onSaveDraft} disabled={saving}>
-            Save Draft
+          <button type="button" className="inline-flex h-9 items-center justify-center px-2 text-sm font-medium text-gray-500 transition hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200" onClick={onSaveDraft} disabled={saving}>
+            Save &amp; finish later
           </button>
           <button type="button" className="btn-primary inline-flex h-9 items-center justify-center gap-1.5 py-0" onClick={onNext} disabled={!nextSection}>
-            Next <ChevronRight className="h-4 w-4" />
+            Save &amp; continue <ChevronRight className="h-4 w-4" />
           </button>
         </>
       )}
@@ -809,6 +812,7 @@ function PropertySetupTabs({ sections, activeSection, statusById, loansCount, er
               >
                 <SetupStepIcon name={section.icon} />
                 <span className="whitespace-nowrap">{label}</span>
+                {section.id === 'financing' ? <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">Optional</span> : null}
                 <span className="ml-auto inline-flex items-center">
                   {state === 'complete' ? (
                     <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-white" aria-label={`${section.title}: Complete`}>
@@ -1013,6 +1017,7 @@ export default function PropertyFormPage() {
   const [settlementReview, setSettlementReview] = useState(null)
   const [settlementReviewSummaries, setSettlementReviewSummaries] = useState({})
   const [settlementDocuments, setSettlementDocuments] = useState([])
+  const [uploadHintDismissed, setUploadHintDismissed] = useState(false)
   const [settlementDocument, setSettlementDocument] = useState(null)
   const [loanLifecycle, setLoanLifecycle] = useState(null)
   const [loanSourceDetails, setLoanSourceDetails] = useState(null)
@@ -1068,15 +1073,19 @@ export default function PropertyFormPage() {
   const nextSection = activeVisibleSections.find((section) => activeVisibleSections.findIndex((item) => item.id === section.id) > activeVisibleSections.findIndex((item) => item.id === activeSection))
   const previousSection = [...activeVisibleSections].reverse().find((section) => activeVisibleSections.findIndex((item) => item.id === section.id) < activeVisibleSections.findIndex((item) => item.id === activeSection))
   const setupProgress = useMemo(() => {
-    const total = activeVisibleSections.length
-    if (!total) return { percent: 0, complete: 0, total: 0 }
-    const complete = activeVisibleSections.filter((section) => statusById.get(section.id)?.status === 'complete').length
-    const completedRequired = activeVisibleSections.reduce((sum, section) => sum + (statusById.get(section.id)?.completedRequired || 0), 0)
-    const totalRequired = activeVisibleSections.reduce((sum, section) => sum + (statusById.get(section.id)?.totalRequired || 0), 0)
+    // F2: count only required sections so the denominator stays stable — the
+    // optional Loans step (financing) toggling on/off must not move "N of M".
+    const required = activeVisibleSections.filter((section) => section.id !== 'financing')
+    const optionalCount = activeVisibleSections.length - required.length
+    const total = required.length
+    if (!total) return { percent: 0, complete: 0, total: 0, optionalCount }
+    const complete = required.filter((section) => statusById.get(section.id)?.status === 'complete').length
+    const completedRequired = required.reduce((sum, section) => sum + (statusById.get(section.id)?.completedRequired || 0), 0)
+    const totalRequired = required.reduce((sum, section) => sum + (statusById.get(section.id)?.totalRequired || 0), 0)
     const percent = totalRequired > 0
       ? Math.round((completedRequired / totalRequired) * 100)
       : Math.round((complete / total) * 100)
-    return { percent, complete, total }
+    return { percent, complete, total, optionalCount }
   }, [activeVisibleSections, statusById])
   const expenseYears = useMemo(() => {
     const parsed = Date.parse(form.purchase_date)
@@ -2734,7 +2743,7 @@ export default function PropertyFormPage() {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <h1 className="truncate text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">{pageTitle}</h1>
                 <span className="text-sm text-gray-500 dark:text-gray-400">{propertyHeaderName}</span>
-                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Setup {progressPercent}% complete · {setupProgress.complete} of {setupProgress.total} sections complete</span>
+                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Setup {progressPercent}% complete · {setupProgress.complete} of {setupProgress.total} required{setupProgress.optionalCount ? ` · +${setupProgress.optionalCount} optional` : ''}</span>
                 <span className="pb-0.5"><SaveStatusChip state={sectionState[activeSection]} dirty={activeDirty} started={activeStarted} /></span>
               </div>
             </div>
@@ -2927,7 +2936,7 @@ export default function PropertyFormPage() {
           </SetupSubsection>
 
           <SetupSubsection title="Basic information">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2">
               <TextInput fieldKey="name" label="Property name" value={form.name} onChange={(value) => setField('name', value, 'property')} onBlur={() => handleFieldBlur('name')} error={errors.name} helper="Use the name you recognize across dashboards." required={REQUIRED_FIELDS.has('name')} source={settlementSources.name} />
               <SelectInput
                 label="Home type"
@@ -2941,6 +2950,25 @@ export default function PropertyFormPage() {
               >
                 {HOME_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </SelectInput>
+              {normalizeHomeType(form.property_type) === 'other' ? (
+                <div className="md:col-span-2">
+                  <TextInput label="Other home type" value={form.property_type_raw} onChange={(value) => setField('property_type_raw', value, 'property')} error={errors.property_type_raw} />
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(18rem,2fr)_minmax(10rem,1fr)_minmax(5.5rem,0.45fr)_minmax(7rem,0.65fr)]">
+              <TextInput label="Street address" value={form.address} onChange={(value) => setField('address', value, 'property')} source={settlementSources.address} />
+              <TextInput label="City" value={form.city} onChange={(value) => setField('city', value, 'property')} source={settlementSources.city} />
+              <TextInput label="State" value={form.state} onChange={(value) => setField('state', value, 'property')} source={settlementSources.state} />
+              <TextInput label="ZIP code" value={form.zip_code} onChange={(value) => setField('zip_code', value, 'property')} source={settlementSources.zip_code} />
+            </div>
+          </SetupSubsection>
+
+          <SetupSubsection title="Usage">
+            <p className="-mt-1 mb-3 max-w-2xl text-sm text-gray-500 dark:text-gray-400">
+              <span className="font-medium text-gray-700 dark:text-gray-200">Original</span> is how the property was first used when you acquired it; <span className="font-medium text-gray-700 dark:text-gray-200">Current</span> is how it's used today. They can differ — e.g. a former home you now rent out.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
               <SelectInput
                 label="Original residency status"
                 value={form.original_residency_status || ''}
@@ -2951,7 +2979,7 @@ export default function PropertyFormPage() {
                 helper="How the property was originally acquired or first used."
                 required={REQUIRED_FIELDS.has('original_residency_status')}
               >
-                <option value="">Select status</option>
+                <option value="">Select status…</option>
                 {ORIGINAL_RESIDENCY_OPTIONS.map((option) => <option key={option.originalValue} value={option.originalValue}>{option.label}</option>)}
               </SelectInput>
               <SelectInput
@@ -2966,32 +2994,10 @@ export default function PropertyFormPage() {
               >
                 {CURRENT_RESIDENCY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </SelectInput>
-              {normalizeHomeType(form.property_type) === 'other' ? (
-                <div className="md:col-span-2 xl:col-span-4">
-                  <TextInput label="Other home type" value={form.property_type_raw} onChange={(value) => setField('property_type_raw', value, 'property')} error={errors.property_type_raw} />
-                </div>
-              ) : null}
-            </div>
-            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(18rem,2fr)_minmax(10rem,1fr)_minmax(5.5rem,0.45fr)_minmax(7rem,0.65fr)]">
-              <TextInput label="Street address" value={form.address} onChange={(value) => setField('address', value, 'property')} source={settlementSources.address} />
-              <TextInput label="City" value={form.city} onChange={(value) => setField('city', value, 'property')} source={settlementSources.city} />
-              <TextInput label="State" value={form.state} onChange={(value) => setField('state', value, 'property')} source={settlementSources.state} />
-              <TextInput label="ZIP code" value={form.zip_code} onChange={(value) => setField('zip_code', value, 'property')} source={settlementSources.zip_code} />
             </div>
           </SetupSubsection>
 
-          <SetupSubsection
-            title="Purchase details"
-            actions={(
-              <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-gray-700 dark:bg-gray-950">
-                <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">Enter manually</span>
-                <button type="button" className="inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium text-gray-600 hover:bg-white hover:text-gray-950 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white" onClick={openSettlementUpload} disabled={settlementUploading}>
-                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-                  {settlementUploading ? 'Uploading...' : 'Upload document'}
-                </button>
-              </div>
-            )}
-          >
+          <SetupSubsection title="Purchase details">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <TextInput fieldKey="purchase_date" label="Purchase date" type="date" value={form.purchase_date} onChange={(value) => setField('purchase_date', value, 'property')} onBlur={() => handleFieldBlur('purchase_date')} error={errors.purchase_date} required={REQUIRED_FIELDS.has('purchase_date')} source={settlementSources.purchase_date} />
               <MoneyInput fieldKey="purchase_price" label="Purchase price" value={form.purchase_price} onChange={(value) => setField('purchase_price', value, 'property')} onBlur={() => handleFieldBlur('purchase_price')} error={errors.purchase_price} helper="Original contract price, excluding later improvements." emphasis required={REQUIRED_FIELDS.has('purchase_price')} source={settlementSources.purchase_price} />
@@ -3039,7 +3045,13 @@ export default function PropertyFormPage() {
         </div>
 
         <aside className="min-w-0 xl:sticky xl:top-0">
-          {renderSettlementUploadPanel()}
+          {uploadHintDismissed && !propertySetupDisplayDocuments(loanLifecycle, settlementDocuments).length ? (
+            <button type="button" className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300" onClick={() => setUploadHintDismissed(false)}>
+              <Upload className="h-3.5 w-3.5" aria-hidden="true" /> Upload a document
+            </button>
+          ) : (
+            renderSettlementUploadPanel()
+          )}
         </aside>
       </div>
     )
@@ -3168,6 +3180,9 @@ export default function PropertyFormPage() {
             <button type="button" className="btn-secondary inline-flex shrink-0 items-center gap-1.5 text-xs" onClick={openSettlementUpload} disabled={settlementUploading}>
               <Upload className="h-3.5 w-3.5" />
               {settlementUploading ? 'Uploading…' : 'Upload'}
+            </button>
+            <button type="button" className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300" onClick={() => setUploadHintDismissed(true)} aria-label="Dismiss upload hint">
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
         )}

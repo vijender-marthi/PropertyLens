@@ -79,7 +79,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AppRoutes />
-          <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
+          <Toaster position="top-center" toastOptions={{ duration: 3000 }} />
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>
