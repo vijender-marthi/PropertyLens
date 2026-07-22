@@ -116,6 +116,10 @@ def simulate(
     strategy: str = "avalanche",
     lump_sum: float = 0.0,
     extra_monthly: float = 0.0,
+    recurring_lump: float = 0.0,
+    recurring_month: int = 12,
+    recurring_years: int = 0,
+    start_month: Optional[int] = None,
     attack: bool = True,
     cap: int = CAP_MONTHS,
 ) -> Dict[str, Any]:
@@ -123,10 +127,28 @@ def simulate(
 
     When ``attack`` is False the pool is forced to 0 every month (the baseline:
     minimums only, cash flow pocketed, no lump sum).
+
+    A recurring lump sum (``recurring_lump`` applied in calendar month
+    ``recurring_month`` for ``recurring_years`` consecutive years) needs the
+    portfolio's ``start_month`` (1-12) to map a loop month index onto a calendar
+    month; without it the recurring contribution is skipped.
     """
     strategy = "snowball" if str(strategy).lower() == "snowball" else "avalanche"
     lump_sum = max(float(lump_sum or 0.0), 0.0)
     extra_monthly = max(float(extra_monthly or 0.0), 0.0)
+    recurring_lump = max(float(recurring_lump or 0.0), 0.0)
+    recurring_years = max(int(recurring_years or 0), 0)
+    try:
+        recurring_month = int(recurring_month)
+    except (TypeError, ValueError):
+        recurring_month = 12
+    if not 1 <= recurring_month <= 12:
+        recurring_month = 12
+    recurring_on = (
+        attack and recurring_lump > 0 and recurring_years > 0 and start_month is not None
+    )
+    recurring_applied = 0
+    recurring_paid = 0.0
     noi_sum = float(noi_sum or 0.0)
 
     # Overlay state — copies only, inputs are never mutated.
@@ -193,6 +215,14 @@ def simulate(
             pool = freed_pi + noi_surplus + extra_monthly
             if month == 1:
                 pool += lump_sum
+            # Recurring lump: one injection each year in the chosen calendar
+            # month, for a fixed number of years.
+            if recurring_on and recurring_applied < recurring_years:
+                cal_month = ((int(start_month) - 1 + month) % 12) + 1
+                if cal_month == recurring_month:
+                    pool += recurring_lump
+                    recurring_applied += 1
+                    recurring_paid += recurring_lump
         else:
             pool = 0.0
 
@@ -228,6 +258,8 @@ def simulate(
         "total_interest": total_interest,
         "principal_paid": principal_paid,
         "attack_paid": attack_paid,
+        "recurring_count": recurring_applied,
+        "recurring_paid": recurring_paid,
         "all_closed": not open_state(),
         "strategy": strategy,
     }
@@ -423,6 +455,9 @@ def build_report(
     strategy: str = "avalanche",
     lump_sum: float = 0.0,
     extra_monthly: float = 0.0,
+    recurring_lump: float = 0.0,
+    recurring_month: int = 12,
+    recurring_years: int = 0,
     include_primary: bool = False,
     start_date: Optional[date] = None,
     market_rate: float = MARKET_RATE,
@@ -434,15 +469,19 @@ def build_report(
 
     plan = simulate(
         loans, noi_sum, strategy=strategy, lump_sum=lump_sum,
-        extra_monthly=extra_monthly, attack=True, cap=cap,
+        extra_monthly=extra_monthly, recurring_lump=recurring_lump,
+        recurring_month=recurring_month, recurring_years=recurring_years,
+        start_month=start_date.month, attack=True, cap=cap,
     )
     # Savings baseline = the SAME avalanche/snowball plan with no external money
-    # (no lump, no extra). This isolates what the user's contributions buy, so
-    # with the sliders at zero the plan equals the baseline and nothing is
-    # "saved" — the sliders are the only thing that creates savings.
+    # (no lump, no extra, no recurring). This isolates what the user's
+    # contributions buy, so with everything at zero the plan equals the baseline
+    # and nothing is "saved" — the contributions are the only thing that creates
+    # savings.
     baseline = simulate(
         loans, noi_sum, strategy=strategy, lump_sum=0.0,
-        extra_monthly=0.0, attack=True, cap=cap,
+        extra_monthly=0.0, recurring_lump=0.0, recurring_years=0,
+        attack=True, cap=cap,
     )
     baseline_by_name = {l["name"]: l["payoff_month"] for l in baseline["loans"]}
 
@@ -650,6 +689,13 @@ def build_report(
             "strategy": strategy,
             "lumpSum": round(float(lump_sum or 0.0), 2),
             "extraMonthly": round(float(extra_monthly or 0.0), 2),
+            "recurringLump": round(float(recurring_lump or 0.0), 2),
+            "recurringMonth": int(recurring_month),
+            "recurringMonthLabel": _MONTH_ABBR[int(recurring_month) - 1] if 1 <= int(recurring_month) <= 12 else "Dec",
+            "recurringYears": int(recurring_years or 0),
+            "recurringApplied": int(plan.get("recurring_count", 0)),
+            "recurringPaid": round(float(plan.get("recurring_paid", 0.0)), 2),
+            "recurringPaidDisplay": format_metric_currency(plan.get("recurring_paid", 0.0)),
             "includePrimary": bool(include_primary),
         },
         "startDate": start_date.isoformat(),

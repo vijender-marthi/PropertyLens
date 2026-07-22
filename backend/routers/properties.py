@@ -1138,6 +1138,64 @@ def _expense_status(row: Optional[models.AnnualExpense], year: int, current_year
     return "Entered"
 
 
+def _property_tax_yoy_comment(current_row: Dict[str, Any], previous_row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    current_value = (current_row.get("propertyTax") or {}).get("value")
+    if current_value is None or current_value <= 0 or not previous_row:
+        return None
+
+    previous_value = (previous_row.get("propertyTax") or {}).get("value")
+    if previous_value is None or previous_value <= 0:
+        return None
+
+    delta = round(float(current_value) - float(previous_value), 2)
+    pct_change = abs(delta) / float(previous_value)
+    if abs(delta) < 2500 or pct_change < 0.35:
+        return None
+
+    direction = "increased" if delta > 0 else "dropped"
+    return {
+        "type": "PROPERTY_TAX_YOY_VARIANCE",
+        "severity": "review",
+        "field": "property_tax",
+        "label": "Review property tax",
+        "message": (
+            f"Property tax {direction} {format_currency(abs(delta))} "
+            f"from {previous_row['year']} ({format_currency(previous_value)}) "
+            f"to {current_row['year']} ({format_currency(current_value)})."
+        ),
+        "previousYear": previous_row["year"],
+        "previousValue": previous_value,
+        "previousDisplay": format_currency(previous_value),
+        "currentYear": current_row["year"],
+        "currentValue": current_value,
+        "currentDisplay": format_currency(current_value),
+        "delta": delta,
+        "deltaDisplay": format_currency(delta),
+        "percentChange": round(pct_change * 100, 2),
+        "percentChangeDisplay": _percent_display(pct_change * 100),
+    }
+
+
+def _attach_expense_validation_comments(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    previous_tax_row = None
+    for row in sorted(rows, key=lambda item: int(item.get("year") or 0)):
+        comments = list(row.get("comments") or [])
+        comment = _property_tax_yoy_comment(row, previous_tax_row)
+        if comment:
+            comments.append(comment)
+        row["comments"] = comments
+        row["commentSummary"] = (
+            comments[0]["label"]
+            if len(comments) == 1
+            else f"{len(comments)} comments"
+            if comments
+            else "—"
+        )
+        if (row.get("propertyTax") or {}).get("value") is not None and (row.get("propertyTax") or {}).get("value") > 0:
+            previous_tax_row = row
+    return rows
+
+
 def _expense_view_years(prop: models.Property, current_year: int) -> List[int]:
     years = [current_year]
     if getattr(prop, "purchase_date", None):
@@ -1224,6 +1282,7 @@ def build_property_expenses_view(prop: models.Property, summary_metrics: Optiona
         _build_expense_view_row(prop, year, current_year, rows_by_year.get(year))
         for year in _expense_view_years(prop, current_year)
     ]
+    rows = _attach_expense_validation_comments(rows)
     resolved = resolve_annual_operating_expenses(prop, current_year)
     resolved_total = round(float(resolved.get("value") or 0), 2)
     resolved_components = resolved.get("components") or {}
@@ -4776,8 +4835,18 @@ def _interest_by_year_by_account(prop: models.Property) -> Dict[Optional[str], D
     }
 
 
+LOAN_YEAR_DOCUMENT_CATEGORIES = {
+    "1098",
+    "mortgage_statement",
+    "closing_statement",
+    "loan_disclosure",
+    "payoff_statement",
+}
+LOAN_CLOSING_FALLBACK_CATEGORIES = {"closing_statement", "loan_disclosure", "payoff_statement"}
+
+
 def _loan_document_matches(loan: models.Loan, doc: models.Document, total_loans: int) -> bool:
-    if getattr(doc, "doc_category", None) not in {"1098", "mortgage_statement"}:
+    if getattr(doc, "doc_category", None) not in LOAN_YEAR_DOCUMENT_CATEGORIES:
         return False
     data = _document_payload(doc)
     doc_account = getattr(doc, "loan_account_number", None) or data.get("account_number") or data.get("loan_account_number")
@@ -4924,6 +4993,45 @@ def _document_payload(doc: models.Document) -> Dict[str, Any]:
         return {}
 
 
+def _document_number(*values: Any) -> Optional[float]:
+    for value in values:
+        if value is None or value == "":
+            continue
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = re.sub(r"[^0-9.\-]", "", str(value))
+        if not cleaned or cleaned in {"-", ".", "-."}:
+            continue
+        try:
+            return float(cleaned)
+        except ValueError:
+            continue
+    return None
+
+
+def _loan_doc_box2_balance(data: Dict[str, Any]) -> Optional[float]:
+    return _document_number(
+        data.get("current_balance"),
+        data.get("box2_balance"),
+        data.get("box_2_balance"),
+        data.get("outstanding_principal"),
+        data.get("outstanding_mortgage_principal"),
+        data.get("year_end_outstanding_balance"),
+    )
+
+
+def _loan_doc_ending_balance(data: Dict[str, Any]) -> Optional[float]:
+    return _document_number(
+        data.get("year_end_outstanding_balance"),
+        data.get("ending_balance"),
+        data.get("current_balance"),
+        data.get("box2_balance"),
+        data.get("box_2_balance"),
+        data.get("outstanding_principal"),
+        data.get("outstanding_mortgage_principal"),
+    )
+
+
 def _statement_payload_with_ytd_fallback(doc: models.Document, data: Dict[str, Any]) -> Dict[str, Any]:
     if getattr(doc, "doc_category", None) != "mortgage_statement":
         return data
@@ -5052,31 +5160,60 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
         except (TypeError, ValueError):
             continue
         category = getattr(doc, "doc_category", None)
+        doc_type_label = (
+            "Form 1098"
+            if category == "1098"
+            else "Loan statement"
+            if category == "mortgage_statement"
+            else "Closing document"
+            if category == "closing_statement"
+            else "Loan disclosure"
+            if category == "loan_disclosure"
+            else "Payoff statement"
+            if category == "payoff_statement"
+            else "Document"
+        )
+        source_badge = (
+            "1098"
+            if category == "1098"
+            else "Stmt"
+            if category == "mortgage_statement"
+            else "Closing"
+            if category == "closing_statement"
+            else "Disclosure"
+            if category == "loan_disclosure"
+            else "Payoff"
+            if category == "payoff_statement"
+            else "Document"
+        )
+        box2_balance = _loan_doc_box2_balance(data)
+        ending_balance = _loan_doc_ending_balance(data)
+        box1_interest = _document_number(data.get("mortgage_interest"), data.get("box1_interest"))
         by_year.setdefault(year, []).append({
             "documentId": doc.id,
             "filename": _doc_display_name(doc),
             "docType": category,
-            "docTypeLabel": "Form 1098" if category == "1098" else "Dec statement" if category == "mortgage_statement" else "Document",
-            "sourceBadge": "1098" if category == "1098" else "Dec stmt" if category == "mortgage_statement" else "Document",
+            "docTypeLabel": doc_type_label,
+            "sourceBadge": source_badge,
             "previewUrl": f"/properties/{doc.property_id}/documents?documentId={doc.id}" if doc.property_id else f"/uploads?documentId={doc.id}",
             "uploadedAt": _document_timestamp(getattr(doc, "upload_date", None)),
             "fieldValues": _document_field_rows(data),
             "accountNumber": getattr(doc, "loan_account_number", None) or data.get("account_number"),
-            "box1Interest": data.get("mortgage_interest") if data.get("mortgage_interest") is not None else data.get("box1_interest"),
-            "box2Balance": data.get("current_balance") if data.get("current_balance") is not None else data.get("box2_balance"),
+            "box1Interest": box1_interest,
+            "box2Balance": box2_balance,
             "propertyTax": data.get("property_tax_amount"),
             "ytdInterest": data.get("interest_paid_ytd"),
             "ytdPrincipal": data.get("principal_paid_ytd"),
             "monthlyEscrow": data.get("escrow_amount"),
             "currentPaymentInterest": data.get("interest_due") if data.get("interest_due") is not None else data.get("interest"),
             "currentPaymentPrincipal": data.get("principal_due") if data.get("principal_due") is not None else data.get("principal"),
-            "endBalance": data.get("year_end_outstanding_balance") or data.get("current_balance") or data.get("ending_balance"),
+            "endBalance": ending_balance,
             "statementDate": data.get("statement_date"),
             "mortgageAcquisitionDate": data.get("mortgage_acquisition_date"),
             "originationDate": data.get("origination_date"),
             "parsedValues": {
-                "box1Interest": data.get("mortgage_interest") if data.get("mortgage_interest") is not None else data.get("box1_interest"),
-                "box2Balance": data.get("current_balance") if data.get("current_balance") is not None else data.get("box2_balance"),
+                "box1Interest": box1_interest,
+                "box2Balance": box2_balance,
                 "propertyTax": data.get("property_tax_amount"),
                 "statementDate": data.get("statement_date"),
                 "mortgageAcquisitionDate": data.get("mortgage_acquisition_date"),
@@ -5181,6 +5318,9 @@ def _preferred_loan_doc(docs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     statements = [doc for doc in docs if doc.get("docType") == "mortgage_statement"]
     if statements:
         return sorted(statements, key=lambda doc: (str(doc.get("uploadedAt") or ""), int(doc.get("documentId") or 0)))[-1]
+    closing_docs = [doc for doc in docs if doc.get("docType") in LOAN_CLOSING_FALLBACK_CATEGORIES]
+    if closing_docs:
+        return sorted(closing_docs, key=lambda doc: (str(doc.get("uploadedAt") or ""), int(doc.get("documentId") or 0)))[-1]
     return ordered[-1]
 
 
@@ -5205,12 +5345,42 @@ def _loan_tracking_as_of(loan: models.Loan, today: Optional[date] = None) -> dat
 
 
 def _loan_tracking_start_date(loan: models.Loan) -> Optional[date]:
-    parsed = (
-        _parse_statement_date(getattr(loan, "_tracking_start_date", None))
-        or
-        _parse_statement_date(getattr(loan, "servicer_start_date", None))
-        or _parse_statement_date(getattr(loan, "origination_date", None))
+    tracking_start = _parse_statement_date(getattr(loan, "_tracking_start_date", None))
+    if hasattr(tracking_start, "date"):
+        tracking_start = tracking_start.date()
+    if tracking_start:
+        return tracking_start
+
+    servicer_start = _parse_statement_date(getattr(loan, "servicer_start_date", None))
+    origination = _parse_statement_date(getattr(loan, "origination_date", None))
+    statement = _parse_statement_date(getattr(loan, "statement_date", None))
+    if hasattr(servicer_start, "date"):
+        servicer_start = servicer_start.date()
+    if hasattr(origination, "date"):
+        origination = origination.date()
+    if hasattr(statement, "date"):
+        statement = statement.date()
+
+    # Some mortgage statements expose the statement date through the same
+    # parsed field slot as acquisition date. For a single non-transfer loan,
+    # using that value would hide every older 1098 row from the paydown table.
+    has_transfer_context = bool(
+        getattr(loan, "servicer_sequence", None)
+        or getattr(loan, "loan_group_id", None)
+        or getattr(loan, "replacement_loan_id", None)
+        or "servicing transfer" in str(getattr(loan, "transfer_reason", "") or getattr(loan, "closure_reason", "") or "").lower()
     )
+    if (
+        servicer_start
+        and statement
+        and origination
+        and servicer_start == statement
+        and servicer_start > origination
+        and not has_transfer_context
+    ):
+        servicer_start = None
+
+    parsed = servicer_start or origination
     if hasattr(parsed, "date"):
         parsed = parsed.date()
     return parsed
@@ -5314,6 +5484,8 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
         principal_from_payment_less_interest = None
         interest = None
         scheduled_months = 12
+        missing_1098_box2 = False
+        companion_statement = None
         if active_start and year == active_start.year:
             scheduled_months = max(0, 12 - active_start.month + 1)
         if year == today.year:
@@ -5338,7 +5510,7 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
             )
             companion_statement = year_statements[-1] if year_statements else None
             if start_balance is None:
-                warnings.append("Box 2 balance missing; top-up unknown. Upload a year-end statement.")
+                missing_1098_box2 = True
             elif companion_statement and companion_statement.get("endBalance") is not None:
                 end_balance = companion_statement.get("endBalance")
                 end_balance_source = "reported"
@@ -5386,6 +5558,39 @@ def _loan_paydown_tracking(loan: models.Loan, prop: models.Property, today: Opti
                 if start_balance is None:
                     start_balance = current_balance
                     warnings.append("Projected from loan balance because the prior year ending balance is unavailable.")
+
+        if (
+            primary_doc
+            and primary_doc.get("docType") == "1098"
+            and missing_1098_box2
+            and start_balance is not None
+            and actual_principal is None
+            and end_balance is None
+        ):
+            if companion_statement and companion_statement.get("endBalance") is not None:
+                end_balance = companion_statement.get("endBalance")
+                end_balance_source = "reported"
+                end_balance_source_label = "Reported from statement"
+                if companion_statement.get("ytdPrincipal") is not None:
+                    actual_principal = companion_statement.get("ytdPrincipal")
+                else:
+                    actual_principal = max(0.0, round(float(start_balance) - float(end_balance), 2))
+                source_label = "1098 interest + statement balance"
+                source_display = source_label
+            elif interest is not None:
+                monthly_pi = _loan_monthly_pi_amount(loan, float(start_balance))
+                if monthly_pi > 0:
+                    principal_from_payment_less_interest = round((monthly_pi * scheduled_months) - float(interest), 2)
+                    actual_principal = max(0.0, principal_from_payment_less_interest)
+                    end_balance = round(float(start_balance) - actual_principal, 2)
+                    end_balance_source = "calculated"
+                    end_balance_source_label = "Calculated from Box 1 and payment"
+                    source_label = "1098 interest + calculated balance"
+                    source_display = source_label
+                else:
+                    warnings.append("Box 2 balance and payment are missing; ending balance cannot be calculated from this 1098.")
+            else:
+                warnings.append("Box 2 balance and Box 1 interest are missing; ending balance cannot be calculated from this 1098.")
 
         if rows and start_balance is not None:
             previous_end = rows[-1].get("endBalance")
@@ -6229,7 +6434,7 @@ def _servicer_segments_for_group(members: List[Any], today: date) -> List[Dict[s
     raw_segments = []
     for index, loan in enumerate(ordered):
         start = (
-            _parse_setup_date(getattr(loan, "servicer_start_date", None))
+            _loan_tracking_start_date(loan)
             or _parse_setup_date(getattr(loan, "origination_date", None))
             or today
         )
@@ -10164,6 +10369,22 @@ def delete_loan(
     ).first()
     if not loan:
         raise HTTPException(status_code=404, detail="Loan not found")
+    # ORM cascades handle loan document links, balance snapshots, servicer
+    # segments and transaction links. These references are not cascaded, so
+    # detach/remove them here — otherwise stale rows keep the deleted loan
+    # "alive" in the resolution engine and block re-importing it from Product
+    # Setup. Documents themselves are intentionally kept on the property so the
+    # loan can be re-imported from the same closing/statement files.
+    db.query(models.EscrowPayment).filter(
+        models.EscrowPayment.loan_id == loan_id
+    ).update({models.EscrowPayment.loan_id: None}, synchronize_session=False)
+    db.query(models.LoanResolutionAlias).filter(
+        (models.LoanResolutionAlias.old_loan_id == loan_id)
+        | (models.LoanResolutionAlias.canonical_loan_id == loan_id)
+    ).delete(synchronize_session=False)
+    db.query(models.LoanResolutionDiscrepancy).filter(
+        models.LoanResolutionDiscrepancy.loan_id == loan_id
+    ).delete(synchronize_session=False)
     db.delete(loan)
     db.commit()
     return {"ok": True}
@@ -11312,7 +11533,12 @@ def payoff_planner(
     strategy: str = "avalanche",
     lump_sum: float = 0.0,
     extra_monthly: float = 0.0,
+    recurring_lump: float = 0.0,
+    recurring_month: int = 12,
+    recurring_years: int = 0,
     include_primary: bool = False,
+    selected_property_ids: str = "",
+    selection_explicit: bool = False,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -11321,7 +11547,17 @@ def payoff_planner(
     Reads each rental loan's live values from the loan engine (balance, rate,
     P&I with escrow excluded) and each property's monthly NOI, then hands a pure
     overlay simulation to ``services.payoff_planner``. Stored loan data is never
-    mutated. The primary residence is excluded unless ``include_primary`` is set.
+    mutated.
+
+    Contributions: a one-time ``lump_sum`` (month 1), an ``extra_monthly``, and a
+    ``recurring_lump`` applied each year in calendar month ``recurring_month`` for
+    ``recurring_years`` years.
+
+    Property selection: every property with active debt is returned under
+    ``properties`` with an ``included`` flag. When ``selection_explicit`` is
+    false the default selection is all rentals (primary excluded unless
+    ``include_primary``); when true, exactly the ids in ``selected_property_ids``
+    (comma-separated) are planned.
     """
     own_props = db.query(models.Property).filter(
         models.Property.owner_id == current_user.id
@@ -11338,23 +11574,49 @@ def payoff_planner(
     )
     all_props = own_props + shared_props
 
+    selected_ids = {
+        int(tok) for tok in str(selected_property_ids or "").split(",")
+        if tok.strip().lstrip("-").isdigit()
+    }
+
+    properties_meta: List[Dict[str, Any]] = []
     planner_loans: List[Dict[str, Any]] = []
     noi_sum = 0.0
     for prop in all_props:
         is_primary = str(prop.usage_type or "Rental").lower() == "primary"
-        if is_primary and not include_primary:
-            continue
-
-        metrics = compute_property_metrics(prop)
-        # Monthly NOI (rent - opex, before debt service); only the sum feeds the cascade.
-        noi_sum += (metrics.get("annual_noi", 0.0) or 0.0) / 12.0
-
         prop_name = prop.name or _default_property_name(prop.address, prop.id)
         active_loans = [
             loan for loan in (prop.loans or [])
             if not _is_closed_loan_status(getattr(loan, "status", None))
         ]
         active_loans = [loan for loan in active_loans if current_loan_balance(loan) > 0]
+        # Only properties carrying active debt are relevant to the payoff plan.
+        if not active_loans:
+            continue
+
+        if selection_explicit:
+            included = prop.id in selected_ids
+        else:
+            # Default: rentals in, primary out (unless include_primary).
+            included = (not is_primary) or include_primary
+
+        prop_balance = sum(current_loan_balance(loan) for loan in active_loans)
+        properties_meta.append({
+            "id": prop.id,
+            "name": prop_name,
+            "isPrimary": is_primary,
+            "included": included,
+            "loanCount": len(active_loans),
+            "balance": round(prop_balance, 2),
+            "balanceDisplay": _compact_money_display(prop_balance),
+        })
+        if not included:
+            continue
+
+        metrics = compute_property_metrics(prop)
+        # Monthly NOI (rent - opex, before debt service); only the sum feeds the cascade.
+        noi_sum += (metrics.get("annual_noi", 0.0) or 0.0) / 12.0
+
         for offset, loan in enumerate(active_loans):
             # Disambiguate when a property carries more than one active loan.
             if len(active_loans) > 1:
@@ -11368,15 +11630,22 @@ def payoff_planner(
                 "pi": round(loan_monthly_pi(loan), 2),
             })
 
-    return build_payoff_report(
+    report = build_payoff_report(
         planner_loans,
         noi_sum,
         strategy=strategy,
         lump_sum=lump_sum,
         extra_monthly=extra_monthly,
+        recurring_lump=recurring_lump,
+        recurring_month=recurring_month,
+        recurring_years=recurring_years,
         include_primary=include_primary,
         start_date=date.today(),
     )
+    report["properties"] = sorted(
+        properties_meta, key=lambda p: (p["isPrimary"], -p["balance"], p["name"])
+    )
+    return report
 
 
 @router.get("/analysis/portfolio")

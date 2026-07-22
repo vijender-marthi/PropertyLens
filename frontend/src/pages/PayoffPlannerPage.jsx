@@ -3,13 +3,23 @@ import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag } f
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
 
-// Per-session persistence of the four inputs.
-const STORAGE_KEY = 'payoffPlanner.inputs.v1'
+// Per-session persistence of the inputs.
+const STORAGE_KEY = 'payoffPlanner.inputs.v2'
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
 const DEFAULT_INPUTS = {
   strategy: 'avalanche',
   lumpSum: 0,
   extraMonthly: 0,
+  recurringLump: 0,
+  recurringMonth: 12, // December
+  recurringYears: 10,
   includePrimary: false,
+  // null => use the backend default selection (rentals in, primary out).
+  // An array => explicit selection of property ids to include.
+  selectedIds: null,
 }
 
 function loadInputs() {
@@ -21,7 +31,13 @@ function loadInputs() {
       strategy: parsed.strategy === 'snowball' ? 'snowball' : 'avalanche',
       lumpSum: clamp(Number(parsed.lumpSum) || 0, 0, 300_000),
       extraMonthly: clamp(Number(parsed.extraMonthly) || 0, 0, 8_000),
+      recurringLump: clamp(Number(parsed.recurringLump) || 0, 0, 100_000),
+      recurringMonth: clamp(Number(parsed.recurringMonth) || 12, 1, 12),
+      recurringYears: clamp(Number(parsed.recurringYears) || 10, 1, 30),
       includePrimary: Boolean(parsed.includePrimary),
+      selectedIds: Array.isArray(parsed.selectedIds)
+        ? parsed.selectedIds.map(Number).filter(Number.isFinite)
+        : null,
     }
   } catch {
     return { ...DEFAULT_INPUTS }
@@ -59,12 +75,18 @@ export default function PayoffPlannerPage() {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       setLoading(true)
+      const selectionExplicit = Array.isArray(inputs.selectedIds)
       propAPI
         .payoffPlanner({
           strategy: inputs.strategy,
           lump_sum: inputs.lumpSum,
           extra_monthly: inputs.extraMonthly,
+          recurring_lump: inputs.recurringLump,
+          recurring_month: inputs.recurringMonth,
+          recurring_years: inputs.recurringYears,
           include_primary: inputs.includePrimary,
+          selection_explicit: selectionExplicit,
+          selected_property_ids: selectionExplicit ? inputs.selectedIds.join(',') : '',
         })
         .then((res) => {
           if (active) {
@@ -86,6 +108,21 @@ export default function PayoffPlannerPage() {
   }, [inputs])
 
   const update = (patch) => setInputs((prev) => ({ ...prev, ...patch }))
+
+  // Toggle a property in/out of the plan. The first toggle promotes the
+  // selection from "backend default" (null) to an explicit id list seeded from
+  // whatever is currently included, so nothing else silently changes.
+  const toggleProperty = (id) => {
+    setInputs((prev) => {
+      const base = Array.isArray(prev.selectedIds)
+        ? prev.selectedIds
+        : (report?.properties || []).filter((p) => p.included).map((p) => p.id)
+      const set = new Set(base)
+      if (set.has(id)) set.delete(id)
+      else set.add(id)
+      return { ...prev, selectedIds: [...set] }
+    })
+  }
 
   return (
     <PageContainer>
@@ -117,6 +154,8 @@ export default function PayoffPlannerPage() {
               inputs={inputs}
               update={update}
               portfolio={report?.portfolio}
+              properties={report?.properties}
+              toggleProperty={toggleProperty}
               loading={loading}
             />
           </div>
@@ -129,7 +168,12 @@ export default function PayoffPlannerPage() {
 // ---------------------------------------------------------------------------
 // Control panel
 // ---------------------------------------------------------------------------
-function ControlPanel({ inputs, update, portfolio, loading }) {
+function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, loading }) {
+  const props = properties || []
+  const explicit = Array.isArray(inputs.selectedIds)
+  const selectedSet = explicit ? new Set(inputs.selectedIds) : null
+  const isIncluded = (p) => (selectedSet ? selectedSet.has(p.id) : p.included)
+  const includedCount = props.filter(isIncluded).length
   return (
     <div className="card space-y-5">
       <div className="flex items-center justify-between">
@@ -191,29 +235,71 @@ function ControlPanel({ inputs, update, portfolio, loading }) {
         onChange={(v) => update({ extraMonthly: v })}
       />
 
-      {/* Include primary */}
-      <label className="flex cursor-pointer items-start justify-between gap-3">
-        <span>
-          <span className="block text-xs font-medium text-gray-700 dark:text-gray-300">Include primary residence</span>
-          <span className="block text-[11px] text-gray-400 dark:text-gray-500">Off by default — rentals only</span>
-        </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={inputs.includePrimary}
-          aria-label="Include primary residence"
-          onClick={() => update({ includePrimary: !inputs.includePrimary })}
-          className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition-colors ${
-            inputs.includePrimary ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
-          }`}
-        >
-          <span
-            className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${
-              inputs.includePrimary ? 'translate-x-4' : 'translate-x-0'
-            }`}
-          />
-        </button>
-      </label>
+      {/* Recurring lump sum */}
+      <div className="space-y-3 rounded-lg border border-gray-100 p-3 dark:border-gray-700/70">
+        <SliderField
+          label="Recurring lump sum"
+          value={inputs.recurringLump}
+          min={0}
+          max={100_000}
+          step={5_000}
+          display={usd(inputs.recurringLump)}
+          onChange={(v) => update({ recurringLump: v })}
+        />
+        {inputs.recurringLump > 0 ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">Every</span>
+                <select
+                  value={inputs.recurringMonth}
+                  onChange={(e) => update({ recurringMonth: Number(e.target.value) })}
+                  aria-label="Recurring lump sum month"
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                >
+                  {MONTHS.map((m, i) => (
+                    <option key={m} value={i + 1}>{m}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">For (years)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={inputs.recurringYears}
+                  onChange={(e) => update({ recurringYears: clamp(Math.round(Number(e.target.value) || 1), 1, 30) })}
+                  aria-label="Recurring lump sum number of years"
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </label>
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+              {usd(inputs.recurringLump)} every {MONTHS[inputs.recurringMonth - 1]} for {inputs.recurringYears} year{inputs.recurringYears > 1 ? 's' : ''}
+              <span className="text-gray-400 dark:text-gray-500"> · {usd(inputs.recurringLump * inputs.recurringYears)} total planned</span>
+            </p>
+          </>
+        ) : (
+          <p className="text-[11px] text-gray-400 dark:text-gray-500">Set an amount to add it every year in a chosen month.</p>
+        )}
+      </div>
+
+      {/* Properties in plan */}
+      {props.length ? (
+        <fieldset>
+          <legend className="mb-1.5 flex w-full items-center justify-between text-xs font-medium text-gray-700 dark:text-gray-300">
+            <span>Properties in plan</span>
+            <span className="text-[10px] font-normal text-gray-400">{includedCount}/{props.length}</span>
+          </legend>
+          <div className="space-y-0.5">
+            {props.map((p) => (
+              <PropertyToggle key={p.id} prop={p} on={isIncluded(p)} onToggle={() => toggleProperty(p.id)} />
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-gray-400 dark:text-gray-500">Toggle any property — the primary home is off by default.</p>
+        </fieldset>
+      ) : null}
 
       {portfolio ? (
         <div className="border-t border-gray-100 pt-3 text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
@@ -231,6 +317,40 @@ function ControlPanel({ inputs, update, portfolio, loading }) {
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function PropertyToggle({ prop, on, onToggle }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/40">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-[13px] font-medium text-gray-800 dark:text-gray-100">{prop.name}</span>
+          {prop.isPrimary ? (
+            <span className="shrink-0 rounded bg-amber-100 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">Primary</span>
+          ) : null}
+        </div>
+        <span className="block text-[11px] text-gray-400 dark:text-gray-500">
+          {prop.balanceDisplay}{prop.loanCount > 1 ? ` · ${prop.loanCount} loans` : ''}
+        </span>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={`${on ? 'Exclude' : 'Include'} ${prop.name}`}
+        onClick={onToggle}
+        className={`flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition-colors ${
+          on ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+        }`}
+      >
+        <span
+          className={`h-4 w-4 rounded-full bg-white shadow transition-transform ${
+            on ? 'translate-x-4' : 'translate-x-0'
+          }`}
+        />
+      </button>
     </div>
   )
 }
@@ -277,7 +397,7 @@ function ResultsPanel({ report, loading }) {
   if (!hasLoans) {
     return (
       <div className="card text-center text-sm text-gray-500 dark:text-gray-400">
-        No rental loans found for a payoff plan. Add rental debt, or enable “Include primary residence.”
+        No loans in the payoff plan. Add rental debt, or include a property (like your primary home) under “Properties in plan.”
       </div>
     )
   }
