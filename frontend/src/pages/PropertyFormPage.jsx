@@ -920,10 +920,9 @@ function propertyPayload(form) {
     rental_start_date_origin: form.rental_start_date_origin || null,
     property_tax: toNumber(form.property_tax),
     insurance: toNumber(form.insurance),
-    // The hasHoa toggle doesn't write form.hoa_flag directly, so derive the
-    // persisted flag from an explicit flag OR any HOA data present — matching
-    // how hasHoa is derived on load. Otherwise hoa_flag always saved as false.
-    hoa_flag: Boolean(form.hoa_flag || toNumber(form.hoa_fee) || toNumber(form.hoa_special_assessment) || (form.hoa_history && form.hoa_history !== '[]')),
+    // form.hoa_flag is kept in lockstep with the HOA toggle (see the sync effect)
+    // and hydrated from the saved value, so it is the source of truth here.
+    hoa_flag: Boolean(form.hoa_flag),
     hoa_fee: toNumber(form.hoa_fee),
     hoa_history: form.hoa_history || '[]',
     hoa_special_assessment: toNumber(form.hoa_special_assessment),
@@ -1005,6 +1004,12 @@ export default function PropertyFormPage() {
   const [escrowUploading, setEscrowUploading] = useState(false)
   const [setupStatus, setSetupStatus] = useState(null)
   const [flags, setFlags] = useState({ hasFinancing: false, hasHoa: false, hasSolar: false })
+  // Keep the persisted hoa_flag in lockstep with the HOA toggle. The HOA fee
+  // lives on the annual-expense row (not form.hoa_fee), so enabling HOA must
+  // set the flag directly — otherwise nothing marks the property as having HOA.
+  useEffect(() => {
+    setForm((current) => (Boolean(current.hoa_flag) === flags.hasHoa ? current : { ...current, hoa_flag: flags.hasHoa }))
+  }, [flags.hasHoa])
   const [dirtySection, setDirtySection] = useState(null)
   const [pendingSection, setPendingSection] = useState(null)
   const [sectionState, setSectionState] = useState({})
@@ -2141,8 +2146,14 @@ export default function PropertyFormPage() {
       toast.error('Loan records exist. Remove or close them before marking this property as debt-free.')
       return
     }
-    if (flag === 'hasHoa' && !enabled && (toNumber(form.hoa_fee) || toNumber(form.hoa_special_assessment) || form.hoa_history !== '[]')) {
-      toast.error('HOA data exists. It will be preserved; review it before disabling HOA fields.')
+    if (flag === 'hasHoa') {
+      // hoa_flag is the persisted "property has HOA" column. The fee lives on the
+      // annual-expense row (not form.hoa_fee), so the toggle must write the flag
+      // itself — otherwise nothing marks the property as having HOA.
+      if (!enabled && (toNumber(form.hoa_fee) || toNumber(form.hoa_special_assessment) || form.hoa_history !== '[]')) {
+        toast.error('HOA data exists. It will be preserved; review it before disabling HOA fields.')
+      }
+      setForm((current) => ({ ...current, hoa_flag: enabled }))
     }
     if (flag === 'hasSolar') {
       // hasSolar has no backing DB column — it is derived from solar_ownership.
