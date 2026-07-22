@@ -23,10 +23,12 @@ import AmortizationModal from '../components/AmortizationModal'
 import PageContainer from '../components/PageContainer'
 import MetricCard from '../components/metrics/MetricCard'
 import MetricKPI from '../components/metrics/MetricKPI'
+import RentalPropertySummary, { RentalPropertySummaryHeader } from '../components/RentalPropertySummary'
+import PrimaryPropertySummary from '../components/PrimaryPropertySummary'
 import { useAuth } from '../hooks/useAuth'
 import { propertyTabs } from '../config/propertyTabs'
 import { homeTypeLabel } from '../config/propertySetupPresentation'
-import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
+import { propertyLabel } from '../utils/propertyDisplay'
 import { formatChartCurrency, formatCurrency as fmt, formatCurrencyCompact, formatInterestRate, formatMetricCurrency as fmtKMB, formatDate, formatMonthYear, formatNumber, formatPercent as fmtPct, formatYear, formatRatio, rawExportValue } from '../utils/formatters'
 import { chartColors, chartTypography } from '../utils/chartTokens'
 
@@ -102,6 +104,9 @@ function metricDisplayText(metric, fallback = '—') {
 }
 
 function propertyIsPrimary(prop) {
+  const currentUse = String(prop?.current_residency_status || '').toLowerCase()
+  if (currentUse.includes('rental')) return false
+  if (currentUse.includes('primary')) return true
   const usage = String(prop?.usage_type || prop?.usage || '').toLowerCase()
   return usage.includes('primary') && !prop?.currently_rental
 }
@@ -532,16 +537,8 @@ const topSummaryMetrics = summaryView?.metrics || {}
 const topVaultMetrics = metricVault?.metrics || {}
 const topMonthlyCashFlow = topSummaryMetrics.monthlyCashFlow?.value || 0
 const topIsPrimary = propertyIsPrimary(prop)
-const headerMarketValue = topVaultMetrics.marketValue || topSummaryMetrics.marketValue
-const headerEquity = topVaultMetrics.equity || topSummaryMetrics.equity
-const compactAddress = [prop.address, prop.city, prop.state, prop.zip_code].filter(Boolean).join(', ')
-const compactHeaderDetails = [
-  { label: 'Current use', value: prop.current_residency_status || prop.usage_type || '—' },
-  { label: 'Original use', value: prop.original_residency_status || '—' },
-  { label: 'Purchased', value: prop.purchase_date ? formatDate(prop.purchase_date) : '—' },
-  { label: 'Purchase price', value: prop.purchase_price ? fmt(prop.purchase_price) : '—' },
-  { label: 'Market price', value: prop.market_value ? fmt(prop.market_value) : '—' },
-]
+const rentalSummaryActive = activeTab === 'summary' && !topIsPrimary
+const primarySummaryActive = activeTab === 'summary' && topIsPrimary
 const documentCount = docs.length
 const dataHealthStatus = prop.data_health || prop.dataHealth || metrics?.data_health || metrics?.dataHealth || metricVault?.dataHealth
 const dataHealthIssueCount = Number(prop.data_health_issue_count ?? prop.dataHealthIssueCount ?? metrics?.data_health_issue_count ?? metrics?.dataHealthIssueCount ?? metricVault?.dataHealthIssueCount ?? 0)
@@ -558,54 +555,14 @@ const tabBadgeFor = (tab) => {
 return (
 <PageContainer>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <div className="min-w-0">
-          <button onClick={() => navigate('/properties')} className="flex items-center gap-1 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm mb-2">
-            <ChevronLeft className="w-4 h-4" /> Properties
-          </button>
-<h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white truncate">{propertyLabel(prop)}</h1>
-<p className="text-gray-500 dark:text-gray-400 text-sm mt-0.5">
-ID {shortPropertyUid(prop)} · {prop.state || '—'} · {homeTypeLabel(prop.property_type, prop.property_type_raw) || 'Property'} · Value {metricDisplayText(headerMarketValue)} · Equity {metricDisplayText(headerEquity)}
-</p>
-<div className="mt-2">
-<button
-type="button"
-onClick={() => setShowAddress((v) => !v)}
-aria-expanded={showAddress}
-aria-controls="property-header-details"
-className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
->
-{showAddress ? 'Hide Details' : 'Show Details'}
-</button>
-{showAddress ? (
-<section id="property-header-details" aria-label="Property details" className="mt-2 max-w-6xl overflow-x-auto border-y border-gray-200 py-2 dark:border-gray-700">
-<div className="min-w-max space-y-1.5 text-xs">
-<p className="text-gray-700 dark:text-gray-200"><span className="font-medium text-gray-500 dark:text-gray-400">Address</span><span className="mx-2 text-gray-300 dark:text-gray-600">·</span><span className="font-medium">{compactAddress || '—'}</span></p>
-<dl className="flex items-center gap-4">
-{compactHeaderDetails.map((item) => (
-<div key={item.label} className="flex items-center gap-1.5 whitespace-nowrap">
-<dt className="text-gray-500 dark:text-gray-400">{item.label}</dt>
-<dd className="font-medium text-gray-900 dark:text-white">{item.value}</dd>
-</div>
-))}
-</dl>
-</div>
-</section>
-) : null}
-</div>
-        </div>
-        <div className="flex gap-2 shrink-0 flex-wrap">
-          <button onClick={exportPropertyXLS} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Download className="w-3.5 h-3.5" /> Export
-          </button>
-          <Link to={`/properties/${id}/edit`} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Pencil className="w-3.5 h-3.5" /> Edit
-          </Link>
-          <button onClick={handleDelete} className="btn-danger flex items-center gap-1.5 text-sm">
-            <Trash2 className="w-3.5 h-3.5" /> Delete
-          </button>
-        </div>
-      </div>
+      <RentalPropertySummaryHeader
+        prop={prop}
+        presentation={topIsPrimary ? metricVault?.primarySummary : metricVault?.rentalSummary}
+        metrics={metricVault?.metrics}
+        expanded={showAddress}
+        onToggleDetails={() => setShowAddress((value) => !value)}
+        badgeFallback={topIsPrimary ? 'Primary Residence' : 'Rental Property'}
+      />
 
       {/* Tabs — scrollable on mobile */}
       <div className="border-b border-gray-200 dark:border-gray-700">
@@ -649,7 +606,7 @@ isActive
 </nav>
       </div>
 
-<PropertyTabMetrics activeTab={activeTab} metricVault={metricVault} isPrimary={topIsPrimary} />
+{!rentalSummaryActive && !primarySummaryActive ? <PropertyTabMetrics activeTab={activeTab} metricVault={metricVault} isPrimary={topIsPrimary} /> : null}
 
 
 {activeTab === 'rental' && (
@@ -711,7 +668,18 @@ onAddLoan={() => { setEditLoan(null); setShowLoanModal(true) }}
 )}
 
       {activeTab === 'summary' && (
-        <PropertyStorySummary propId={id} prop={prop} metrics={metrics} metricVault={metricVault} onJump={setActiveTab} />
+        rentalSummaryActive ? (
+          <RentalPropertySummary
+            metricVault={metricVault}
+            onJump={(tab) => navigate(`/properties/${id}/${propertyTabs.find((item) => item.id === tab)?.path || tab}`)}
+            waterfall={<ValueWaterfallStoryChart waterfall={metricVault?.rentalSummary?.waterfall} onJump={setActiveTab} showTitle={false} />}
+          />
+        ) : (
+          <PrimaryPropertySummary
+            metricVault={metricVault}
+            waterfall={<ValueWaterfallStoryChart waterfall={metricVault?.primarySummary?.waterfall} onJump={setActiveTab} showTitle={false} />}
+          />
+        )
       )}
 
       {/* Modals */}
@@ -1571,7 +1539,10 @@ function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize
       const documentCategory = accepted.data?.doc_category || accepted.data?.category || preview.category
       let processingResult = accepted.data || {}
       let successMessage = 'Loan document uploaded.'
-      if (documentCategory === 'mortgage_statement') {
+      // Mortgage statements, closing disclosures and loan disclosures all carry
+      // loan terms — review and apply them to this loan so the upload actually
+      // imports (a scanned closing statement simply applies whatever parsed).
+      if (['mortgage_statement', 'closing_statement', 'loan_disclosure'].includes(documentCategory)) {
         const review = await docAPI.loanStatementReview(accepted.data.id)
         const selectedFields = (review.data?.loanFields || []).map((field) => field.targetKey)
         const applied = await docAPI.applyLoanStatement(accepted.data.id, {
@@ -1587,9 +1558,10 @@ function LoansTab({ propId, prop, metricVault, onAddLoan, onEditLoan, onAmortize
           estimates.propertyTax?.applied ? `property tax ${estimates.propertyTax.display}` : null,
           estimates.insurance?.applied ? `insurance ${estimates.insurance.display}` : null,
         ].filter(Boolean)
+        const appliedLabel = documentCategory === 'mortgage_statement' ? 'Mortgage statement applied.' : 'Loan document applied.'
         successMessage = estimatedParts.length
           ? `Statement applied. Estimated ${estimates.year} ${estimatedParts.join(' and ')} from escrow.`
-          : 'Mortgage statement applied.'
+          : appliedLabel
       } else if (documentCategory === '1098') {
         successMessage = '1098 imported. Loan history updated.'
       }
@@ -1746,6 +1718,22 @@ function ExpenseFieldSourceBadge({ source }) {
   return (
     <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${className}`} title={source.title}>
       {source.label}
+    </span>
+  )
+}
+
+function ExpenseCommentBadge({ comments = [] }) {
+  if (!comments.length) return <span className="text-xs text-gray-400">—</span>
+  const first = comments[0]
+  const label = comments.length === 1 ? first.label || 'Review' : `${comments.length} comments`
+  const title = comments.map((comment) => comment.message || comment.label).filter(Boolean).join('\n')
+  return (
+    <span
+      className="inline-flex max-w-52 items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+      title={title}
+    >
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="truncate">{label}</span>
     </span>
   )
 }
@@ -2150,19 +2138,20 @@ function ExpensesTab({ propId }) {
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-semibold text-gray-900 dark:text-white">Expense documents</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white">By year</h3>
               <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">All years</span>
             </div>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Select one or more escrow analyses, property-tax statements, or insurance declarations. The backend detects each document type and assigns values using its tax year or covered period.</p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Years without entered expenses show a dash and aren't counted as $0. Upload escrow analyses, property-tax statements, or insurance declarations here.</p>
           </div>
           <button
             type="button"
-            className="btn-secondary inline-flex shrink-0 items-center gap-2 text-sm"
+            className="btn-secondary inline-flex shrink-0 items-center gap-2 px-3 py-2 text-sm"
             onClick={() => escrowInputRef.current?.click()}
             disabled={escrowUploading}
+            title="Upload expense documents"
           >
             <Upload className="h-4 w-4" aria-hidden="true" />
-            {escrowUploading ? 'Importing documents...' : 'Upload documents'}
+            <span className="hidden sm:inline">{escrowUploading ? 'Importing...' : 'Upload'}</span>
           </button>
         </div>
         <input
@@ -2183,15 +2172,6 @@ function ExpensesTab({ propId }) {
             </div>
           </div>
         ) : null}
-      </section>
-
-      <section className="card">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">By year</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Years without entered expenses show a dash and aren't counted as $0.</p>
-          </div>
-        </div>
 
         <DataTable
           rows={data?.rows || []}
@@ -2257,6 +2237,11 @@ function ExpensesTab({ propId }) {
                   <span className="truncate">{row.source.label}</span>
                 </button>
               ) : <span className="text-xs text-gray-400">Manual</span>,
+            },
+            {
+              id: 'comments',
+              header: 'Comments',
+              render: (row) => <ExpenseCommentBadge comments={row.comments || []} />,
             },
             {
               id: 'actions',
@@ -2993,6 +2978,7 @@ const activePresetId = presets.find((preset) => (
   && parseAmount(oneTimeAmount) === preset.config.oneTime
 ))?.id
 const loanLabel = (loan) => loan ? `${loan.lender_name || `Loan #${loan.id}`} · ${loan.loan_type || 'Mortgage'}` : 'Loan'
+const selectedLoanRecord = loans.find((loan) => String(loan.id) === String(selectedLoan))
   const typeAllowsMonthly = ['extra_monthly', 'combination'].includes(scenarioType)
   const typeAllowsAnnual = ['annual_lump_sum', 'combination'].includes(scenarioType)
   const typeAllowsOneTime = scenarioType === 'one_time'
@@ -3125,22 +3111,45 @@ toast.success('Saved scenarios cleared')
   if (!loans.length) return <div className="card text-sm text-gray-500 dark:text-gray-400">Add a loan before running payoff scenarios.</div>
 
   return <div className="space-y-5">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">What-If Financial Simulator</h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400">Adjust strategy controls and review the backend scenario result live.</p>
+    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Scenario simulator</h3>
+            {loading ? <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">Updating live...</span> : <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300">Live simulator</span>}
+          </div>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Compare payoff strategies, cash deployed, interest saved, and investing alternatives using backend scenario results.</p>
+        </div>
+        <div className="grid gap-2 text-xs text-gray-500 sm:grid-cols-3 lg:min-w-[28rem]">
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/40">
+            <p className="font-semibold uppercase tracking-wide">Loan</p>
+            <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">{loanLabel(selectedLoanRecord)}</p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/40">
+            <p className="font-semibold uppercase tracking-wide">Strategy</p>
+            <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">{scenarioName || 'Custom strategy'}</p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/40">
+            <p className="font-semibold uppercase tracking-wide">Saved</p>
+            <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{savedScenarios.length}</p>
+          </div>
+        </div>
       </div>
-      {loading ? <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">Updating live...</span> : <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300">Live simulator</span>}
-    </div>
+    </section>
 
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_260px] xl:items-start">
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
       <div className="space-y-4">
-        <div className="card border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/30">
-          <div className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-300">Decision verdict</div>
-          <div className="mt-1 text-lg font-semibold text-emerald-950 dark:text-emerald-100">{result?.opportunityVerdict?.headline || 'Adjust the controls to compare payoff and investing outcomes.'}</div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 dark:border-emerald-900/40 dark:bg-emerald-950/30">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700 dark:text-emerald-300" aria-hidden="true" />
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Decision verdict</div>
+              <div className="mt-1 text-lg font-semibold text-emerald-950 dark:text-emerald-100">{result?.opportunityVerdict?.headline || 'Adjust the controls to compare payoff and investing outcomes.'}</div>
+            </div>
+          </div>
         </div>
         {summary ? (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-4">
             <ScenarioCard title="Payoff time" value={summary.payoff_time} detail={`${money(summary.interest_paid)} interest`} tone="blue" />
             <ScenarioCard title="Interest saved" value={money(summary.interest_saved)} detail={`${summary.years_saved || 0} years saved`} tone="green" />
             <ScenarioCard title="Return on capital" value={summary.annualized_return == null ? '-' : `${formatNumber(summary.annualized_return, { maximumFractionDigits: 1 })}%/yr`} detail={summary.return_on_capital_lifetime == null ? 'Needs capital' : `${formatNumber(summary.return_on_capital_lifetime, { maximumFractionDigits: 1 })}% lifetime`} tone="purple" />
@@ -3155,8 +3164,12 @@ toast.success('Saved scenarios cleared')
         ) : null}
       </div>
 
-      <aside className="card max-h-[calc(100vh-10rem)] overflow-y-auto p-4 xl:sticky xl:top-4">
-        <div className="space-y-4">
+      <aside className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900 xl:sticky xl:top-4">
+        <div className="border-b border-gray-200 px-4 py-3 dark:border-gray-800">
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Scenario builder</h4>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Tune inputs; results refresh automatically.</p>
+        </div>
+        <div className="max-h-[calc(100vh-14rem)] space-y-4 overflow-y-auto p-4">
           <ScenarioControlGroup title="Presets">
             <div className="flex flex-wrap gap-2">
               {presets.map((preset) => <button key={preset.id} type="button" className={`rounded-full border px-2.5 py-1 text-xs font-medium ${activePresetId === preset.id ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-300'}`} onClick={() => setScenarioAmounts(preset.config)}>{preset.label}</button>)}
@@ -5139,6 +5152,14 @@ const equityStoryTone = {
   total: 'var(--chart-equity-total)',
 }
 
+const waterfallStoryTone = {
+  acquisition_cash: chartColors.primarySoft,
+  principal_reduction: chartColors.warningStrong,
+  remaining_secured_debt: chartColors.mutedAxis,
+  appreciation: chartColors.positiveSoft,
+  total: chartColors.purple,
+}
+
 function EquityStoryCharts({ story, onJump }) {
 const nodes = story?.waterfall?.series || []
 const acquisitionCash = nodes.find((node) => node.key === 'acquisitionCashContribution')
@@ -5149,9 +5170,9 @@ const assetRows = [acquisitionCash, principalReduction, appreciation?.value >= 0
 const liabilityRows = [securedDebt, appreciation?.value < 0 ? { ...appreciation, label: 'Market value loss' } : null].filter(Boolean)
 return (
 <div className="grid items-stretch gap-5 lg:grid-cols-[minmax(180px,0.7fr)_minmax(0,2.4fr)_minmax(180px,0.7fr)]">
-<EquityStorySidePanel title="Assets" rows={assetRows} icon={Home} tone="asset" emptyLabel="No asset values available" />
+<EquityStorySidePanel title="Equity" rows={assetRows} icon={Home} tone="asset" emptyLabel="No asset values available" />
 <div className="min-w-0 lg:order-none"><ValueWaterfallStoryChart waterfall={story?.waterfall} onJump={onJump} /></div>
-<EquityStorySidePanel title="Liabilities & losses" rows={liabilityRows} icon={TrendingDown} tone="liability" emptyLabel="No liabilities or losses" />
+<EquityStorySidePanel title="Loans & losses" rows={liabilityRows} icon={TrendingDown} tone="liability" emptyLabel="No liabilities or losses" />
 </div>
 )
 }
@@ -5255,9 +5276,13 @@ function wrapWaterfallLabel(label) {
   return [words.slice(0, -1).join(' '), words.at(-1)]
 }
 
-function ValueWaterfallStoryChart({ waterfall, onJump }) {
+function formatWaterfallBarLabel(display) {
+  return typeof display === 'string' ? display.replace(/^\+/, '') : display
+}
+
+function ValueWaterfallStoryChart({ waterfall, onJump, showTitle = true }) {
   if (waterfall?.status !== 'available') {
-    return <div className="min-w-0 py-1"><ChartInfoTitle title={waterfall?.title || 'Purchase Price to Current Market Value'} details={waterfall?.subtitle} /><StoryUnavailable reason={waterfall?.unavailableReason} action={waterfall?.recommendedAction} onJump={onJump} /></div>
+    return <div className="min-w-0 py-1">{showTitle ? <ChartInfoTitle title={waterfall?.title || 'Purchase Price to Current Market Value'} details={waterfall?.subtitle} /> : null}<StoryUnavailable reason={waterfall?.unavailableReason} action={waterfall?.recommendedAction} onJump={onJump} /></div>
   }
   const nodes = waterfall.series || []
   const chartHeight = 400
@@ -5283,7 +5308,7 @@ function ValueWaterfallStoryChart({ waterfall, onJump }) {
   const srSummary = waterfall.screenReaderSummary || `${waterfall.title}. ${nodes.map((node) => `${node.label}: ${node.fullDisplay || node.display}`).join(', ')}.`
   return (
     <div className="min-w-0 py-1">
-      <ChartInfoTitle title={waterfall.title || 'Purchase Price to Current Market Value'} details={waterfall.subtitle} />
+      {showTitle ? <ChartInfoTitle title={waterfall.title || 'Purchase Price to Current Market Value'} details={waterfall.subtitle} /> : null}
       <p className="sr-only">{srSummary}</p>
       <div className="mx-auto mt-4 max-w-[760px] overflow-x-auto">
         <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="mx-auto min-w-[680px]" role="img" aria-label={waterfall.title}>
@@ -5299,7 +5324,7 @@ function ValueWaterfallStoryChart({ waterfall, onJump }) {
             const nextIsTotal = Boolean(next?.isTotal ?? next?.total)
             const connectorY = y(endValue)
             const labelLines = wrapWaterfallLabel(node.label)
-            return <g key={node.id || node.key} tabIndex="0" aria-label={`${node.label}. ${node.fullDisplay || node.display}. ${node.tooltip?.role || ''}.`}><title>{`${node.label}\nAmount: ${node.fullDisplay || node.display}\n${isTotal ? 'Current market value' : `Cumulative value after this step: ${node.tooltip?.cumulativeValue || node.fullDisplay || node.display}`}`}</title><rect x={x} y={topY} width={isTotal ? barWidth + 8 : barWidth} height={Math.max(5, bottomY - topY)} rx="3" fill={equityStoryTone[node.semanticType] || equityStoryTone[node.tone] || equityStoryTone.total} /><text x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={topY - 8} textAnchor="middle" className="fill-gray-900 text-[11px] font-semibold dark:fill-white">{node.display}</text>{labelLines.map((line, lineIndex) => <text key={line} x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={chartHeight - 70 + lineIndex * 12} textAnchor="middle" className="fill-gray-500 text-[11px] dark:fill-gray-400">{line}</text>)}{next && !nextIsTotal ? <line x1={x + (isTotal ? barWidth + 8 : barWidth)} x2={barX(index + 1)} y1={connectorY} y2={connectorY} stroke="currentColor" className="text-gray-300 dark:text-gray-600" strokeDasharray="3 3" /> : null}</g>
+            return <g key={node.id || node.key} tabIndex="0" aria-label={`${node.label}. ${node.fullDisplay || node.display}. ${node.tooltip?.role || ''}.`}><title>{`${node.label}\nAmount: ${node.fullDisplay || node.display}\n${isTotal ? 'Current market value' : `Cumulative value after this step: ${node.tooltip?.cumulativeValue || node.fullDisplay || node.display}`}`}</title><rect x={x} y={topY} width={isTotal ? barWidth + 8 : barWidth} height={Math.max(5, bottomY - topY)} rx="3" fill={waterfallStoryTone[node.semanticType] || waterfallStoryTone[node.tone] || waterfallStoryTone.total} /><text x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={topY - 8} textAnchor="middle" className="fill-gray-900 text-[11px] font-semibold dark:fill-white">{formatWaterfallBarLabel(node.display)}</text>{labelLines.map((line, lineIndex) => <text key={line} x={x + (isTotal ? barWidth + 8 : barWidth) / 2} y={chartHeight - 70 + lineIndex * 12} textAnchor="middle" className="fill-gray-500 text-[11px] dark:fill-gray-400">{line}</text>)}{next && !nextIsTotal ? <line x1={x + (isTotal ? barWidth + 8 : barWidth)} x2={barX(index + 1)} y1={connectorY} y2={connectorY} stroke="currentColor" className="text-gray-300 dark:text-gray-600" strokeDasharray="3 3" /> : null}</g>
           })}
           {(waterfall.annotations || []).map((annotation) => {
             const start = nodeById[annotation.startBarId]

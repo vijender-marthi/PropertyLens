@@ -315,11 +315,11 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
     validation_checks = []
     if not waterfall_unavailable_reason:
         validation_checks = [
-            {"key": "acquisitionFunding", "label": "Acquisition cash + acquisition debt = purchase price", "difference": round(acquisition_cash + acquisition_debt - purchase_price, 2)},
+            {"key": "acquisitionFunding", "label": "Down payment + acquisition debt = purchase price", "difference": round(acquisition_cash + acquisition_debt - purchase_price, 2)},
             {"key": "debtBridge", "label": "Principal reduction + current debt = acquisition debt", "difference": round((principal_reduction or 0) + current_debt - acquisition_debt, 2)},
             {"key": "valueBridge", "label": "Purchase price + appreciation = market value", "difference": round(purchase_price + (appreciation or 0) - current_market_value, 2)},
             {"key": "equity", "label": "Market value - current debt = current equity", "difference": round(current_market_value - current_debt - (current_equity or 0), 2)},
-            {"key": "equityContribution", "label": "Acquisition cash + principal reduction + appreciation = current equity", "difference": round(acquisition_cash + (principal_reduction or 0) + (appreciation or 0) - (current_equity or 0), 2)},
+            {"key": "equityContribution", "label": "Down payment + principal reduction + appreciation = current equity", "difference": round(acquisition_cash + (principal_reduction or 0) + (appreciation or 0) - (current_equity or 0), 2)},
         ]
         for check in validation_checks:
             check["passes"] = abs(check["difference"]) <= tolerance
@@ -342,7 +342,7 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
         cumulative = 0.0
         series = []
         for key, label, value, tone in [
-            ("acquisitionCashContribution", "Acquisition cash", acquisition_cash, "acquisition_cash"),
+            ("acquisitionCashContribution", "Down payment", acquisition_cash, "acquisition_cash"),
             ("principalReductionSinceAcquisition", "Principal reduction", principal_reduction or 0, "principal_reduction"),
             ("currentPropertyDebt", "Remaining secured debt", current_debt, "remaining_secured_debt"),
             ("appreciation", "Appreciation", appreciation or 0, "appreciation"),
@@ -356,7 +356,7 @@ def _equity_story(prop: Any, market_value: float, current_property_debt: float) 
             "status": "available",
             "title": "Purchase Price to Current Market Value",
  "subtitle": f"The first three components make up the original purchase price of {format_metric_currency(purchase_price)}; appreciation adds {_compact_money(appreciation or 0, signed=True)} to reach {format_metric_currency(current_market_value)}.",
- "screenReaderSummary": f"Current market value is {format_currency(current_market_value)}. It consists of {format_currency(acquisition_cash)} acquisition cash, {format_currency(principal_reduction or 0)} principal reduction, {format_currency(current_debt)} remaining secured debt, and {format_currency(appreciation or 0)} appreciation.",
+ "screenReaderSummary": f"Current market value is {format_currency(current_market_value)}. It consists of a {format_currency(acquisition_cash)} down payment, {format_currency(principal_reduction or 0)} principal reduction, {format_currency(current_debt)} remaining secured debt, and {format_currency(appreciation or 0)} appreciation.",
             "series": series,
             "annotations": [
                 {"startBarId": "acquisitionCashContribution", "endBarId": "currentPropertyDebt", "label": f"Purchase price · {format_metric_currency(purchase_price)}", "semanticType": "acquisition"},
@@ -640,6 +640,446 @@ def _loan_metric_rows(prop: Any) -> Dict[str, Dict[str, Any]]:
     return rows
 
 
+def _rental_summary_presentation(
+    prop: Any,
+    metric_map: Dict[str, Dict[str, Any]],
+    summary: Dict[str, Any],
+    yearly_rows: List[Dict[str, Any]],
+    equity_story: Dict[str, Any],
+    loan_summary: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Page-ready rental summary metadata; all business values are engine-owned."""
+    current_loans = [
+        loan for loan in (getattr(prop, "loans", None) or [])
+        if str(getattr(loan, "status", "OPEN") or "OPEN").upper() == "OPEN"
+    ]
+    current_loan = current_loans[0] if len(current_loans) == 1 else None
+    expense_labels = {
+        "property_tax": "Property tax",
+        "propertyTax": "Property tax",
+        "insurance": "Insurance",
+        "hoa": "HOA",
+        "repairs_maintenance": "Repairs & maintenance",
+        "repairsMaintenance": "Repairs & maintenance",
+        "property_management": "Property management",
+        "propertyManagement": "Property management",
+        "utilities": "Utilities",
+        "vacancy_allowance": "Vacancy allowance",
+        "vacancyAllowance": "Vacancy allowance",
+        "capex_reserve": "CapEx reserve",
+        "capexReserve": "CapEx reserve",
+        "other": "Other",
+    }
+    expense_components = summary.get("operating_expense_components") or {}
+    operating_total = float(summary.get("operating_expenses") or 0)
+    expense_breakdown = []
+    for key, amount in expense_components.items():
+        value = float(amount or 0)
+        if value == 0:
+            continue
+        expense_breakdown.append({
+            "key": key,
+            "label": expense_labels.get(key, str(key).replace("_", " ").title()),
+            "value": round(value, 2),
+            "display": format_currency(value),
+            "percent": round(value / operating_total * 100, 2) if operating_total else None,
+            "percentDisplay": format_percent(value / operating_total * 100) if operating_total else "—",
+        })
+
+    asset_rows = [
+        {"label": "Down payment", "metricKey": "downPayment"},
+        {"label": "Appreciation", "metricKey": "appreciationSincePurchase", "tone": "positive"},
+        {"label": "Principal reduction", "metricKey": "principalReduction", "tone": "positive"},
+    ]
+    liability_rows = [
+        {"label": "Original loan amount", "metricKey": "loanTotalOriginal"},
+        {"label": "Loan balance", "metricKey": "loanBalance"},
+        {"label": "Interest rate", "metricKey": "loanInterestRateSummary"},
+        {"label": "Monthly P&I", "metricKey": "monthlyDebtService"},
+        {
+            "label": "Loan type",
+            "display": (
+                str(getattr(current_loan, "loan_product", None) or getattr(current_loan, "loan_type", None) or "—")
+                if current_loan else (f"{len(current_loans)} active loans" if current_loans else "—")
+            ),
+        },
+        {
+            "label": "Maturity date",
+            "display": str(getattr(current_loan, "maturity_date", None) or "—") if current_loan else "—",
+            "value": getattr(current_loan, "maturity_date", None) if current_loan else None,
+            "dataType": "date",
+        },
+    ]
+    facts = [
+        {"key": "propertyType", "label": "Property type", "value": getattr(prop, "property_type", None), "display": getattr(prop, "property_type", None) or "—", "icon": "home"},
+        {"key": "purchaseDate", "label": "Purchased", "value": getattr(prop, "purchase_date", None), "display": getattr(prop, "purchase_date", None) or "—", "dataType": "date", "icon": "calendar"},
+        {"key": "location", "label": "Location", "value": None, "display": ", ".join(filter(None, [getattr(prop, "city", None), getattr(prop, "state", None)])) or "—", "icon": "map-pin"},
+        {"key": "propertyTax", "label": "Property taxes", "metricKey": "propertyTaxAnnual", "icon": "receipt"},
+        {"key": "insurance", "label": "Insurance", "metricKey": "insuranceAnnual", "icon": "shield"},
+        {"key": "rentalStart", "label": "Rental since", "value": getattr(prop, "rental_start_date", None), "display": getattr(prop, "rental_start_date", None) or "—", "dataType": "date", "icon": "key"},
+    ]
+
+    occupancy = metric_map.get("occupancyRate") or {}
+    equity = metric_map.get("equity") or {}
+    principal = metric_map.get("principalReduction") or {}
+    cash_flow = metric_map.get("annualCashFlow") or {}
+    asset_highlights = [
+        {"text": f"Current equity is {equity.get('fullDisplayValue', '—')}.", "tabKey": "summary"},
+        {"text": f"Principal balance has reduced by {principal.get('fullDisplayValue', '—')}.", "tabKey": "loans"},
+    ]
+    liability_highlights = [
+        {"text": f"Current loan balance is {metric_map.get('loanBalance', {}).get('fullDisplayValue', '—')}.", "tabKey": "loans"},
+        {"text": f"Current debt-to-value is {metric_map.get('loanToValue', {}).get('displayValue', '—')}.", "tabKey": "loans"},
+    ]
+    insights = [
+        {"text": f"Annual cash flow is {cash_flow.get('fullDisplayValue', '—')}.", "tabKey": "summary"},
+        {"text": f"Occupancy is {occupancy.get('displayValue', '—')} for the selected backend period.", "tabKey": "rental"},
+        {"text": f"Operating expenses are {metric_map.get('operatingExpenses', {}).get('fullDisplayValue', '—')} per year.", "tabKey": "expenses"},
+    ]
+
+    return {
+        "status": "available",
+        "header": {
+            "badge": "Rental Property",
+            "currentStatus": getattr(prop, "current_residency_status", None) or getattr(prop, "usage_type", None) or "Rental",
+            "occupancyMetricKey": "occupancyRate",
+            "asOfDate": date.today().isoformat(),
+            "comparisonOptions": [
+                {"value": str(row.get("year")), "label": str(row.get("year"))}
+                for row in reversed(yearly_rows)
+                if row.get("year") is not None
+            ],
+        },
+        "topMetrics": [
+            {"metricKey": "marketValue", "icon": "home", "tone": "blue", "supportingText": "Current accepted value"},
+            {"metricKey": "purchasePrice", "icon": "wallet", "tone": "cyan", "supportingText": "Original purchase amount"},
+            {"metricKey": "equity", "icon": "equity", "tone": "green", "supportingMetricKey": "equityShare", "supportingText": "of market value"},
+            {"metricKey": "loanBalance", "icon": "debt-service", "tone": "blue", "supportingMetricKey": "loanToValue", "supportingText": "of market value"},
+            {"metricKey": "cashOnCashReturn", "icon": "percent", "tone": "orange", "supportingText": "Annual return"},
+            {"metricKey": "capRate", "icon": "target", "tone": "purple", "supportingText": "NOI / market value"},
+        ],
+        "assets": {"title": "Equity", "rows": asset_rows, "totalMetricKey": "equity", "highlights": asset_highlights},
+        "waterfall": equity_story.get("waterfall") or {},
+        "liabilities": {"title": "Loans", "rows": liability_rows, "totalMetricKey": "loanToValue", "highlights": liability_highlights},
+        "operationalMetrics": [
+            {"metricKey": "monthlyRentalIncome", "annualMetricKey": "effectiveGrossIncome", "icon": "rental-income", "tone": "green"},
+            {"metricKey": "monthlyOperatingExpenses", "annualMetricKey": "operatingExpenses", "icon": "operating-expenses", "tone": "orange"},
+            {"metricKey": "monthlyNoi", "annualMetricKey": "noi", "icon": "noi", "tone": "purple"},
+            {"metricKey": "monthlyDebtService", "annualMetricKey": "annualDebtService", "icon": "debt-service", "tone": "blue"},
+            {"metricKey": "monthlyCashFlow", "annualMetricKey": "annualCashFlow", "icon": "cash-flow", "tone": "green"},
+            {"metricKey": "occupancyRate", "secondaryText": "Current", "icon": "occupancy", "tone": "orange"},
+            {"metricKey": "monthlyCostToOwn", "secondaryText": "All-in payment", "icon": "home", "tone": "blue"},
+        ],
+        "cashFlowTrend": {
+            "title": "Cash Flow Trend",
+            "period": "Annual",
+            "series": [
+                {
+                    "year": row.get("year"),
+                    "cashFlow": row.get("cashFlow"),
+                    "cashFlowDisplay": row.get("cashFlowDisplay"),
+                    "debtService": row.get("debtService"),
+                    "debtServiceDisplay": row.get("debtServiceDisplay"),
+                }
+                for row in yearly_rows
+            ],
+        },
+        "expenseBreakdown": {"title": "Expense Breakdown", "totalMetricKey": "operatingExpenses", "items": expense_breakdown},
+        "annualPnl": {
+            "title": "Annual P&L Summary",
+            "rows": [
+                {"label": "Rental income", "metricKey": "effectiveGrossIncome", "tone": "positive"},
+                {"label": "Operating expenses", "metricKey": "operatingExpenses", "tone": "negative"},
+                {"label": "NOI", "metricKey": "noi"},
+                {"label": "Debt service", "metricKey": "annualDebtService", "tone": "negative"},
+                {"label": "Net cash flow", "metricKey": "annualCashFlow", "toneFromMetric": True},
+                {"label": "Cash-on-cash return", "metricKey": "cashOnCashReturn"},
+            ],
+        },
+        "insights": {"title": "Key Insights", "items": insights},
+        "facts": facts,
+        "assertions": {
+            "portfolioBalanceMatchesLiability": abs(float(loan_summary.get("totalBalance") or 0) - float(metric_map.get("loanBalance", {}).get("value") or 0)) <= 1,
+            "waterfallBackendOwned": bool((equity_story.get("waterfall") or {}).get("series")),
+        },
+    }
+
+
+def _primary_summary_presentation(
+    prop: Any,
+    metric_map: Dict[str, Dict[str, Any]],
+    yearly_rows: List[Dict[str, Any]],
+    equity_story: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Page-ready primary-residence summary; React only renders this contract."""
+    engine = build_property_engine(prop)
+    active_loans = []
+    for loan in getattr(prop, "loans", []) or []:
+        balance = float(engine.balance_today(loan) or 0)
+        if not _is_closed_loan(loan, balance):
+            active_loans.append(loan)
+
+    monthly_pi = (
+        sum(float(getattr(loan, "monthly_payment", 0) or 0) for loan in active_loans)
+        if active_loans else None
+    )
+    monthly_escrow = (
+        sum(float(getattr(loan, "escrow_amount", 0) or 0) for loan in active_loans)
+        if active_loans else None
+    )
+    monthly_payment = (
+        sum(
+            float(getattr(loan, "estimated_total_monthly_payment", 0) or 0)
+            or (
+                float(getattr(loan, "monthly_payment", 0) or 0)
+                + float(getattr(loan, "escrow_amount", 0) or 0)
+            )
+            for loan in active_loans
+        )
+        if active_loans else None
+    )
+
+    definitions = equity_story.get("definitions") or {}
+    current_equity = definitions.get("currentEquity")
+    equity_at_purchase = definitions.get("acquisitionCashContribution")
+    total_equity_gain = (
+        float(current_equity) - float(equity_at_purchase)
+        if current_equity is not None and equity_at_purchase is not None else None
+    )
+    market_value = definitions.get("currentMarketValue")
+    equity_percent = (
+        float(current_equity) / float(market_value) * 100
+        if current_equity is not None and market_value else None
+    )
+
+    property_tax_annual = metric_map.get("propertyTaxAnnual", {}).get("value")
+    insurance_annual = metric_map.get("insuranceAnnual", {}).get("value")
+    property_tax_monthly = float(property_tax_annual) / 12 if property_tax_annual is not None else None
+    insurance_monthly = float(insurance_annual) / 12 if insurance_annual is not None else None
+
+    metric_map.update({
+        "primaryEquityPercent": metric_dto(
+            metric_key="primaryEquityPercent",
+            label="Equity Percentage",
+            value=equity_percent,
+            unit="percent",
+            source="CALCULATED",
+            formula="Current equity ÷ current market value",
+            inputs=[_input("Current equity", current_equity), _input("Market value", market_value)],
+            computation=None,
+        ),
+        "primaryMonthlyPi": metric_dto(
+            metric_key="primaryMonthlyPi",
+            label="Monthly P&I",
+            value=monthly_pi,
+            period="mo",
+            source="CALCULATED",
+            formula="Sum of monthly principal and interest for active loans",
+            inputs=[_input("Monthly P&I", monthly_pi)],
+            computation=format_currency(monthly_pi) if monthly_pi is not None else None,
+            positive_is_good=False,
+        ),
+        "primaryEscrowMonthly": metric_dto(
+            metric_key="primaryEscrowMonthly",
+            label="Escrow",
+            value=monthly_escrow,
+            period="mo",
+            source="CALCULATED",
+            formula="Sum of backend-resolved monthly escrow for active loans",
+            inputs=[_input("Monthly escrow", monthly_escrow)],
+            computation=format_currency(monthly_escrow) if monthly_escrow is not None else None,
+            positive_is_good=False,
+        ),
+        "primaryMonthlyPayment": metric_dto(
+            metric_key="primaryMonthlyPayment",
+            label="Monthly Payment",
+            value=monthly_payment,
+            period="mo",
+            source="CALCULATED",
+            formula="Backend-resolved principal and interest plus escrow for active loans",
+            inputs=[_input("Monthly P&I", monthly_pi), _input("Monthly escrow", monthly_escrow)],
+            computation=(
+                f"{format_currency(monthly_pi)} + {format_currency(monthly_escrow)}"
+                if monthly_pi is not None and monthly_escrow is not None else None
+            ),
+            positive_is_good=False,
+        ),
+        "totalEquityGain": metric_dto(
+            metric_key="totalEquityGain",
+            label="Total Equity Gain",
+            value=total_equity_gain,
+            source="CALCULATED",
+            formula="Current equity − down payment",
+            inputs=[_input("Current equity", current_equity), _input("Equity at purchase", equity_at_purchase)],
+            computation=(
+                f"{format_currency(current_equity)} − {format_currency(equity_at_purchase)}"
+                if current_equity is not None and equity_at_purchase is not None else None
+            ),
+        ),
+        "equityAtPurchase": metric_dto(
+            metric_key="equityAtPurchase",
+            label="Equity at Purchase",
+            value=equity_at_purchase,
+            source="CALCULATED",
+            formula="Backend-resolved down payment",
+            inputs=[_input("Down payment", equity_at_purchase)],
+            computation=format_currency(equity_at_purchase) if equity_at_purchase is not None else None,
+        ),
+        "primaryPropertyTaxMonthly": metric_dto(
+            metric_key="primaryPropertyTaxMonthly",
+            label="Property Tax",
+            value=property_tax_monthly,
+            period="mo",
+            source=metric_map.get("propertyTaxAnnual", {}).get("source") or "CALCULATED",
+            formula="Backend-resolved annual property tax ÷ 12",
+            inputs=[_input("Annual property tax", property_tax_annual)],
+            computation=(f"{format_currency(property_tax_annual)} ÷ 12" if property_tax_annual is not None else None),
+            positive_is_good=False,
+        ),
+        "primaryInsuranceMonthly": metric_dto(
+            metric_key="primaryInsuranceMonthly",
+            label="Insurance",
+            value=insurance_monthly,
+            period="mo",
+            source=metric_map.get("insuranceAnnual", {}).get("source") or "CALCULATED",
+            formula="Backend-resolved annual insurance ÷ 12",
+            inputs=[_input("Annual insurance", insurance_annual)],
+            computation=(f"{format_currency(insurance_annual)} ÷ 12" if insurance_annual is not None else None),
+            positive_is_good=False,
+        ),
+    })
+
+    current_loan = active_loans[0] if len(active_loans) == 1 else None
+    current_loan_type = (
+        str(getattr(current_loan, "loan_product", None) or getattr(current_loan, "loan_type", None) or "—").upper()
+        if current_loan else (f"{len(active_loans)} active loans" if active_loans else "—")
+    )
+    primary_asset_highlights = [
+        {"text": f"Current equity is {metric_map.get('equity', {}).get('fullDisplayValue', '—')}.", "tabKey": "summary"},
+        {"text": f"Principal balance has reduced by {metric_map.get('principalReduction', {}).get('fullDisplayValue', '—')}.", "tabKey": "loans"},
+    ]
+    primary_liability_highlights = [
+        {"text": f"Current loan balance is {metric_map.get('loanBalance', {}).get('fullDisplayValue', '—')}.", "tabKey": "loans"},
+        {"text": f"Current debt-to-value is {metric_map.get('loanToValue', {}).get('displayValue', '—')}.", "tabKey": "loans"},
+    ]
+
+    return {
+        "status": "available",
+        "header": {
+            "badge": "Primary Residence",
+            "asOfDate": date.today().isoformat(),
+            "propertyType": getattr(prop, "property_type", None) or "—",
+            "purchaseDate": getattr(prop, "purchase_date", None),
+            "status": getattr(prop, "current_residency_status", None) or getattr(prop, "usage_type", None) or "Primary Residence",
+        },
+        "topMetrics": [
+            {"metricKey": "marketValue", "icon": "home", "tone": "blue", "supportingText": "Current accepted value"},
+            {"metricKey": "purchasePrice", "icon": "wallet", "tone": "cyan", "supportingText": "Original purchase amount"},
+            {"metricKey": "equity", "icon": "equity", "tone": "green", "supportingMetricKey": "primaryEquityPercent", "supportingText": "of market value"},
+            {"metricKey": "loanBalance", "icon": "debt-service", "tone": "teal", "supportingMetricKey": "loanInterestRateSummary", "supportingText": "interest rate"},
+            {"metricKey": "totalEquityGain", "icon": "gain", "tone": "orange", "supportingText": "Since purchase"},
+            {"metricKey": "primaryMonthlyPayment", "icon": "bank", "tone": "purple", "supportingText": "P&I + escrow"},
+        ],
+        "valueBuildup": {
+            "title": "Equity",
+            "rows": [
+                {"label": "Down payment", "metricKey": "downPayment"},
+                {"label": "Appreciation", "metricKey": "appreciationSincePurchase", "tone": "positive"},
+                {"label": "Principal reduction", "metricKey": "principalReduction", "tone": "positive"},
+            ],
+            "totalMetricKey": "equity",
+            "totalLabel": "Total Equity",
+            "highlights": primary_asset_highlights,
+        },
+        "waterfall": equity_story.get("waterfall") or {},
+        "loanInformation": {
+            "title": "Loans",
+            "rows": [
+                {"label": "Original loan amount", "metricKey": "loanTotalOriginal"},
+                {"label": "Loan balance", "metricKey": "loanBalance"},
+                {"label": "Interest rate", "metricKey": "loanInterestRateSummary"},
+                {"label": "Monthly P&I", "metricKey": "primaryMonthlyPi"},
+                {"label": "Loan type", "display": current_loan_type},
+                {
+                    "label": "Maturity date",
+                    "display": str(getattr(current_loan, "maturity_date", None) or "—") if current_loan else "—",
+                    "value": getattr(current_loan, "maturity_date", None) if current_loan else None,
+                    "dataType": "date",
+                },
+                {"label": "Debt to Value (LTV)", "metricKey": "loanToValue"},
+            ],
+            "totalMetricKey": "loanToValue",
+            "highlights": primary_liability_highlights,
+            "loanType": current_loan_type,
+        },
+        "ownershipSections": [
+            {
+                "key": "sincePurchase",
+                "title": "Since You Bought",
+                "icon": "calendar",
+                "tone": "purple",
+                "rows": [
+                    {"label": "Home Value Change", "metricKey": "appreciationSincePurchase", "tone": "positive"},
+                    {"label": "Equity Built", "metricKey": "totalEquityGain", "tone": "positive"},
+                ],
+            },
+            {
+                "key": "ownershipCost",
+                "title": "Ownership Cost (Monthly)",
+                "icon": "wallet",
+                "tone": "orange",
+                "rows": [
+                    {"label": "Monthly Payment", "metricKey": "primaryMonthlyPayment"},
+                    {"label": "Property Tax", "metricKey": "primaryPropertyTaxMonthly"},
+                    {"label": "Insurance", "metricKey": "primaryInsuranceMonthly"},
+                ],
+                "totalMetricKey": "monthlyCostToOwn",
+                "totalLabel": "Total Monthly Cost",
+            },
+            {
+                "key": "equityBuilt",
+                "title": "Equity Built",
+                "icon": "gain",
+                "tone": "green",
+                "rows": [
+                    {"label": "Current Equity", "metricKey": "equity"},
+                    {"label": "Equity at Purchase", "metricKey": "equityAtPurchase"},
+                ],
+                "totalMetricKey": "totalEquityGain",
+                "totalLabel": "Equity Built",
+            },
+            {
+                "key": "taxBenefit",
+                "title": "Tax Benefit (Est.)",
+                "icon": "percent",
+                "tone": "purple",
+                "status": "unavailable",
+                "unavailableReason": "Tax benefit is unavailable because no primary-residence tax-benefit result was returned by the backend.",
+                "rows": [],
+            },
+        ],
+        "wealthTrend": {
+            "title": "Multi-Year Equity Trend",
+            "series": [
+                {"year": row.get("year"), "equity": row.get("equity"), "equityDisplay": row.get("equityDisplay")}
+                for row in yearly_rows
+                if row.get("year") is not None and row.get("equity") is not None
+            ],
+        },
+        "facts": [],
+        "notice": None,
+        "assertions": {
+            "waterfallBackendOwned": bool((equity_story.get("waterfall") or {}).get("series")),
+            "monthlyPaymentComponentsMatch": (
+                monthly_payment is None
+                or monthly_pi is None
+                or monthly_escrow is None
+                or abs(monthly_payment - monthly_pi - monthly_escrow) <= 1
+            ),
+        },
+    }
+
+
 def build_property_metric_vault(
     prop: Any,
     metrics: Dict[str, Any],
@@ -725,6 +1165,16 @@ def build_property_metric_vault(
             formula="Market value − loan balance",
             inputs=[_input("Market value", market_value), _input("Loan balance", loan_balance)],
             computation=f"{format_currency(market_value)} − {format_currency(loan_balance)}",
+        ),
+        "equityShare": metric_dto(
+            metric_key="equityShare",
+            label="Equity Share",
+            value=(equity / market_value * 100) if market_value else None,
+            unit="percent",
+            source="CALCULATED",
+            formula="Equity ÷ market value",
+            inputs=[_input("Equity", equity), _input("Market value", market_value)],
+            computation=f"{format_currency(equity)} ÷ {format_currency(market_value)}" if market_value else None,
         ),
         "monthlyCostToOwn": metric_dto(
             metric_key="monthlyCostToOwn",
@@ -941,6 +1391,116 @@ def build_property_metric_vault(
 
     yearly_rows = [_yearly_display_row(row, market_value) for row in (yearly or [])]
     latest_year = yearly_rows[-1] if yearly_rows else {}
+    equity_story = _equity_story(prop, market_value, loan_balance)
+    story_definitions = equity_story.get("definitions") or {}
+    operating_components = summary.get("operating_expense_components") or {}
+    latest_occupancy = next(
+        (row.get("occupancy") for row in reversed(yearly or []) if row.get("occupancy") is not None),
+        getattr(prop, "occupancy_rate", None),
+    )
+    metric_map.update({
+        "appreciationSincePurchase": metric_dto(
+            metric_key="appreciationSincePurchase",
+            label="Appreciation",
+            value=story_definitions.get("appreciation"),
+            source="CALCULATED",
+            formula="Backend equity story appreciation",
+            inputs=[_input("Appreciation", story_definitions.get("appreciation"))],
+            computation=format_currency(story_definitions.get("appreciation")) if story_definitions.get("appreciation") is not None else None,
+        ),
+        "principalReduction": metric_dto(
+            metric_key="principalReduction",
+            label="Principal Reduction",
+            value=story_definitions.get("principalReductionSinceAcquisition"),
+            source="CALCULATED",
+            formula="Backend equity story principal reduction",
+            inputs=[_input("Principal reduction", story_definitions.get("principalReductionSinceAcquisition"))],
+            computation=format_currency(story_definitions.get("principalReductionSinceAcquisition")) if story_definitions.get("principalReductionSinceAcquisition") is not None else None,
+        ),
+        "cashInvested": metric_dto(
+            metric_key="cashInvested",
+            label="Cash Invested",
+            value=summary.get("cash_invested"),
+            source="CALCULATED",
+            formula="Backend-resolved cash invested",
+            inputs=[_input("Cash invested", summary.get("cash_invested"))],
+            computation=format_currency(summary.get("cash_invested")) if summary.get("cash_invested") is not None else None,
+        ),
+        "monthlyRentalIncome": metric_dto(
+            metric_key="monthlyRentalIncome",
+            label="Rental Income",
+            value=metrics.get("effective_rent"),
+            period="mo",
+            source="CALCULATED",
+            formula="Backend-resolved monthly rental income",
+            inputs=[_input("Monthly rental income", metrics.get("effective_rent"))],
+            computation=format_currency(metrics.get("effective_rent")) if metrics.get("effective_rent") is not None else None,
+        ),
+        "monthlyOperatingExpenses": metric_dto(
+            metric_key="monthlyOperatingExpenses",
+            label="Operating Expenses",
+            value=metrics.get("monthly_expenses"),
+            period="mo",
+            source="CALCULATED",
+            formula="Backend-resolved monthly operating expenses",
+            inputs=[_input("Monthly operating expenses", metrics.get("monthly_expenses"))],
+            computation=format_currency(metrics.get("monthly_expenses")) if metrics.get("monthly_expenses") is not None else None,
+            positive_is_good=False,
+        ),
+        "monthlyNoi": metric_dto(
+            metric_key="monthlyNoi",
+            label="NOI",
+            value=metrics.get("monthly_noi"),
+            period="mo",
+            source="CALCULATED",
+            formula="Backend-resolved monthly NOI",
+            inputs=[_input("Monthly NOI", metrics.get("monthly_noi"))],
+            computation=format_currency(metrics.get("monthly_noi")) if metrics.get("monthly_noi") is not None else None,
+        ),
+        "monthlyDebtService": metric_dto(
+            metric_key="monthlyDebtService",
+            label="Debt Service",
+            value=metrics.get("monthly_mortgage"),
+            period="mo",
+            source="CALCULATED",
+            formula="Backend-resolved monthly principal and interest debt service",
+            inputs=[_input("Monthly debt service", metrics.get("monthly_mortgage"))],
+            computation=format_currency(metrics.get("monthly_mortgage")) if metrics.get("monthly_mortgage") is not None else None,
+            positive_is_good=False,
+        ),
+        "occupancyRate": metric_dto(
+            metric_key="occupancyRate",
+            label="Occupancy Rate",
+            value=latest_occupancy,
+            unit="percent",
+            source="CALCULATED",
+            formula="Backend rental timeline occupancy for the latest available period",
+            inputs=[_input("Occupancy", latest_occupancy, "percent")],
+            computation=format_percent(latest_occupancy) if latest_occupancy is not None else None,
+        ),
+        "propertyTaxAnnual": metric_dto(
+            metric_key="propertyTaxAnnual",
+            label="Property Taxes",
+            value=summary.get("property_tax"),
+            period="yr",
+            source=summary.get("property_tax_source") or "CALCULATED",
+            formula="Backend-resolved annual property tax",
+            inputs=[_input("Property tax", summary.get("property_tax"))],
+            computation=format_currency(summary.get("property_tax")) if summary.get("property_tax") is not None else None,
+            positive_is_good=False,
+        ),
+        "insuranceAnnual": metric_dto(
+            metric_key="insuranceAnnual",
+            label="Insurance",
+            value=operating_components.get("insurance"),
+            period="yr",
+            source="CALCULATED",
+            formula="Backend-resolved annual insurance expense",
+            inputs=[_input("Insurance", operating_components.get("insurance"))],
+            computation=format_currency(operating_components.get("insurance")) if operating_components.get("insurance") is not None else None,
+            positive_is_good=False,
+        ),
+    })
     return_on_equity = (latest_year.get("totalReturn", 0) / equity * 100) if equity else None
     if latest_year:
         metric_map["performanceCashFlow"] = metric_dto(
@@ -991,6 +1551,20 @@ def build_property_metric_vault(
 
     metric_map["totalDebt"] = metric_map["loanBalance"]
     metric_map["loanToValue"] = metric_map.get("loanToValue") or metric_map["ltv"]
+    rental_summary = _rental_summary_presentation(
+        prop,
+        metric_map,
+        summary,
+        yearly_rows,
+        equity_story,
+        loan_summary,
+    )
+    primary_summary = _primary_summary_presentation(
+        prop,
+        metric_map,
+        yearly_rows,
+        equity_story,
+    )
 
     return {
         "propertyId": getattr(prop, "id", None),
@@ -998,8 +1572,10 @@ def build_property_metric_vault(
         "schemaVersion": 1,
         "metrics": metric_map,
         "charts": {
-            "equityStory": _equity_story(prop, market_value, loan_balance),
+            "equityStory": equity_story,
         },
+        "rentalSummary": rental_summary,
+        "primarySummary": primary_summary,
         "yearlyMetrics": yearly_rows,
         "loanSummary": loan_summary,
         "loanMetrics": loan_metrics,

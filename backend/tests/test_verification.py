@@ -146,6 +146,163 @@ def test_metric_vault_includes_backend_equity_story(client, db, user, prop):
     assert all(check["passes"] for check in story["waterfall"]["validation"]["checks"])
 
 
+def test_metric_vault_includes_backend_owned_rental_summary_presentation(client, db, user, prop):
+    prop.usage_type = "Rental"
+    prop.purchase_price = 400_000
+    prop.down_payment = 80_000
+    prop.market_value = 500_000
+    prop.loans[0].original_amount = 320_000
+    prop.loans[0].current_balance = 300_000
+    db.commit()
+
+    resp = client.get(
+        f"/api/properties/{prop.id}/metric-vault",
+        headers=auth_headers(user.email),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    summary = body["rentalSummary"]
+    assert [item["metricKey"] for item in summary["topMetrics"]] == [
+        "marketValue",
+        "purchasePrice",
+        "equity",
+        "loanBalance",
+        "cashOnCashReturn",
+        "capRate",
+    ]
+    assert summary["waterfall"] == body["charts"]["equityStory"]["waterfall"]
+    assert summary["assets"]["title"] == "Equity"
+    assert [row["metricKey"] for row in summary["assets"]["rows"]] == [
+        "downPayment",
+        "appreciationSincePurchase",
+        "principalReduction",
+    ]
+    assert body["metrics"]["purchasePrice"]["value"] == 400_000
+    assert body["metrics"]["downPayment"]["value"] == 80_000
+    assert sum(
+        body["metrics"][key]["value"]
+        for key in ("downPayment", "appreciationSincePurchase", "principalReduction")
+    ) == body["metrics"]["equity"]["value"]
+    assert summary["liabilities"]["rows"][0]["metricKey"] == "loanTotalOriginal"
+    assert summary["assets"]["totalMetricKey"] == "equity"
+    assert summary["liabilities"]["totalMetricKey"] == "loanToValue"
+    assert len(summary["operationalMetrics"]) == 7
+    assert summary["assertions"]["portfolioBalanceMatchesLiability"] is True
+    assert summary["assertions"]["waterfallBackendOwned"] is True
+    assert body["metrics"]["monthlyOperatingExpenses"]["formula"].startswith("Backend-resolved")
+    assert body["metrics"]["occupancyRate"]["source"] == "CALCULATED"
+    assert body["metrics"]["equityShare"]["value"] == 40
+
+
+def test_rental_summary_preserves_unavailable_and_negative_backend_metric_states(client, db, user, prop):
+    prop.usage_type = "Rental"
+    prop.down_payment = 0
+    prop.closing_costs = 0
+    prop.monthly_rent = 0
+    prop.market_value = 500_000
+    prop.loans[0].monthly_payment = 4_000
+    db.commit()
+
+    resp = client.get(
+        f"/api/properties/{prop.id}/metric-vault",
+        headers=auth_headers(user.email),
+    )
+
+    assert resp.status_code == 200
+    metrics = resp.json()["metrics"]
+    assert metrics["cashOnCashReturn"]["displayValue"] == "—"
+    assert metrics["monthlyCashFlow"]["value"] < 0
+    assert metrics["monthlyCashFlow"]["tone"] == "negative"
+
+
+def test_metric_vault_includes_backend_owned_primary_summary_presentation(client, db, user, prop):
+    prop.usage_type = "Primary"
+    prop.current_residency_status = "Primary Residence"
+    prop.purchase_price = 400_000
+    prop.down_payment = 80_000
+    prop.market_value = 500_000
+    prop.loans[0].original_amount = 320_000
+    prop.loans[0].current_balance = 300_000
+    prop.loans[0].monthly_payment = 1_700
+    prop.loans[0].escrow_amount = 450
+    prop.loans[0].estimated_total_monthly_payment = 2_150
+    db.commit()
+
+    resp = client.get(
+        f"/api/properties/{prop.id}/metric-vault",
+        headers=auth_headers(user.email),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    summary = body["primarySummary"]
+    metrics = body["metrics"]
+    assert [item["metricKey"] for item in summary["topMetrics"]] == [
+        "marketValue",
+        "purchasePrice",
+        "equity",
+        "loanBalance",
+        "totalEquityGain",
+        "primaryMonthlyPayment",
+    ]
+    assert summary["waterfall"] == body["charts"]["equityStory"]["waterfall"]
+    assert summary["valueBuildup"]["title"] == "Equity"
+    assert summary["valueBuildup"]["totalLabel"] == "Total Equity"
+    assert [row["metricKey"] for row in summary["valueBuildup"]["rows"]] == [
+        "downPayment",
+        "appreciationSincePurchase",
+        "principalReduction",
+    ]
+    assert summary["loanInformation"]["title"] == "Loans"
+    assert [row.get("metricKey") or row["label"] for row in summary["loanInformation"]["rows"]] == [
+        "loanTotalOriginal",
+        "loanBalance",
+        "loanInterestRateSummary",
+        "primaryMonthlyPi",
+        "Loan type",
+        "Maturity date",
+        "loanToValue",
+    ]
+    assert summary["loanInformation"]["totalMetricKey"] == "loanToValue"
+    assert len(summary["valueBuildup"]["highlights"]) == 2
+    assert len(summary["loanInformation"]["highlights"]) == 2
+    assert summary["facts"] == []
+    assert summary["notice"] is None
+    assert metrics["purchasePrice"]["value"] == 400_000
+    assert sum(
+        metrics[key]["value"]
+        for key in ("downPayment", "appreciationSincePurchase", "principalReduction")
+    ) == metrics["equity"]["value"]
+    assert metrics["primaryMonthlyPi"]["value"] == 1_700
+    assert metrics["primaryEscrowMonthly"]["value"] == 450
+    assert metrics["primaryMonthlyPayment"]["value"] == 2_150
+    assert summary["assertions"]["monthlyPaymentComponentsMatch"] is True
+    assert summary["ownershipSections"][3]["status"] == "unavailable"
+    assert "monthlyCashFlow" not in [item["metricKey"] for item in summary["topMetrics"]]
+    assert "capRate" not in [item["metricKey"] for item in summary["topMetrics"]]
+    assert "occupancyRate" not in [item["metricKey"] for item in summary["topMetrics"]]
+
+
+def test_primary_summary_preserves_missing_loan_values(client, db, user, prop):
+    prop.usage_type = "Primary"
+    for loan in list(prop.loans):
+        db.delete(loan)
+    db.commit()
+
+    resp = client.get(
+        f"/api/properties/{prop.id}/metric-vault",
+        headers=auth_headers(user.email),
+    )
+
+    assert resp.status_code == 200
+    metrics = resp.json()["metrics"]
+    assert metrics["primaryMonthlyPi"]["value"] is None
+    assert metrics["primaryMonthlyPi"]["displayValue"] == "—"
+    assert metrics["primaryEscrowMonthly"]["value"] is None
+    assert metrics["primaryMonthlyPayment"]["value"] is None
+
+
 
 def test_metric_vault_equity_story_handles_negative_equity(client, db, user, prop):
     prop.purchase_price = 500_000

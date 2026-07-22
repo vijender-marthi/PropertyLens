@@ -11,7 +11,7 @@ import BrandLogo from './BrandLogo'
 import { propAPI } from '../services/api'
 
 const MAIN_NAV = [
-  { to: '/dashboard',  icon: BarChart3,  label: 'Dashboard' },
+  { to: '/dashboard',  icon: BarChart3,  label: 'Portfolio' },
   { to: '/properties', icon: Building2,  label: 'Properties' },
   { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
   { to: '/loans',      icon: Landmark,   label: 'Loans' },

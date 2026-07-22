@@ -788,7 +788,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
 
     dashboard = {
         "header": {
-            "title": "Portfolio Dashboard",
+            "title": "Portfolio",
             "subtitle": "Real-time overview of your selected investment properties",
             "asOfDate": as_of,
         },
@@ -801,7 +801,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             {"metricKey": "dscr", "label": "Portfolio DSCR", "icon": "ratio", "tone": "cyan"},
         ],
         "assets": {
-            "title": "Assets",
+            "title": "Equity",
             "rows": [
                 {"label": "Total Purchase Price", "metricKey": "totalPurchasePrice"},
                 {"label": "Appreciation", "metricKey": "appreciation", "tone": "positive"},
@@ -834,7 +834,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             ],
         },
         "liabilities": {
-            "title": "Liabilities",
+            "title": "Loans",
             "rows": [
                 {"label": "Total Loan Balance", "metricSource": "loans", "metricKey": "totalBalance"},
                 {"label": "Average Interest Rate", "metricSource": "loans", "metricKey": "weightedRate"},
@@ -848,7 +848,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             "totalValue": _money(portfolio_value),
             "segments": [
                 {"key": "equity", "label": "Equity", "value": _money(equity), "percentage": _rate(equity / portfolio_value * 100) if portfolio_value else 0, "tone": "positive"},
-                {"key": "liabilities", "label": "Liabilities", "value": _money(total_debt), "percentage": _rate(total_debt / portfolio_value * 100) if portfolio_value else 0, "tone": "negative"},
+                {"key": "liabilities", "label": "Loans", "value": _money(total_debt), "percentage": _rate(total_debt / portfolio_value * 100) if portfolio_value else 0, "tone": "negative"},
             ],
         },
         "cashFlowTrend": {"title": "Cash Flow Trend", "period": "Yearly", "series": cash_flow_series},
