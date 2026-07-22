@@ -39,8 +39,8 @@ import { chartColorRamps, chartColors, chartTooltipStyle, chartTypography } from
 
 // Softer positive/negative fills for dashboard charts (lighter than the default
 // dark green/red so they read well on both light and dark cards).
-const POS = '#34d399' // emerald-400
-const NEG = '#fb7185' // rose-400
+const POS = '#34d399' // emerald-400 — equity / positive
+const DEBT = chartColors.mutedAxis // slate — liabilities (neutral, not alarming)
 
 const ICONS = {
   home: Home,
@@ -56,13 +56,16 @@ const ICONS = {
   noi: TrendingUp,
 }
 
+// Cohesive, restrained palette: a cool jewel-tone sweep (indigo → violet → sky
+// → teal → emerald) with a single warm amber accent, all at one weight with
+// soft tinted chips in dark mode. Aligns with the Value Buildup waterfall.
 const TONES = {
-  blue: { icon: 'bg-blue-50 text-blue-600', stroke: chartColors.primary },
-  green: { icon: 'bg-green-50 text-emerald-500 dark:text-emerald-400', stroke: POS },
-  teal: { icon: 'bg-teal-50 text-teal-600', stroke: chartColors.cyan },
-  orange: { icon: 'bg-orange-50 text-orange-600', stroke: chartColors.warning },
-  purple: { icon: 'bg-purple-50 text-purple-600', stroke: chartColors.purple },
-  cyan: { icon: 'bg-cyan-50 text-cyan-700', stroke: chartColors.primarySoft },
+  blue: { icon: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300', stroke: chartColors.primary },
+  green: { icon: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300', stroke: POS },
+  teal: { icon: 'bg-teal-50 text-teal-600 dark:bg-teal-500/10 dark:text-teal-300', stroke: chartColors.cyan },
+  orange: { icon: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300', stroke: chartColors.warning },
+  purple: { icon: 'bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-300', stroke: chartColors.purple },
+  cyan: { icon: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-300', stroke: chartColors.primarySoft },
 }
 
 function metricDisplay(metric) {
@@ -423,10 +426,10 @@ function CapitalStructure({ data }) {
     <DashboardCard className="p-4">
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title}</h2>
       <div className="mt-4 flex flex-col items-center gap-4">
-        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${POS} ${equity?.percentage || 0}%, ${NEG} ${equity?.percentage || 0}%)` }}>
+        <div className="grid h-24 w-24 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(${POS} ${equity?.percentage || 0}%, ${DEBT} ${equity?.percentage || 0}%)` }}>
           <div className="grid h-14 w-14 place-items-center rounded-full bg-white text-center"><div><p className="text-sm font-bold text-gray-950">{formatCurrencyCompact(data.totalValue)}</p><p className="text-[10px] text-gray-500">Total</p></div></div>
         </div>
-        <dl className="w-full space-y-2.5">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex min-w-0 items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === 'positive' ? 'bg-emerald-400' : 'bg-rose-400'}`} /><span className="truncate">{item.label}</span></dt><dd className="whitespace-nowrap text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
+        <dl className="w-full space-y-2.5">{(data.segments || []).map((item) => <div key={item.key} className="flex items-center justify-between gap-2 text-xs"><dt className="flex min-w-0 items-center gap-2 text-gray-600"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${item.tone === 'positive' ? 'bg-emerald-400' : 'bg-slate-400'}`} /><span className="truncate">{item.label}</span></dt><dd className="whitespace-nowrap text-right font-semibold text-gray-900">{formatPercent(item.percentage)} · {formatCurrencyCompact(item.value)}</dd></div>)}</dl>
       </div>
     </DashboardCard>
   )
