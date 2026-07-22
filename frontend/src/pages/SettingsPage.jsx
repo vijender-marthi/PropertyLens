@@ -9,7 +9,7 @@ import { useTheme } from '../hooks/useTheme'
 const THEME_OPTIONS = [
   { id: 'aqua', name: 'Aqua', desc: 'Calm blue-green — the default.', swatch: 'linear-gradient(135deg,#22d3ee,#0891b2)' },
   { id: 'glass', name: 'Liquid Glass', desc: 'Frosted, translucent panels.', swatch: 'linear-gradient(135deg,rgba(255,255,255,.85),#7dd3fc 60%,#0ea5e9)' },
-  { id: 'women', name: 'Women-centric', desc: 'Warm rose & violet tones.', swatch: 'linear-gradient(135deg,#f472b6,#a855f7)' },
+  { id: 'rose', name: 'Rose', desc: 'Warm rose & lavender tones.', swatch: 'linear-gradient(135deg,#f472b6,#a855f7)' },
 ]
 
 function AppearanceSection() {

@@ -182,7 +182,7 @@ body {
    ========================================================================= */
 html[data-theme="aqua"]  { --pl-accent:#0891b2; --pl-accent-strong:#0e7490; --pl-accent-ink:#0e7490; --pl-accent-soft:#cffafe; --pl-accent-softer:#ecfeff; --pl-ring:#22d3ee; }
 html[data-theme="glass"] { --pl-accent:#0284c7; --pl-accent-strong:#0369a1; --pl-accent-ink:#0369a1; --pl-accent-soft:#e0f2fe; --pl-accent-softer:#f0f9ff; --pl-ring:#38bdf8; }
-html[data-theme="women"] { --pl-accent:#db2777; --pl-accent-strong:#be185d; --pl-accent-ink:#be185d; --pl-accent-soft:#fce7f3; --pl-accent-softer:#fdf2f8; --pl-ring:#f472b6; }
+html[data-theme="rose"] { --pl-accent:#db2777; --pl-accent-strong:#be185d; --pl-accent-ink:#be185d; --pl-accent-soft:#fce7f3; --pl-accent-softer:#fdf2f8; --pl-ring:#f472b6; }
 
 /* Accent retarget (all themes, via the variables above) */
 html[data-theme] .btn-primary { background-color: var(--pl-accent); }
@@ -235,11 +235,11 @@ html.dark[data-theme="glass"] .stat-card {
 }
 
 /* Women-centric — warm rose/violet wash */
-html[data-theme="women"] body {
+html[data-theme="rose"] body {
   background-image: radial-gradient(1000px 520px at 100% -12%, rgba(236,72,153,0.08), transparent 55%);
   background-attachment: fixed;
 }
-html.dark[data-theme="women"] body {
+html.dark[data-theme="rose"] body {
   background-image: radial-gradient(1000px 520px at 100% -12%, rgba(219,39,119,0.12), transparent 55%);
 }
-html.dark[data-theme="women"] .bg-blue-50:not([class*="dark:bg-"]) { background-color: rgb(131 24 67 / 0.30) !important; }
+html.dark[data-theme="rose"] .bg-blue-50:not([class*="dark:bg-"]) { background-color: rgb(131 24 67 / 0.30) !important; }
