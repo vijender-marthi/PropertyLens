@@ -11,8 +11,14 @@ from pydantic import BaseModel, EmailStr
 import models
 from database import get_db
 from services.email_service import email_configured, send_password_reset_email
+from services.rate_limit import rate_limit
 
 logger = logging.getLogger("propertylens.auth")
+
+# Brute-force / flood guards (per client IP).
+_login_guard = rate_limit("login", limit=10, window_seconds=60)
+_register_guard = rate_limit("register", limit=5, window_seconds=3600)
+_reset_guard = rate_limit("password-reset", limit=5, window_seconds=900)
 
 SECRET_KEY = os.getenv("PROPERTYLENS_SECRET_KEY", "propertylens-secret-key-change-in-production")
 ALGORITHM = "HS256"
@@ -152,7 +158,7 @@ def require_premium_user(user: models.User):
 
 
 @router.post("/register", response_model=Token)
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
+def register(user_in: UserCreate, db: Session = Depends(get_db), _rl=Depends(_register_guard)):
     existing = db.query(models.User).filter(models.User.email == user_in.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -180,7 +186,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/token", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db), _rl=Depends(_login_guard)):
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -201,7 +207,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 @router.post("/password-reset/request")
-def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db)):
+def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(get_db), _rl=Depends(_reset_guard)):
     # Always answer with the same generic body so this endpoint can't be used to
     # enumerate which emails have accounts.
     generic = {
