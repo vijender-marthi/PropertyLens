@@ -642,7 +642,9 @@ def build_report(
             if src_name == "__external__" or amt <= 1e-6:
                 continue
             groups.append({"label": f"from {src_name}", "amount": round(amt, 2), "display": format_currency(amt), "order": name_to_order.get(src_name, k), "own": False})
-        groups.sort(key=lambda g: (not g["own"], g["order"]))
+        # Match the coin row's left-to-right order: freed homes first (by payoff
+        # order), then this home's own payment last.
+        groups.sort(key=lambda g: (g["own"], g["order"]))
 
         rollover.append({
             "order": k,

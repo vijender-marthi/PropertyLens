@@ -533,16 +533,18 @@ function RolloverStep({ step, maxTotal }) {
         {/* Property name (left) + total-paid box bar opposite it (right). Bar
             length is proportional to the total money that clears this home;
             each box is a source group (you pay, or rolled in from a home). */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">{step.name}</div>
             <div className="text-[11px] text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</div>
           </div>
           {total > 0 ? (
             <div className="flex shrink-0 items-center gap-2">
+              {/* Fixed-width, screen-responsive track so every row's bar lines up
+                  on the same right edge regardless of name length or viewport. */}
               <div
-                className="relative w-[6in] max-w-[48vw] overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
-                style={{ height: '0.4in' }}
+                className="relative overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
+                style={{ width: 'min(4in, 46vw)', height: '0.36in' }}
                 title={`${step.name}: ${step.totalPaidDisplay} total to clear`}
               >
                 <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((total / maxTotal) * 100, 2)}%` }}>
@@ -560,7 +562,7 @@ function RolloverStep({ step, maxTotal }) {
                   })}
                 </div>
               </div>
-              <span className="shrink-0 text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.totalPaidDisplay}</span>
+              <span className="w-16 shrink-0 text-right text-xs font-semibold tabular-nums text-gray-700 dark:text-gray-200">{step.totalPaidDisplay}</span>
             </div>
           ) : null}
         </div>
