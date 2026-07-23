@@ -344,7 +344,6 @@ function ValueBuildupWaterfall({ data }) {
   const available = data?.status === 'available'
   const nodes = available ? (data.series || []) : []
   const chartHeight = 400
-  const chartWidth = 680
   const left = 58
   const right = 24
   const top = 28
@@ -352,6 +351,8 @@ function ValueBuildupWaterfall({ data }) {
   const plotHeight = chartHeight - top - bottom
   const barWidth = 48
   const gap = 56
+  // Width the viewBox to the actual bars so there's no dead space on the right.
+  const chartWidth = left + Math.max(nodes.length - 1, 0) * (barWidth + gap) + (barWidth + 8) + right
   const nodeValues = nodes.flatMap((node) => [node.startValue ?? node.start ?? 0, node.endValue ?? node.end ?? 0])
   const minValue = Math.min(0, ...nodeValues)
   const maxValue = Math.max(1, ...nodeValues)
@@ -372,7 +373,7 @@ function ValueBuildupWaterfall({ data }) {
       </div>
       {available ? (
         <div className="mt-4 overflow-x-auto">
-          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="mx-auto min-w-[680px]" role="img" aria-label={data.title}>
+          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full min-w-[480px]" role="img" aria-label={data.title}>
             {ticks.map((tick) => <g key={tick}><line x1={left - 6} x2={chartWidth - right} y1={y(tick)} y2={y(tick)} stroke="currentColor" className="text-gray-100 dark:text-gray-800" /><text x={0} y={y(tick) + 4} className="fill-gray-500 text-[11px] dark:fill-gray-400">{formatCurrencyCompact(tick)}</text></g>)}
             {nodes.map((node, index) => {
               const startValue = node.startValue ?? node.start ?? 0
