@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare, ChevronDown, SlidersHorizontal } from 'lucide-react'
+import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare, ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
@@ -337,8 +337,21 @@ export default function PayoffPlannerPage() {
           <ResultsPanel report={report} loading={loading && !report} />
         </div>
 
+        {/* Collapse/expand handle at the boundary (desktop) — makes it obvious
+            the inputs panel can slide away and back. */}
+        <button
+          type="button"
+          onClick={() => setInputsOpen((v) => !v)}
+          aria-label={inputsOpen ? 'Collapse inputs panel' : 'Expand inputs panel'}
+          aria-expanded={inputsOpen}
+          title={inputsOpen ? 'Collapse inputs' : 'Expand inputs'}
+          className="hidden shrink-0 self-start rounded-full border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700 lg:sticky lg:top-4 lg:order-2 lg:flex lg:h-16 lg:w-6 lg:items-center lg:justify-center dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+        >
+          {inputsOpen ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronLeft className="h-4 w-4" aria-hidden="true" />}
+        </button>
+
         {/* Control panel (right) — slides/minimizes for a bigger results view */}
-        <aside className={`order-1 lg:order-2 lg:shrink-0 lg:transition-[width,opacity] lg:duration-300 lg:ease-in-out ${
+        <aside className={`order-1 lg:order-3 lg:shrink-0 lg:transition-[width,opacity] lg:duration-300 lg:ease-in-out ${
           inputsOpen ? 'lg:w-80 lg:opacity-100' : 'hidden lg:block lg:w-0 lg:overflow-hidden lg:opacity-0'
         }`}>
           <div className="lg:sticky lg:top-4 lg:w-80">
