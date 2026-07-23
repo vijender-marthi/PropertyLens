@@ -294,6 +294,8 @@ export default function PayoffPlannerPage() {
             onDelete={deleteScenario}
             onCompare={() => setCompareOpen((v) => !v)}
             compareOpen={compareOpen}
+            compareColumns={compareColumns}
+            onExportCompare={exportCompare}
             onExport={exportSingle}
             canExport={Boolean(report?.cards)}
           />
@@ -305,13 +307,9 @@ export default function PayoffPlannerPage() {
         </div>
       </header>
 
-      {compareOpen ? (
-        <ComparePanel columns={compareColumns} onExport={exportCompare} onClose={() => setCompareOpen(false)} />
-      ) : null}
-
-      <div className={`grid grid-cols-1 gap-6 ${inputsOpen ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
+      <div className="flex flex-col gap-6 lg:flex-row">
         {/* Results (left) */}
-        <div className="space-y-6 order-2 lg:order-1">
+        <div className="order-2 min-w-0 flex-1 space-y-6 lg:order-1">
           {error ? (
             <div className="card flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
               <AlertCircle className="h-4 w-4 shrink-0" />
@@ -322,22 +320,22 @@ export default function PayoffPlannerPage() {
           <ResultsPanel report={report} loading={loading && !report} />
         </div>
 
-        {/* Control panel (right, sticky) — collapsible for a bigger results view */}
-        {inputsOpen ? (
-          <aside className="order-1 lg:order-2">
-            <div className="lg:sticky lg:top-4">
-              <ControlPanel
-                inputs={inputs}
-                update={update}
-                portfolio={report?.portfolio}
-                properties={report?.properties}
-                toggleProperty={toggleProperty}
-                loading={loading}
-                onCollapse={() => setInputsOpen(false)}
-              />
-            </div>
-          </aside>
-        ) : null}
+        {/* Control panel (right) — slides/minimizes for a bigger results view */}
+        <aside className={`order-1 lg:order-2 lg:shrink-0 lg:transition-[width,opacity] lg:duration-300 lg:ease-in-out ${
+          inputsOpen ? 'lg:w-80 lg:opacity-100' : 'hidden lg:block lg:w-0 lg:overflow-hidden lg:opacity-0'
+        }`}>
+          <div className="lg:sticky lg:top-4 lg:w-80">
+            <ControlPanel
+              inputs={inputs}
+              update={update}
+              portfolio={report?.portfolio}
+              properties={report?.properties}
+              toggleProperty={toggleProperty}
+              loading={loading}
+              onCollapse={() => setInputsOpen(false)}
+            />
+          </div>
+        </aside>
       </div>
       </div>
 
@@ -1067,8 +1065,9 @@ function bestIndices(columns, key, dir) {
 // Compact Scenarios control that lives in the top-right corner. Collapsed it is
 // a single pill (with a saved-count badge and a "modified" dot); clicking it
 // opens a dropdown with the save/compare/export actions and the saved chips.
-function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatches, busy, onSave, onUpdate, onApply, onDelete, onCompare, compareOpen, onExport, canExport }) {
+function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatches, busy, onSave, onUpdate, onApply, onDelete, onCompare, compareOpen, compareColumns, onExportCompare, onExport, canExport }) {
   const modified = Boolean(activeScenario && !activeMatches)
+  const showCompare = compareOpen && (compareColumns || []).length > 0
   return (
     <div className="relative">
       <button type="button" onClick={onToggle} aria-expanded={open}
@@ -1085,7 +1084,7 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+        <div className={`absolute right-0 z-30 mt-2 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-xl transition-[width] dark:border-gray-700 dark:bg-gray-800 ${showCompare ? 'w-[44rem]' : 'w-80'}`}>
           <div className="mb-3 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
               <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Scenarios
@@ -1135,13 +1134,15 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
           ) : (
             <p className="text-xs text-gray-400 dark:text-gray-500">No saved scenarios yet. Tune the inputs, then “Save current” to keep this plan and compare it against others.</p>
           )}
+
+          {showCompare ? <ComparePanel columns={compareColumns} onExport={onExportCompare} /> : null}
         </div>
       ) : null}
     </div>
   )
 }
 
-function ComparePanel({ columns, onExport, onClose }) {
+function ComparePanel({ columns, onExport }) {
   if (!columns.length) return null
   const bestDebt = bestIndices(columns, 'debtFreeMonth', 'min')
   const bestTime = bestIndices(columns, 'timeSavedValue', 'max')
@@ -1165,21 +1166,16 @@ function ComparePanel({ columns, onExport, onClose }) {
   )
 
   return (
-    <div className="card">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-          <GitCompare className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Compare scenarios
-        </h2>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={onExport} className="btn-secondary text-xs px-2.5 py-1.5">
-            <Download className="h-3.5 w-3.5" aria-hidden="true" />Export comparison
-          </button>
-          <button type="button" onClick={onClose} aria-label="Close comparison" className="btn-ghost px-2 py-1.5">
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
+    <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-700/70">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="flex items-center gap-1.5 text-xs font-semibold text-gray-900 dark:text-white">
+          <GitCompare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />Compare scenarios
+        </h3>
+        <button type="button" onClick={onExport} className="btn-secondary text-xs px-2.5 py-1.5">
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />Export comparison
+        </button>
       </div>
-      <div className="table-scroll">
+      <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>
             <tr>
