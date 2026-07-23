@@ -361,6 +361,41 @@ function GettingStarted({ audit }) {
   )
 }
 
+function FormulaTable({ formulas }) {
+  return (
+    <div className="card overflow-hidden p-0">
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
+              <th className="px-4 py-2.5">Metric</th>
+              <th className="px-4 py-2.5">Formula</th>
+              <th className="px-4 py-2.5">Definition</th>
+            </tr>
+          </thead>
+          <tbody>
+            {formulas.map((formula) => {
+              const lines = (formula.formulaLines?.length ? formula.formulaLines : [formula.formula]).filter(Boolean)
+              return (
+                <tr key={formula.metricKey} className="border-b border-gray-100 align-top last:border-0 dark:border-gray-800">
+                  <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
+                    {formula.name || formula.metricKey}
+                    {formula.sectionKey ? <div className="mt-0.5 text-[11px] font-normal capitalize text-gray-400 dark:text-gray-500">{formula.sectionKey.replaceAll('-', ' ')}</div> : null}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-[12px] leading-relaxed text-gray-700 dark:text-gray-200">
+                    {lines.length ? lines.map((line, index) => <div key={index}>{line}</div>) : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{formula.shortDefinition || '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function HelpPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const initialPage = searchParams.get('page') || 'getting-started'
@@ -368,6 +403,7 @@ export default function HelpPage() {
   const [query, setQuery] = useState('')
   const [section, setSection] = useState('')
   const [sourceType, setSourceType] = useState('')
+  const [viewMode, setViewMode] = useState('table')
   const [catalog, setCatalog] = useState({ pages: [], formulas: [], audit: [], sourceTypes: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -456,12 +492,26 @@ export default function HelpPage() {
             <GettingStarted audit={catalog.audit} />
           ) : (
             <div className="space-y-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  {activePageMeta?.label || pageLabel(pages, activePage)}
-                </h2>
-                {activePageMeta?.description ? (
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{activePageMeta.description}</p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    {activePageMeta?.label || pageLabel(pages, activePage)}
+                  </h2>
+                  {activePageMeta?.description ? (
+                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{activePageMeta.description}</p>
+                  ) : null}
+                </div>
+                {visibleFormulas.length ? (
+                  <div className="flex shrink-0 rounded-lg border border-gray-200 p-0.5 text-xs dark:border-gray-700" role="group" aria-label="View mode">
+                    {['table', 'cards'].map((mode) => (
+                      <button key={mode} type="button" onClick={() => setViewMode(mode)} aria-pressed={viewMode === mode}
+                        className={`rounded-md px-2.5 py-1 font-medium capitalize transition-colors ${
+                          viewMode === mode ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                        }`}>
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </div>
 
@@ -479,6 +529,8 @@ export default function HelpPage() {
                   <p className="mt-3 text-sm font-medium text-gray-900 dark:text-white">No formulas found</p>
                   <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Try a different page, category, source type, or search term.</p>
                 </div>
+              ) : viewMode === 'table' ? (
+                <FormulaTable formulas={visibleFormulas} />
               ) : (
                 visibleFormulas.map((formula) => (
                   <FormulaDefinitionCard key={formula.metricKey} formula={formula} pages={pages} />
