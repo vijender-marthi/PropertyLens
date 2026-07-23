@@ -182,7 +182,7 @@ export default function PayoffPlannerPage() {
       setSaveOpen(false)
       toast.success(`Saved “${res.data.name}”`)
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Could not save the scenario.')
+      toast.error(err?.response?.data?.detail || 'Could not save the plan.')
     } finally { setScenarioBusy(false) }
   }
 
@@ -194,7 +194,7 @@ export default function PayoffPlannerPage() {
       await refreshScenarios()
       toast.success(`Updated “${activeScenario.name}”`)
     } catch {
-      toast.error('Could not update the scenario.')
+      toast.error('Could not update the plan.')
     } finally { setScenarioBusy(false) }
   }
 
@@ -210,7 +210,7 @@ export default function PayoffPlannerPage() {
       if (activeScenarioId === id) setActiveScenarioId(null)
       await refreshScenarios()
     } catch {
-      toast.error('Could not delete the scenario.')
+      toast.error('Could not delete the plan.')
     } finally { setScenarioBusy(false) }
   }
 
@@ -249,7 +249,7 @@ export default function PayoffPlannerPage() {
     setExportView({ mode: 'single', columns: [col] })
   }
   const exportCompare = () => {
-    if (compareColumns.length < 2) { toast.error('Save at least one scenario to compare.'); return }
+    if (compareColumns.length < 2) { toast.error('Save at least one plan to compare.'); return }
     setExportView({ mode: 'compare', columns: compareColumns })
   }
 
@@ -306,6 +306,22 @@ export default function PayoffPlannerPage() {
           </button>
         </div>
       </header>
+
+      {/* Active saved-plan indicator — shows which plan the results reflect;
+          updates when you apply, save, or modify a plan. */}
+      {activeScenario ? (
+        <div className="-mt-2 flex justify-end">
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${
+            activeMatches
+              ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+              : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+          }`}>
+            <Bookmark className="h-3 w-3" aria-hidden="true" />
+            {activeMatches ? <>Viewing plan: <span className="font-semibold">{activeScenario.name}</span></>
+                           : <><span className="font-semibold">{activeScenario.name}</span> · modified (unsaved changes)</>}
+          </span>
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-6 lg:flex-row">
         {/* Results (left) */}
@@ -1064,7 +1080,7 @@ function bestIndices(columns, key, dir) {
 
 // Colour-coded scenario action buttons so each purpose is recognisable at a
 // glance: green = save/create, amber = update, violet = compare, sky = export.
-const TINT_BTN = 'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed'
+const TINT_BTN = 'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed'
 const TINT = {
   emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50',
   amber: 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50',
@@ -1081,12 +1097,12 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
   return (
     <div className="relative">
       <button type="button" onClick={onToggle} aria-expanded={open}
-        className="btn-secondary text-xs px-2.5 py-1.5" title="Saved scenarios">
+        className="btn-secondary text-xs px-2.5 py-1.5" title="Saved plans">
         <span className="relative flex">
           <Bookmark className="h-3.5 w-3.5" aria-hidden="true" />
           {modified ? <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-amber-500" /> : null}
         </span>
-        <span className="hidden sm:inline">Scenarios</span>
+        <span className="hidden sm:inline">Saved plans</span>
         {scenarios.length ? (
           <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">{scenarios.length}</span>
         ) : null}
@@ -1097,19 +1113,19 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
         <div className={`absolute right-0 z-30 mt-2 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-xl transition-[width] dark:border-gray-700 dark:bg-gray-800 ${showCompare ? 'w-[44rem]' : 'w-80'}`}>
           <div className="mb-3 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
-              <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Scenarios
+              <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Saved plans
             </span>
             {modified ? <span className="text-[11px] text-amber-600 dark:text-amber-400">“{activeScenario.name}” modified</span> : null}
           </div>
 
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
             {modified ? (
               <button type="button" onClick={onUpdate} disabled={busy} className={`${TINT_BTN} ${TINT.amber}`}>
                 <Save className="h-3.5 w-3.5" aria-hidden="true" />Update
               </button>
             ) : null}
             <button type="button" onClick={onSave} disabled={busy || !canExport} className={`${TINT_BTN} ${TINT.emerald}`}>
-              <Plus className="h-3.5 w-3.5" aria-hidden="true" />Save current
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />Save
             </button>
             <button type="button" onClick={onCompare} disabled={!scenarios.length} aria-pressed={compareOpen}
               className={`${TINT_BTN} ${TINT.violet} ${compareOpen ? 'ring-2 ring-violet-500/40' : ''}`}>
@@ -1120,30 +1136,35 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
             </button>
           </div>
 
-          {scenarios.length ? (
-            <div className="flex flex-wrap gap-2">
-              {scenarios.map((s) => {
-                const isActive = activeScenario?.id === s.id && activeMatches
-                return (
-                  <span key={s.id}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
-                      isActive
-                        ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
-                        : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
-                    }`}>
-                    {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
-                    <button type="button" onClick={() => onApply(s)} className="font-medium" title="Apply this scenario">{s.name}</button>
-                    <button type="button" onClick={() => onDelete(s.id)} disabled={busy} aria-label={`Delete ${s.name}`}
-                      className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">
-                      <X className="h-3 w-3" aria-hidden="true" />
-                    </button>
-                  </span>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="text-xs text-gray-400 dark:text-gray-500">No saved scenarios yet. Tune the inputs, then “Save current” to keep this plan and compare it against others.</p>
-          )}
+          <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-700/70">
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+              Entries{scenarios.length ? ` · ${scenarios.length}` : ''}
+            </p>
+            {scenarios.length ? (
+              <div className="flex flex-wrap gap-2">
+                {scenarios.map((s) => {
+                  const isActive = activeScenario?.id === s.id && activeMatches
+                  return (
+                    <span key={s.id}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
+                        isActive
+                          ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+                          : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+                      }`}>
+                      {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
+                      <button type="button" onClick={() => onApply(s)} className="font-medium" title="Apply this plan">{s.name}</button>
+                      <button type="button" onClick={() => onDelete(s.id)} disabled={busy} aria-label={`Delete ${s.name}`}
+                        className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">
+                        <X className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 dark:text-gray-500">No saved plans yet. Tune the inputs, then “Save” to keep this plan and compare it against others.</p>
+            )}
+          </div>
 
           {showCompare ? <ComparePanel columns={compareColumns} onExport={onExportCompare} /> : null}
         </div>
@@ -1179,7 +1200,7 @@ function ComparePanel({ columns, onExport }) {
     <div className="mt-3 border-t border-gray-100 pt-3 dark:border-gray-700/70">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="flex items-center gap-1.5 text-xs font-semibold text-gray-900 dark:text-white">
-          <GitCompare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />Compare scenarios
+          <GitCompare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" aria-hidden="true" />Compare plans
         </h3>
         <button type="button" onClick={onExport} className="btn-secondary text-xs px-2.5 py-1.5">
           <Download className="h-3.5 w-3.5" aria-hidden="true" />Export comparison
@@ -1223,9 +1244,9 @@ function SaveDialog({ busy, defaultName, onCancel, onSave }) {
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
   const submit = (e) => { e.preventDefault(); const n = name.trim(); if (n) onSave(n) }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Save scenario">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Save plan">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl dark:bg-gray-800">
-        <h3 className="mb-1 text-base font-semibold text-gray-900 dark:text-white">Save scenario</h3>
+        <h3 className="mb-1 text-base font-semibold text-gray-900 dark:text-white">Save plan</h3>
         <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">Keeps the current inputs and results so you can switch back and compare.</p>
         <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Name</label>
         <input ref={inputRef} value={name} onChange={(e) => setName(e.target.value)} maxLength={80}
@@ -1258,7 +1279,7 @@ function ScenarioPrintDoc({ view }) {
   return (
     <div className="pp-print hidden" style={{ color: '#111', background: '#fff' }}>
       <div style={{ borderBottom: '2px solid #111', paddingBottom: 8, marginBottom: 16 }}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>Payoff planner — {mode === 'compare' ? 'scenario comparison' : columns[0]?.name || 'scenario'}</div>
+        <div style={{ fontSize: 20, fontWeight: 700 }}>Payoff planner — {mode === 'compare' ? 'plan comparison' : columns[0]?.name || 'plan'}</div>
         <div style={{ fontSize: 12, color: '#555' }}>PropertyLens · generated {now}</div>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
