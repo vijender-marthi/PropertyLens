@@ -366,12 +366,9 @@ function ValueBuildupWaterfall({ data }) {
 
   return (
     <DashboardCard className="p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title || 'Value Buildup Over Time'}</h2>
-          <p className="mt-1 text-xs text-gray-500">{data.subtitle}</p>
-        </div>
-        <span className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-700">All Time</span>
+      <div>
+        <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-400">{data.title || 'Value Buildup Over Time'}</h2>
+        <p className="mt-1 text-xs text-gray-500">{data.subtitle}</p>
       </div>
       {available ? (
         <div className="mt-4 overflow-x-auto">

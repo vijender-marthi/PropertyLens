@@ -299,9 +299,8 @@ export default function RentalPropertySummary({ metricVault, onJump, waterfall }
       <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(15rem,0.9fr)_minmax(32rem,2.2fr)_minmax(15rem,0.9fr)]">
         <ValueListCard section={presentation.assets} metrics={metrics} tone="asset" onJump={onJump} />
         <div className="h-full min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="mb-2 flex items-start justify-between gap-3">
-            <div><h2 className="text-sm font-bold uppercase text-gray-900">Value Buildup Over Time</h2><p className="mt-1 text-xs text-gray-500">How your property value has grown</p></div>
-            <select className="h-9 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700" aria-label="Value buildup period" defaultValue="all"><option value="all">All Time</option></select>
+          <div className="mb-2">
+            <h2 className="text-sm font-bold uppercase text-gray-900">Value Buildup Over Time</h2><p className="mt-1 text-xs text-gray-500">How your property value has grown</p>
           </div>
           {waterfall}
         </div>
