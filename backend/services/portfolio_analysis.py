@@ -540,7 +540,7 @@ def _forecast(properties: List[Dict[str, Any]], income: Dict[str, Any], as_of: s
     }
 
 
-def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: Dict[str, Any], as_of: str) -> Dict[str, Any]:
+def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: Dict[str, Any], as_of: str, occupancy_by_year: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     rentals = [prop for prop in properties if str(prop.get("usage_type") or "Rental").lower() != "primary"]
     portfolio_value = sum((_d(prop.get("market_value")) for prop in properties), Decimal("0"))
     total_debt = _d(loans["kpis"]["totalBalance"]["value"])
@@ -670,13 +670,46 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
             "sources": row.get("sources") or [],
         })
 
-    equity_series = [{
-        "period": as_of,
-        "marketValue": _money(portfolio_value),
-        "loanBalance": _money(total_debt),
-        "equity": _money(equity),
-        "status": "CURRENT_SNAPSHOT",
-    }]
+    # Equity growth over time. Debt per year is the real loan-balance schedule;
+    # market value appreciates linearly from total purchase price to the current
+    # portfolio value (no per-year valuation history is stored). Equity is value
+    # minus debt each year. Falls back to a single current snapshot.
+    _loan_balance_by_year = {
+        int(row["period"]): _d(row["value"])
+        for row in (loans.get("balanceSeries") or [])
+        if str(row.get("period", "")).isdigit()
+    }
+    _current_year = int(as_of[:4])
+    _total_purchase = sum((_d(prop.get("purchase_price")) for prop in properties), Decimal("0"))
+    _equity_years = sorted(set(_loan_balance_by_year) | {_current_year})
+    _start_year = _equity_years[0]
+    _span_years = max(_current_year - _start_year, 1)
+    equity_series = []
+    for _yr in _equity_years:
+        _frac = Decimal(min(max(_yr - _start_year, 0), _span_years)) / Decimal(_span_years)
+        _mv = portfolio_value if _yr == _current_year else (_total_purchase + (portfolio_value - _total_purchase) * _frac)
+        _debt = _loan_balance_by_year.get(_yr, total_debt)
+        equity_series.append({
+            "period": str(_yr),
+            "marketValue": _money(_mv),
+            "loanBalance": _money(_debt),
+            "equity": _money(_mv - _debt),
+            "status": "CURRENT_SNAPSHOT" if _yr == _current_year else "ESTIMATED",
+        })
+
+    # Occupancy over time: occupied months / available months per year, summed
+    # across the rentals (derived from tenancy records in the router).
+    occupancy_series = [
+        {
+            "period": str(row["year"]),
+            "occupancy": _rate(_d(row["occupied"]) / _d(row["available"]) * 100) if row.get("available") else 0.0,
+            "occupiedMonths": row.get("occupied", 0),
+            "availableMonths": row.get("available", 0),
+            "status": "REPORTED",
+        }
+        for row in (occupancy_by_year or [])
+        if row.get("available")
+    ]
     performance_summary = [
         {"key": "rentalIncome", "label": "Rental Income", "value": _money(gross * 12), "note": "Annual run-rate"},
         {"key": "noi", "label": "NOI", "value": _money(annual_noi), "note": "Income after operating expenses"},
@@ -924,7 +957,7 @@ def _analytics(properties: List[Dict[str, Any]], income: Dict[str, Any], loans: 
         "cashFlowSeries": cash_flow_series,
         "expenseBreakdown": expense_breakdown,
         "equitySeries": equity_series,
-        "occupancySeries": [],
+        "occupancySeries": occupancy_series,
         "loanBalanceSeries": loans["balanceSeries"],
         "debtMix": loans["debtMix"],
         "insights": [{"key": "cashFlow", "message": insight_message, "status": "DETERMINISTIC", "period": as_of[:7]}],
@@ -949,6 +982,7 @@ def build_portfolio_analysis(
     selected_year: int,
     filter_context: Dict[str, Any],
     as_of_date: Optional[str] = None,
+    occupancy_by_year: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     as_of = as_of_date or date.today().isoformat()
     loans = _loan_analysis(
@@ -959,7 +993,7 @@ def build_portfolio_analysis(
     )
     income = _income_analysis(properties, yearly_trends, as_of)
     tax = _tax_analysis(properties, schedules, selected_year)
-    analytics = _analytics(properties, income, loans, as_of)
+    analytics = _analytics(properties, income, loans, as_of, occupancy_by_year)
     return {
         "schemaVersion": "portfolio-analysis.v1",
         "filterContext": filter_context,

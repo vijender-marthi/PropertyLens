@@ -11703,6 +11703,49 @@ def _rental_occupancy_months(prop, today: date):
     return available, min(occupied, available)
 
 
+def _rental_occupancy_by_year(prop, today: date) -> Dict[int, tuple]:
+    """Per-year (available_months, occupied_months) for a rental's availability
+    window, so occupancy can be trended over time. Same tenancy logic as
+    ``_rental_occupancy_months`` but bucketed by calendar year."""
+    def _idx(y, m):
+        return y * 12 + (max(1, min(12, int(m))) - 1)
+
+    today_idx = _idx(today.year, today.month)
+    periods = list(getattr(prop, "rental_periods", None) or [])
+    starts = []
+    rsd = _parse_iso_date(getattr(prop, "rental_start_date", None))
+    if rsd:
+        starts.append(_idx(rsd.year, rsd.month))
+    for p in periods:
+        if p.start_year:
+            starts.append(_idx(p.start_year, p.start_month or 1))
+    if not starts:
+        return {}
+    start_idx = min(starts)
+    red = _parse_iso_date(getattr(prop, "rental_end_date", None))
+    end_idx = min(today_idx, _idx(red.year, red.month)) if red else today_idx
+    if end_idx < start_idx:
+        return {}
+
+    occupied_set = set()
+    for p in periods:
+        if not p.start_year:
+            continue
+        p_start = _idx(p.start_year, p.start_month or 1)
+        p_end = _idx(p.end_year, p.end_month or 12) if p.end_year else today_idx
+        lo, hi = max(p_start, start_idx), min(p_end, end_idx)
+        if hi >= lo:
+            occupied_set.update(range(lo, hi + 1))
+
+    by_year: Dict[int, list] = {}
+    for idx in range(start_idx, end_idx + 1):
+        entry = by_year.setdefault(idx // 12, [0, 0])
+        entry[0] += 1
+        if idx in occupied_set:
+            entry[1] += 1
+    return {yr: (a, o) for yr, (a, o) in by_year.items()}
+
+
 @router.get("/analysis/portfolio")
 def portfolio_analysis(
     selected_property_ids: str = "",
@@ -11758,11 +11801,17 @@ def portfolio_analysis(
     debts: Dict[int, Dict[str, Any]] = {}
     schedules: Dict[int, Dict[str, Any]] = {}
     _today = date.today()
+    _occ_year_agg: Dict[int, list] = {}
     for prop in props:
         canonical = _canonical_property_metric_row(prop, db, current_user)
         raw = canonical.get("raw") or {}
         _is_primary = str(prop.usage_type or "Rental").lower() == "primary"
         _avail_m, _occ_m = (0, 0) if _is_primary else _rental_occupancy_months(prop, _today)
+        if not _is_primary:
+            for _yr, (_a, _o) in _rental_occupancy_by_year(prop, _today).items():
+                _entry = _occ_year_agg.setdefault(_yr, [0, 0])
+                _entry[0] += _a
+                _entry[1] += _o
         normalized_properties.append({
             "id": prop.id,
             "property_uid": prop.property_uid,
@@ -11816,6 +11865,10 @@ def portfolio_analysis(
             for prop in all_props
         ],
     }
+    occupancy_by_year = [
+        {"year": yr, "available": a, "occupied": o}
+        for yr, (a, o) in sorted(_occ_year_agg.items())
+    ]
     return build_portfolio_analysis(
         properties=normalized_properties,
         debts=debts,
@@ -11823,4 +11876,5 @@ def portfolio_analysis(
         yearly_trends=yearly_trends,
         selected_year=selected_year,
         filter_context=filter_context,
+        occupancy_by_year=occupancy_by_year,
     )

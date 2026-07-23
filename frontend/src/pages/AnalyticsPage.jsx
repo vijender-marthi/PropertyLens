@@ -300,6 +300,7 @@ function EquityGrowth({ model }) {
   const rows = model.equitySeries
   if (rows.length < 2) return <EmptyState label="Historical valuation snapshots are unavailable; only the current equity snapshot is stored." />
   return (
+    <>
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={rows} margin={{ left: 0, right: 12, top: 10, bottom: 0 }}>
@@ -314,6 +315,8 @@ function EquityGrowth({ model }) {
         </ComposedChart>
       </ResponsiveContainer>
     </div>
+    <p className="mt-1 text-[11px] text-gray-400 dark:text-neutral-500">Loan balance is from the amortization schedule; market value between valuations is estimated by straight-line appreciation.</p>
+    </>
   )
 }
 
