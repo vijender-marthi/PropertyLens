@@ -307,25 +307,26 @@ export default function PayoffPlannerPage() {
         </div>
       </header>
 
-      {/* Active saved-plan indicator — shows which plan the results reflect;
-          updates when you apply, save, or modify a plan. */}
-      {activeScenario ? (
-        <div className="-mt-2 flex justify-end">
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${
-            activeMatches
-              ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
-              : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
-          }`}>
-            <Bookmark className="h-3 w-3" aria-hidden="true" />
-            {activeMatches ? <>Viewing plan: <span className="font-semibold">{activeScenario.name}</span></>
-                           : <><span className="font-semibold">{activeScenario.name}</span> · modified (unsaved changes)</>}
-          </span>
-        </div>
-      ) : null}
-
       <div className="flex flex-col gap-6 lg:flex-row">
         {/* Results (left) */}
         <div className="order-2 min-w-0 flex-1 space-y-6 lg:order-1">
+          {/* Active saved-plan indicator — sits at the top-right of the metrics
+              line; shows which plan the results reflect and updates on
+              apply/save/modify. */}
+          {activeScenario ? (
+            <div className="flex justify-end">
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${
+                activeMatches
+                  ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+                  : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+              }`}>
+                <Bookmark className="h-3 w-3" aria-hidden="true" />
+                {activeMatches ? <>Viewing plan: <span className="font-semibold">{activeScenario.name}</span></>
+                               : <><span className="font-semibold">{activeScenario.name}</span> · modified (unsaved changes)</>}
+              </span>
+            </div>
+          ) : null}
+
           {error ? (
             <div className="card flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
               <AlertCircle className="h-4 w-4 shrink-0" />
