@@ -290,7 +290,7 @@ export default function PayoffPlannerPage() {
             busy={scenarioBusy}
             onSave={() => setSaveOpen(true)}
             onUpdate={updateActiveScenario}
-            onApply={applyScenario}
+            onApply={(s) => { applyScenario(s); setScenariosOpen(false) }}
             onDelete={deleteScenario}
             onCompare={() => setCompareOpen((v) => !v)}
             compareOpen={compareOpen}
