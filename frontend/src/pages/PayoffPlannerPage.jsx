@@ -1110,7 +1110,7 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
       </button>
 
       {open ? (
-        <div className={`absolute right-0 z-30 mt-2 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-xl transition-[width] dark:border-gray-700 dark:bg-gray-800 ${showCompare ? 'w-[44rem]' : 'w-80'}`}>
+        <div className={`absolute right-0 z-30 mt-2 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-xl transition-[width] dark:border-gray-700 dark:bg-gray-800 ${showCompare ? 'w-[44rem]' : 'w-[26rem]'}`}>
           <div className="mb-3 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
               <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Saved plans
