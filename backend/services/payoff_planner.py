@@ -116,6 +116,7 @@ def simulate(
     strategy: str = "avalanche",
     lump_sum: float = 0.0,
     extra_monthly: float = 0.0,
+    extra_monthly_years: int = 0,
     recurring_lump: float = 0.0,
     recurring_month: int = 12,
     recurring_years: int = 0,
@@ -136,6 +137,7 @@ def simulate(
     strategy = "snowball" if str(strategy).lower() == "snowball" else "avalanche"
     lump_sum = max(float(lump_sum or 0.0), 0.0)
     extra_monthly = max(float(extra_monthly or 0.0), 0.0)
+    extra_monthly_years = max(int(extra_monthly_years or 0), 0)  # 0 = for the whole payoff
     recurring_lump = max(float(recurring_lump or 0.0), 0.0)
     recurring_years = max(int(recurring_years or 0), 0)
     try:
@@ -217,7 +219,10 @@ def simulate(
             noi_surplus = noi_sum - initial_total_pi
             if noi_surplus < 0:
                 noi_surplus = 0.0
-            pool = freed_pi + noi_surplus + extra_monthly
+            # Extra monthly contribution runs for the whole payoff by default, or
+            # only for the first ``extra_monthly_years`` years when a target is set.
+            extra_this_month = extra_monthly if (extra_monthly_years <= 0 or month <= extra_monthly_years * 12) else 0.0
+            pool = freed_pi + noi_surplus + extra_this_month
             if month == 1:
                 pool += lump_sum
             # Recurring lump: one injection each year in the chosen calendar
@@ -476,6 +481,7 @@ def build_report(
     strategy: str = "avalanche",
     lump_sum: float = 0.0,
     extra_monthly: float = 0.0,
+    extra_monthly_years: int = 0,
     recurring_lump: float = 0.0,
     recurring_month: int = 12,
     recurring_years: int = 0,
@@ -490,7 +496,8 @@ def build_report(
 
     plan = simulate(
         loans, noi_sum, strategy=strategy, lump_sum=lump_sum,
-        extra_monthly=extra_monthly, recurring_lump=recurring_lump,
+        extra_monthly=extra_monthly, extra_monthly_years=extra_monthly_years,
+        recurring_lump=recurring_lump,
         recurring_month=recurring_month, recurring_years=recurring_years,
         start_month=start_date.month, attack=True, cap=cap,
     )

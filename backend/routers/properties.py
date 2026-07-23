@@ -11533,6 +11533,7 @@ def payoff_planner(
     strategy: str = "avalanche",
     lump_sum: float = 0.0,
     extra_monthly: float = 0.0,
+    extra_monthly_years: int = 0,
     recurring_lump: float = 0.0,
     recurring_month: int = 12,
     recurring_years: int = 0,
@@ -11615,7 +11616,12 @@ def payoff_planner(
 
         metrics = compute_property_metrics(prop)
         # Monthly NOI (rent - opex, before debt service); only the sum feeds the cascade.
-        noi_sum += (metrics.get("annual_noi", 0.0) or 0.0) / 12.0
+        # NOI already nets out property tax, insurance, HOA, maintenance, mgmt,
+        # utilities, vacancy and capex — but NOT a solar lease/finance payment, an
+        # ongoing cost every month. Subtract it so the income that rolls to the
+        # next property is the true net rent after all common operating expenses.
+        solar_monthly = float(getattr(prop, "solar_monthly_payment", 0) or 0)
+        noi_sum += ((metrics.get("annual_noi", 0.0) or 0.0) / 12.0) - solar_monthly
 
         for offset, loan in enumerate(active_loans):
             # Disambiguate when a property carries more than one active loan.
@@ -11636,6 +11642,7 @@ def payoff_planner(
         strategy=strategy,
         lump_sum=lump_sum,
         extra_monthly=extra_monthly,
+        extra_monthly_years=extra_monthly_years,
         recurring_lump=recurring_lump,
         recurring_month=recurring_month,
         recurring_years=recurring_years,

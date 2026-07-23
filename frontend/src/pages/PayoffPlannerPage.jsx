@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare } from 'lucide-react'
+import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare, ChevronDown, SlidersHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
@@ -15,6 +15,7 @@ const DEFAULT_INPUTS = {
   strategy: 'avalanche',
   lumpSum: 0,
   extraMonthly: 0,
+  extraMonthlyYears: 0, // 0 = for the whole payoff; N = only the first N years
   recurringLump: 0,
   recurringMonth: 12, // December
   recurringYears: 10,
@@ -32,6 +33,7 @@ function normalizeInputs(parsed) {
     strategy: parsed.strategy === 'snowball' ? 'snowball' : 'avalanche',
     lumpSum: clamp(Number(parsed.lumpSum) || 0, 0, 300_000),
     extraMonthly: clamp(Number(parsed.extraMonthly) || 0, 0, 8_000),
+    extraMonthlyYears: clamp(Math.round(Number(parsed.extraMonthlyYears) || 0), 0, 30),
     recurringLump: clamp(Number(parsed.recurringLump) || 0, 0, 100_000),
     recurringMonth: clamp(Number(parsed.recurringMonth) || 12, 1, 12),
     recurringYears: clamp(Number(parsed.recurringYears) || 10, 1, 30),
@@ -60,6 +62,7 @@ function inputsSignature(inp) {
     strategy: n.strategy,
     lumpSum: n.lumpSum,
     extraMonthly: n.extraMonthly,
+    extraMonthlyYears: n.extraMonthlyYears,
     recurringLump: n.recurringLump,
     recurringMonth: n.recurringMonth,
     recurringYears: n.recurringYears,
@@ -122,6 +125,7 @@ export default function PayoffPlannerPage() {
           strategy: inputs.strategy,
           lump_sum: inputs.lumpSum,
           extra_monthly: inputs.extraMonthly,
+          extra_monthly_years: inputs.extraMonthlyYears,
           recurring_lump: inputs.recurringLump,
           recurring_month: inputs.recurringMonth,
           recurring_years: inputs.recurringYears,
@@ -157,6 +161,8 @@ export default function PayoffPlannerPage() {
   const [saveOpen, setSaveOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
   const [exportView, setExportView] = useState(null) // {mode, columns} while printing
+  const [inputsOpen, setInputsOpen] = useState(true)   // right-side Plan inputs panel
+  const [scenariosOpen, setScenariosOpen] = useState(false) // top-right Scenarios widget
 
   const refreshScenarios = () =>
     propAPI.listScenarios().then((r) => setScenarios(r.data || [])).catch(() => {})
@@ -265,34 +271,45 @@ export default function PayoffPlannerPage() {
   return (
     <PageContainer>
       <div className="pp-screen space-y-6">
-      <header>
-        <h1 className="text-xl font-bold text-gray-900 dark:text-white">Payoff planner</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Model an avalanche or snowball payoff across your rental portfolio. Freed principal &amp; income
-          cascade from each cleared loan into the next.
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">Payoff planner</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Model an avalanche or snowball payoff across your rental portfolio. Freed principal &amp; income
+            cascade from each cleared loan into the next.
+          </p>
+        </div>
+        {/* Top-right controls: Scenarios widget + collapse toggle for Plan inputs */}
+        <div className="flex shrink-0 items-center gap-2 self-start">
+          <ScenarioWidget
+            open={scenariosOpen}
+            onToggle={() => setScenariosOpen((v) => !v)}
+            scenarios={scenarios}
+            activeScenario={activeScenario}
+            activeMatches={activeMatches}
+            busy={scenarioBusy}
+            onSave={() => setSaveOpen(true)}
+            onUpdate={updateActiveScenario}
+            onApply={applyScenario}
+            onDelete={deleteScenario}
+            onCompare={() => setCompareOpen((v) => !v)}
+            compareOpen={compareOpen}
+            onExport={exportSingle}
+            canExport={Boolean(report?.cards)}
+          />
+          <button type="button" onClick={() => setInputsOpen((v) => !v)} aria-pressed={inputsOpen}
+            className="btn-secondary text-xs px-2.5 py-1.5" title={inputsOpen ? 'Collapse the inputs panel for a bigger view' : 'Show the inputs panel'}>
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">{inputsOpen ? 'Hide inputs' : 'Show inputs'}</span>
+          </button>
+        </div>
       </header>
-
-      <ScenarioBar
-        scenarios={scenarios}
-        activeScenario={activeScenario}
-        activeMatches={activeMatches}
-        busy={scenarioBusy}
-        onSave={() => setSaveOpen(true)}
-        onUpdate={updateActiveScenario}
-        onApply={applyScenario}
-        onDelete={deleteScenario}
-        onCompare={() => setCompareOpen((v) => !v)}
-        compareOpen={compareOpen}
-        onExport={exportSingle}
-        canExport={Boolean(report?.cards)}
-      />
 
       {compareOpen ? (
         <ComparePanel columns={compareColumns} onExport={exportCompare} onClose={() => setCompareOpen(false)} />
       ) : null}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className={`grid grid-cols-1 gap-6 ${inputsOpen ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : ''}`}>
         {/* Results (left) */}
         <div className="space-y-6 order-2 lg:order-1">
           {error ? (
@@ -305,19 +322,22 @@ export default function PayoffPlannerPage() {
           <ResultsPanel report={report} loading={loading && !report} />
         </div>
 
-        {/* Control panel (right, sticky) */}
-        <aside className="order-1 lg:order-2">
-          <div className="lg:sticky lg:top-4">
-            <ControlPanel
-              inputs={inputs}
-              update={update}
-              portfolio={report?.portfolio}
-              properties={report?.properties}
-              toggleProperty={toggleProperty}
-              loading={loading}
-            />
-          </div>
-        </aside>
+        {/* Control panel (right, sticky) — collapsible for a bigger results view */}
+        {inputsOpen ? (
+          <aside className="order-1 lg:order-2">
+            <div className="lg:sticky lg:top-4">
+              <ControlPanel
+                inputs={inputs}
+                update={update}
+                portfolio={report?.portfolio}
+                properties={report?.properties}
+                toggleProperty={toggleProperty}
+                loading={loading}
+                onCollapse={() => setInputsOpen(false)}
+              />
+            </div>
+          </aside>
+        ) : null}
       </div>
       </div>
 
@@ -361,7 +381,7 @@ function suggestScenarioName(inputs, scenarios) {
 // ---------------------------------------------------------------------------
 // Control panel
 // ---------------------------------------------------------------------------
-function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, loading }) {
+function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, loading, onCollapse }) {
   const props = properties || []
   const explicit = Array.isArray(inputs.selectedIds)
   const selectedSet = explicit ? new Set(inputs.selectedIds) : null
@@ -371,7 +391,15 @@ function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, l
     <div className="card space-y-5">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Plan inputs</h2>
-        {loading ? <span className="text-[11px] text-gray-400">Updating…</span> : null}
+        <div className="flex items-center gap-2">
+          {loading ? <span className="text-[11px] text-gray-400">Updating…</span> : null}
+          {onCollapse ? (
+            <button type="button" onClick={onCollapse} aria-label="Collapse inputs panel" title="Collapse for a bigger view"
+              className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-200">
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {/* Strategy */}
@@ -417,16 +445,44 @@ function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, l
       />
 
       {/* Extra monthly */}
-      <SliderField
-        label="Extra monthly contribution"
-        value={inputs.extraMonthly}
-        min={0}
-        max={8_000}
-        step={100}
-        display={`${usd(inputs.extraMonthly)}/mo`}
-        note="Recurring external cash added to the attack pool"
-        onChange={(v) => update({ extraMonthly: v })}
-      />
+      <div className="space-y-3 rounded-lg border border-gray-100 p-3 dark:border-gray-700/70">
+        <SliderField
+          label="Extra monthly contribution"
+          value={inputs.extraMonthly}
+          min={0}
+          max={8_000}
+          step={100}
+          display={`${usd(inputs.extraMonthly)}/mo`}
+          note="Recurring external cash added to the attack pool"
+          onChange={(v) => update({ extraMonthly: v })}
+        />
+        {inputs.extraMonthly > 0 ? (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">For (years)</span>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={inputs.extraMonthlyYears}
+                onChange={(e) => update({ extraMonthlyYears: clamp(Math.round(Number(e.target.value) || 0), 0, 30) })}
+                aria-label="Extra monthly contribution number of years"
+                className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+              />
+            </label>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+              {inputs.extraMonthlyYears > 0
+                ? `${usd(inputs.extraMonthly)}/mo for ${inputs.extraMonthlyYears} year${inputs.extraMonthlyYears > 1 ? 's' : ''}`
+                : `${usd(inputs.extraMonthly)}/mo until debt-free`}
+              {inputs.extraMonthlyYears > 0 ? (
+                <span className="text-gray-400 dark:text-gray-500"> · {usd(inputs.extraMonthly * 12 * inputs.extraMonthlyYears)} total planned</span>
+              ) : null}
+            </p>
+          </>
+        ) : (
+          <p className="text-[11px] text-gray-400 dark:text-gray-500">Set a target of years, or leave 0 to contribute until you’re debt-free.</p>
+        )}
+      </div>
 
       {/* Recurring lump sum */}
       <div className="space-y-3 rounded-lg border border-gray-100 p-3 dark:border-gray-700/70">
@@ -1008,60 +1064,79 @@ function bestIndices(columns, key, dir) {
   return out
 }
 
-function ScenarioBar({ scenarios, activeScenario, activeMatches, busy, onSave, onUpdate, onApply, onDelete, onCompare, compareOpen, onExport, canExport }) {
+// Compact Scenarios control that lives in the top-right corner. Collapsed it is
+// a single pill (with a saved-count badge and a "modified" dot); clicking it
+// opens a dropdown with the save/compare/export actions and the saved chips.
+function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatches, busy, onSave, onUpdate, onApply, onDelete, onCompare, compareOpen, onExport, canExport }) {
+  const modified = Boolean(activeScenario && !activeMatches)
   return (
-    <div className="card-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-          <span className="text-sm font-semibold text-gray-900 dark:text-white">Scenarios</span>
-          {activeScenario && !activeMatches ? (
-            <span className="text-[11px] text-amber-600 dark:text-amber-400">· “{activeScenario.name}” modified</span>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {activeScenario && !activeMatches ? (
-            <button type="button" onClick={onUpdate} disabled={busy} className="btn-secondary text-xs px-2.5 py-1.5">
-              <Save className="h-3.5 w-3.5" aria-hidden="true" />Update “{activeScenario.name}”
-            </button>
-          ) : null}
-          <button type="button" onClick={onSave} disabled={busy || !canExport} className="btn-secondary text-xs px-2.5 py-1.5">
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />Save current
-          </button>
-          <button type="button" onClick={onCompare} disabled={!scenarios.length} aria-pressed={compareOpen}
-            className={`btn-secondary text-xs px-2.5 py-1.5 ${compareOpen ? 'ring-2 ring-blue-500/40' : ''}`}>
-            <GitCompare className="h-3.5 w-3.5" aria-hidden="true" />Compare
-          </button>
-          <button type="button" onClick={onExport} disabled={!canExport} className="btn-secondary text-xs px-2.5 py-1.5">
-            <Download className="h-3.5 w-3.5" aria-hidden="true" />Export
-          </button>
-        </div>
-      </div>
+    <div className="relative">
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="btn-secondary text-xs px-2.5 py-1.5" title="Saved scenarios">
+        <span className="relative flex">
+          <Bookmark className="h-3.5 w-3.5" aria-hidden="true" />
+          {modified ? <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-amber-500" /> : null}
+        </span>
+        <span className="hidden sm:inline">Scenarios</span>
+        {scenarios.length ? (
+          <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">{scenarios.length}</span>
+        ) : null}
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
 
-      {scenarios.length ? (
-        <div className="flex flex-wrap gap-2">
-          {scenarios.map((s) => {
-            const isActive = activeScenario?.id === s.id && activeMatches
-            return (
-              <span key={s.id}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
-                  isActive
-                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
-                }`}>
-                {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
-                <button type="button" onClick={() => onApply(s)} className="font-medium" title="Apply this scenario">{s.name}</button>
-                <button type="button" onClick={() => onDelete(s.id)} disabled={busy} aria-label={`Delete ${s.name}`}
-                  className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">
-                  <X className="h-3 w-3" aria-hidden="true" />
-                </button>
-              </span>
-            )
-          })}
+      {open ? (
+        <div className="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white">
+              <Bookmark className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />Scenarios
+            </span>
+            {modified ? <span className="text-[11px] text-amber-600 dark:text-amber-400">“{activeScenario.name}” modified</span> : null}
+          </div>
+
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {modified ? (
+              <button type="button" onClick={onUpdate} disabled={busy} className="btn-secondary text-xs px-2.5 py-1.5">
+                <Save className="h-3.5 w-3.5" aria-hidden="true" />Update
+              </button>
+            ) : null}
+            <button type="button" onClick={onSave} disabled={busy || !canExport} className="btn-secondary text-xs px-2.5 py-1.5">
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />Save current
+            </button>
+            <button type="button" onClick={onCompare} disabled={!scenarios.length} aria-pressed={compareOpen}
+              className={`btn-secondary text-xs px-2.5 py-1.5 ${compareOpen ? 'ring-2 ring-blue-500/40' : ''}`}>
+              <GitCompare className="h-3.5 w-3.5" aria-hidden="true" />Compare
+            </button>
+            <button type="button" onClick={onExport} disabled={!canExport} className="btn-secondary text-xs px-2.5 py-1.5">
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />Export
+            </button>
+          </div>
+
+          {scenarios.length ? (
+            <div className="flex flex-wrap gap-2">
+              {scenarios.map((s) => {
+                const isActive = activeScenario?.id === s.id && activeMatches
+                return (
+                  <span key={s.id}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
+                      isActive
+                        ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+                        : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200'
+                    }`}>
+                    {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
+                    <button type="button" onClick={() => onApply(s)} className="font-medium" title="Apply this scenario">{s.name}</button>
+                    <button type="button" onClick={() => onDelete(s.id)} disabled={busy} aria-label={`Delete ${s.name}`}
+                      className="text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400">
+                      <X className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 dark:text-gray-500">No saved scenarios yet. Tune the inputs, then “Save current” to keep this plan and compare it against others.</p>
+          )}
         </div>
-      ) : (
-        <p className="text-xs text-gray-400 dark:text-gray-500">No saved scenarios yet. Tune the inputs, then “Save current” to keep this plan and compare it against others.</p>
-      )}
+      ) : null}
     </div>
   )
 }
