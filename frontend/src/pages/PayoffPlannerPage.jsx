@@ -489,11 +489,12 @@ function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, l
             <label className="block">
               <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">For (years)</span>
               <input
-                type="number"
-                min={0}
-                max={30}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={inputs.extraMonthlyYears}
-                onChange={(e) => update({ extraMonthlyYears: clamp(Math.round(Number(e.target.value) || 0), 0, 30) })}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); update({ extraMonthlyYears: v === '' ? 0 : clamp(parseInt(v, 10), 0, 30) }) }}
                 aria-label="Extra monthly contribution number of years"
                 className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
               />
@@ -542,11 +543,12 @@ function ControlPanel({ inputs, update, portfolio, properties, toggleProperty, l
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">For (years)</span>
                 <input
-                  type="number"
-                  min={1}
-                  max={30}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={inputs.recurringYears}
-                  onChange={(e) => update({ recurringYears: clamp(Math.round(Number(e.target.value) || 1), 1, 30) })}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); update({ recurringYears: v === '' ? 1 : clamp(parseInt(v, 10), 1, 30) }) }}
                   aria-label="Recurring lump sum number of years"
                   className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
                 />
@@ -768,11 +770,11 @@ function ResultsPanel({ report, loading }) {
             </div>
           </div>
           <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
-            When a loan clears, its monthly payment becomes a coin that rolls onto the next. The bar beside each home shows the <span className="font-medium">monthly payment</span> attacking it, split by source — your own payment versus what rolled in each month from every cleared home.
+            When a loan clears, its monthly payment becomes a coin that rolls onto the next. Each amount is shown <span className="font-medium">net of that home&apos;s operating expenses</span> (property tax, insurance, HOA, management, solar) — the leftover that actually rolls forward, split by source home.
           </p>
           <ol className="space-y-3.5">
             {report.rollover.map((step) => (
-              <RolloverStep key={`${step.order}-${step.name}`} step={step} maxMonthly={report.rolloverMaxMonthly || 1} />
+              <RolloverStep key={`${step.order}-${step.name}`} step={step} maxMonthly={report.rolloverMaxMonthlyNet || 1} />
             ))}
           </ol>
         </div>
@@ -800,9 +802,17 @@ function Coin({ own = false, order, never = false, title }) {
   )
 }
 
+// Tooltip for a coin: shows the net amount, and the gross P&I minus this home's
+// operating expenses when any were deducted.
+function coinTitle(c) {
+  const who = c.own ? `${c.name} · your payment` : `from ${c.name}`
+  if (Number(c.opex) > 0) return `${who}: ${usd(c.gross)} − ${usd(c.opex)} op ex = ${c.display}/mo net`
+  return `${who}: ${c.display}/mo`
+}
+
 function RolloverStep({ step, maxMonthly }) {
   const never = step.neverPaysOff
-  const monthly = Number(step.rollingPayment) || 0
+  const monthly = Number(step.rollingPaymentNet) || 0
   const coins = step.coins || []
   return (
     <li className="flex items-start gap-3">
@@ -826,7 +836,7 @@ function RolloverStep({ step, maxMonthly }) {
             <div className="flex w-2/5 max-w-[15rem] shrink-0 items-center gap-2">
               <div
                 className="relative h-8 min-w-0 flex-1 overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
-                title={`${step.name}: ${step.rollingPaymentDisplay}/mo attacking this loan`}
+                title={`${step.name}: ${step.rollingPaymentNetDisplay}/mo attacking this loan (net of operating expenses)`}
               >
                 <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((monthly / maxMonthly) * 100, 2)}%` }}>
                   {coins.map((c, i) => {
@@ -837,13 +847,13 @@ function RolloverStep({ step, maxMonthly }) {
                         key={`${c.name}-${i}`}
                         className="h-full border-r border-white/70 last:border-r-0 dark:border-gray-900/50"
                         style={{ width: `${segPct}%`, backgroundColor: c.own ? hex : `${hex}B3` }}
-                        title={`${c.own ? `${c.name} · your payment` : `from ${c.name}`}: ${c.display}/mo`}
+                        title={coinTitle(c)}
                       />
                     )
                   })}
                 </div>
               </div>
-              <span className="w-[4.5rem] shrink-0 text-right text-[10px] font-medium tabular-nums text-gray-400 dark:text-gray-500">{step.rollingPaymentDisplay}/mo</span>
+              <span className="w-[4.5rem] shrink-0 text-right text-[10px] font-medium tabular-nums text-gray-400 dark:text-gray-500">{step.rollingPaymentNetDisplay}/mo</span>
             </div>
           ) : null}
         </div>
@@ -851,12 +861,13 @@ function RolloverStep({ step, maxMonthly }) {
         {/* Monthly rollover story — the coins that stack up as loans clear. */}
         <div className="mt-2 flex flex-wrap items-center gap-1">
           {step.coins.map((coin, idx) => (
-            <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={`${coin.name}: ${coin.display}/mo`} />
+            <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
           ))}
-          <span className="ml-2 text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{step.rollingPaymentDisplay}/mo</span>
+          <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">=</span>
+          <span className="text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{step.rollingPaymentNetDisplay}/mo</span>
           {step.freedCount > 0 ? (
             <span className="text-[11px] text-gray-400 dark:text-gray-500">
-              ({step.freedPaymentDisplay}/mo rolled in from {step.freedCount} cleared)
+              ({step.freedPaymentNetDisplay}/mo rolled in from {step.freedCount} cleared)
             </span>
           ) : (
             <span className="text-[11px] text-gray-400 dark:text-gray-500">(first target)</span>
@@ -1074,7 +1085,7 @@ function scenarioInputRows(inp) {
     : '—'
   return {
     strategy: strategyLabel(inp.strategy),
-    extra: inp.extraMonthly ? `${usd(inp.extraMonthly)}/mo` : '—',
+    extra: inp.extraMonthly ? `${usd(inp.extraMonthly)}/mo${inp.extraMonthlyYears > 0 ? ` · ${inp.extraMonthlyYears}y` : ''}` : '—',
     lump: inp.lumpSum ? usd(inp.lumpSum) : '—',
     recurring: rec,
     properties: Array.isArray(inp.selectedIds) ? `${inp.selectedIds.length} selected` : 'Default',

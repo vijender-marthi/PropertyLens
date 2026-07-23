@@ -11623,6 +11623,18 @@ def payoff_planner(
         solar_monthly = float(getattr(prop, "solar_monthly_payment", 0) or 0)
         noi_sum += ((metrics.get("annual_noi", 0.0) or 0.0) / 12.0) - solar_monthly
 
+        # This property's own recurring operating expenses (property tax,
+        # insurance, HOA, management) as a monthly figure, plus any solar
+        # lease/finance payment. The rollover view deducts this from what the
+        # home rolls forward so the coins/bars show the net amount.
+        _opex_comp = (resolve_annual_operating_expenses(prop).get("components") or {})
+        prop_monthly_opex = (
+            float(_opex_comp.get("property_tax", 0) or 0)
+            + float(_opex_comp.get("insurance", 0) or 0)
+            + float(_opex_comp.get("hoa", 0) or 0)
+            + float(_opex_comp.get("property_management", 0) or 0)
+        ) / 12.0 + solar_monthly
+
         for offset, loan in enumerate(active_loans):
             # Disambiguate when a property carries more than one active loan.
             if len(active_loans) > 1:
@@ -11634,6 +11646,9 @@ def payoff_planner(
                 "balance": round(current_loan_balance(loan), 2),
                 "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
                 "pi": round(loan_monthly_pi(loan), 2),
+                # Attach the property's opex once (to its first loan) so a
+                # multi-loan home isn't deducted multiple times.
+                "op_expenses": round(prop_monthly_opex, 2) if offset == 0 else 0.0,
             })
 
     report = build_payoff_report(

@@ -162,6 +162,7 @@ def simulate(
             "rate": float(loan["rate"]),
             "pi": float(loan["pi"]),
             "noi": float(loan.get("noi", 0.0) or 0.0),
+            "op_expenses": float(loan.get("op_expenses", 0.0) or 0.0),
             "start_balance": balance,
             "balance": balance,
             "_idx": idx,
@@ -270,6 +271,7 @@ def simulate(
             "rate": s["rate"],
             "pi": s["pi"],
             "noi": s["noi"],
+            "op_expenses": s["op_expenses"],
             "start_balance": s["start_balance"],
             "payoff_month": s["payoff_month"],
             "own_paid": round(s["own_paid"], 2),
@@ -629,12 +631,20 @@ def build_report(
         pm = l["payoff_month"]
         never = pm is None or pm > cap
         own_pi = float(l.get("pi", 0.0) or 0.0)
+        # Each home's own operating expenses (property tax, insurance, HOA,
+        # management) are deducted from what it rolls forward, so the coins/bars
+        # show the leftover net amount — the payoff math is unchanged; this is a
+        # display of the net contribution.
+        own_opex = float(l.get("op_expenses", 0.0) or 0.0)
+        own_net = max(own_pi - own_opex, 0.0)
         freed_total = sum(c["payment"] for c in freed_coins)
+        freed_net_total = sum(c["net"] for c in freed_coins)
         # Each freed coin carries the payoff order of the home it came from, so
         # the UI can tint it in that home's colour — money flowing from a cleared
-        # home into the next target.
-        coins = [{"name": c["name"], "display": c["display"], "own": False, "order": c["order"], "amount": round(c["payment"], 2)} for c in freed_coins]
-        coins.append({"name": l["name"], "display": format_currency(own_pi), "own": True, "order": k, "amount": round(own_pi, 2)})
+        # home into the next target. `amount` is the net (post-opex) roll; `gross`
+        # and `opex` let the UI explain the deduction.
+        coins = [{"name": c["name"], "display": format_currency(c["net"]), "grossDisplay": c["display"], "own": False, "order": c["order"], "amount": round(c["net"], 2), "gross": round(c["payment"], 2), "opex": round(c["opex"], 2)} for c in freed_coins]
+        coins.append({"name": l["name"], "display": format_currency(own_net), "grossDisplay": format_currency(own_pi), "own": True, "order": k, "amount": round(own_net, 2), "gross": round(own_pi, 2), "opex": round(own_opex, 2)})
 
         # TOTAL money that clears this home over the whole payoff, grouped by
         # source: "you" (its own P&I plus your extra) + the dollars rolled in
@@ -666,16 +676,23 @@ def build_report(
             "ownPaymentDisplay": format_currency(own_pi),
             "freedPaymentDisplay": format_currency(freed_total),
             "rollingPaymentDisplay": format_currency(freed_total + own_pi),
+            "rollingPaymentNet": round(freed_net_total + own_net, 2),
+            "rollingPaymentNetDisplay": format_currency(freed_net_total + own_net),
+            "freedPaymentNet": round(freed_net_total, 2),
+            "freedPaymentNetDisplay": format_currency(freed_net_total),
+            "opexDeducted": round((freed_total + own_pi) - (freed_net_total + own_net), 2),
+            "opexDeductedDisplay": format_currency((freed_total + own_pi) - (freed_net_total + own_net)),
             "coins": coins,
             "totalPaid": round(total_paid, 2),
             "totalPaidDisplay": format_currency(total_paid),
             "groups": groups,
         })
         if not never:
-            freed_coins.append({"name": l["name"], "payment": own_pi, "display": format_currency(own_pi), "order": k})
+            freed_coins.append({"name": l["name"], "payment": own_pi, "opex": own_opex, "net": own_net, "display": format_currency(own_pi), "order": k})
 
     rollover_max_total = max((s["totalPaid"] for s in rollover), default=0.0)
     rollover_max_monthly = max((s["rollingPayment"] for s in rollover), default=0.0)
+    rollover_max_monthly_net = max((s["rollingPaymentNet"] for s in rollover), default=0.0)
 
     # Metric cards.
     cards = {
@@ -773,6 +790,7 @@ def build_report(
         "rollover": rollover,
         "rolloverMaxTotal": round(rollover_max_total, 2),
         "rolloverMaxMonthly": round(rollover_max_monthly, 2),
+        "rolloverMaxMonthlyNet": round(rollover_max_monthly_net, 2),
         "warnings": warnings,
         "debtFreeMonth": debt_free_month,
         "baselineMonth": baseline_month,
