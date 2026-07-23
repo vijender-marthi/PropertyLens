@@ -551,11 +551,13 @@ export default function DashboardPage() {
     return analytics?.kpis?.[key]
   }
 
-  if (loading && !data) return <PageContainer><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" /></div></PageContainer>
-  if (!dashboard) return <PageContainer><DashboardCard className="p-10 text-center"><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><h1 className="mt-3 text-lg font-semibold text-gray-900">Portfolio dashboard unavailable</h1><p className="mt-1 text-sm text-gray-500">The backend did not return a dashboard presentation.</p></DashboardCard></PageContainer>
-
   return (
     <PageContainer className="max-w-[112rem]">
+      {loading && !data ? (
+        <div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" /></div>
+      ) : !dashboard ? (
+        <DashboardCard className="p-10 text-center"><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><h1 className="mt-3 text-lg font-semibold text-gray-900">Portfolio dashboard unavailable</h1><p className="mt-1 text-sm text-gray-500">The backend did not return a dashboard presentation.</p></DashboardCard>
+      ) : (
       <div className="space-y-4" data-testid="portfolio-dashboard">
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
           <div><h1 className="text-2xl font-bold text-gray-950">{dashboard.header.title}</h1><p className="mt-1 text-sm text-gray-500">{dashboard.header.subtitle}</p></div>
@@ -578,6 +580,7 @@ export default function DashboardPage() {
 
         <section className="grid items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-4"><CashFlowTrend data={dashboard.cashFlowTrend} /><ExpenseBreakdown data={dashboard.expenseBreakdown} /><PropertyPerformance data={dashboard.propertyPerformance} /><AlertsPanel data={dashboard.alerts} /></section>
       </div>
+      )}
     </PageContainer>
   )
 }
