@@ -5286,15 +5286,18 @@ function ValueWaterfallStoryChart({ waterfall, onJump, showTitle = true }) {
   }
   const nodes = waterfall.series || []
   const chartHeight = 400
+  const chartWidth = 680
   const left = 58
   const right = 24
   const top = 28
   const bottom = 104
   const plotHeight = chartHeight - top - bottom
   const barWidth = 48
-  const gap = 56
-  // Width the viewBox to the actual bars so there's no dead space on the right.
-  const chartWidth = left + Math.max(nodes.length - 1, 0) * (barWidth + gap) + (barWidth + 8) + right
+  // Spread the bars to fill the chart width (no dead space on the right) for the
+  // usual handful of nodes, with a sensible minimum for longer stories.
+  const gap = nodes.length > 1
+    ? Math.max(40, (chartWidth - left - right - barWidth) / (nodes.length - 1) - barWidth)
+    : 56
   const nodeValues = nodes.flatMap((node) => [node.startValue ?? node.start ?? 0, node.endValue ?? node.end ?? 0])
   const minValue = Math.min(0, ...nodeValues)
   const maxValue = Math.max(1, ...nodeValues)
@@ -5311,8 +5314,8 @@ function ValueWaterfallStoryChart({ waterfall, onJump, showTitle = true }) {
     <div className="min-w-0 py-1">
       {showTitle ? <ChartInfoTitle title={waterfall.title || 'Purchase Price to Current Market Value'} details={waterfall.subtitle} /> : null}
       <p className="sr-only">{srSummary}</p>
-      <div className="mt-4 overflow-x-auto">
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full min-w-[480px]" role="img" aria-label={waterfall.title}>
+      <div className="mx-auto mt-4 max-w-[760px] overflow-x-auto">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="mx-auto w-full min-w-[560px]" role="img" aria-label={waterfall.title}>
           {ticks.map((tick) => <g key={tick}><line x1={left - 6} x2={chartWidth - right} y1={y(tick)} y2={y(tick)} stroke="currentColor" className="text-gray-100 dark:text-gray-800" /><text x={0} y={y(tick) + 4} className="fill-gray-500 text-[11px] dark:fill-gray-400">{fmtKMB(tick)}</text></g>)}
           {nodes.map((node, index) => {
             const startValue = node.startValue ?? node.start ?? 0
