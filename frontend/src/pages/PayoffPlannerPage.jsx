@@ -1062,6 +1062,16 @@ function bestIndices(columns, key, dir) {
   return out
 }
 
+// Colour-coded scenario action buttons so each purpose is recognisable at a
+// glance: green = save/create, amber = update, violet = compare, sky = export.
+const TINT_BTN = 'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed'
+const TINT = {
+  emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-900/50',
+  amber: 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/50',
+  violet: 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-900/50',
+  sky: 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-900/50',
+}
+
 // Compact Scenarios control that lives in the top-right corner. Collapsed it is
 // a single pill (with a saved-count badge and a "modified" dot); clicking it
 // opens a dropdown with the save/compare/export actions and the saved chips.
@@ -1094,18 +1104,18 @@ function ScenarioWidget({ open, onToggle, scenarios, activeScenario, activeMatch
 
           <div className="mb-3 flex flex-wrap items-center gap-2">
             {modified ? (
-              <button type="button" onClick={onUpdate} disabled={busy} className="btn-secondary text-xs px-2.5 py-1.5">
+              <button type="button" onClick={onUpdate} disabled={busy} className={`${TINT_BTN} ${TINT.amber}`}>
                 <Save className="h-3.5 w-3.5" aria-hidden="true" />Update
               </button>
             ) : null}
-            <button type="button" onClick={onSave} disabled={busy || !canExport} className="btn-secondary text-xs px-2.5 py-1.5">
+            <button type="button" onClick={onSave} disabled={busy || !canExport} className={`${TINT_BTN} ${TINT.emerald}`}>
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />Save current
             </button>
             <button type="button" onClick={onCompare} disabled={!scenarios.length} aria-pressed={compareOpen}
-              className={`btn-secondary text-xs px-2.5 py-1.5 ${compareOpen ? 'ring-2 ring-blue-500/40' : ''}`}>
+              className={`${TINT_BTN} ${TINT.violet} ${compareOpen ? 'ring-2 ring-violet-500/40' : ''}`}>
               <GitCompare className="h-3.5 w-3.5" aria-hidden="true" />Compare
             </button>
-            <button type="button" onClick={onExport} disabled={!canExport} className="btn-secondary text-xs px-2.5 py-1.5">
+            <button type="button" onClick={onExport} disabled={!canExport} className={`${TINT_BTN} ${TINT.sky}`}>
               <Download className="h-3.5 w-3.5" aria-hidden="true" />Export
             </button>
           </div>
