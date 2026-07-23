@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import { formatCurrency, formatCompactMoney, formatPlainPercent, formatFixed } from '../utils/formatters'
 import {
   ArrowRight,
   BarChart3,
@@ -66,27 +67,11 @@ function numberValue(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function compactMoney(value) {
-  const amount = numberValue(value)
-  const abs = Math.abs(amount)
-  const sign = amount < 0 ? '-' : ''
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 1 : 2).replace(/\.0$/, '')}M`
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, '')}K`
-  return `${sign}$${Math.round(abs).toLocaleString()}`
-}
-
-function fullMoney(value) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(numberValue(value))
-}
-
-function percent(value, digits = 2) {
-  const parsed = numberValue(value)
-  return `${parsed.toFixed(digits).replace(/\.00$/, '')}%`
-}
+// Thin wrappers over the shared formatter module (identical output) so the
+// direct number-formatting lives in the allowed formatter file.
+const compactMoney = (value) => formatCompactMoney(numberValue(value))
+const fullMoney = (value) => formatCurrency(numberValue(value))
+const percent = (value, digits = 2) => formatPlainPercent(numberValue(value), digits)
 
 function propertyName(row) {
   // propertyPerformance rows carry the name in `label`; others use `name`.
@@ -671,7 +656,7 @@ export default function AnalyticsPage() {
           <KpiCard icon={Building2} label="Annual NOI" value={compactMoney(model.annualNoi)} delta="YTD run-rate" tone="violet" />
           <KpiCard icon={Target} label="Cash on Cash Return" value={model.cashOnCash == null ? '—' : percent(model.cashOnCash, 2)} delta={model.cashOnCash == null ? 'Cash invested unavailable' : 'Annualized'} tone="amber" />
           <KpiCard icon={BarChart3} label="Portfolio Cap Rate" value={model.capRate == null ? '—' : percent(model.capRate, 2)} delta="NOI / value" tone="blue" />
-          <KpiCard icon={ShieldCheck} label="Debt Coverage Ratio" value={model.dscr ? model.dscr.toFixed(2) : '—'} delta="NOI / debt service" tone="green" />
+          <KpiCard icon={ShieldCheck} label="Debt Coverage Ratio" value={model.dscr ? formatFixed(model.dscr, 2) : '—'} delta="NOI / debt service" tone="green" />
         </div>
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_17rem]">

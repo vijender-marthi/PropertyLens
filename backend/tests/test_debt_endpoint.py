@@ -117,6 +117,26 @@ def _add_mortgage_statement(
     return doc
 
 
+def _add_closing_loan_document(db, prop, owner_id, year, balance, account="ACCT-1"):
+    doc = models.Document(
+        property_id=prop.id, owner_id=owner_id,
+        filename=f"closing_{year}_{account}.pdf", original_filename=f"closing_{year}_{account}.pdf",
+        file_type="pdf", doc_category="closing_statement", statement_year=year,
+        extracted_data=json.dumps({
+            "statement_year": year,
+            "closing_date": f"{year}-01-01",
+            "loan_amount": balance,
+            "current_balance": balance,
+            "account_number": account,
+        }),
+        loan_account_number=account, file_size=1024,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(prop)
+    return doc
+
+
 class TestSingleLoanNoDocuments:
     def test_fully_projected_matches_current_loan_balance(self, client, user, prop):
         """No 1098s at all -> every year is a gap, projected from origination."""
@@ -290,6 +310,51 @@ class TestDocumentedYearsAreNeverOverwritten:
         assert row_2026["endBalance"] == 441_352.44
         assert row_2026["principalPaid"] == pytest.approx(row_2026["startBalance"] - row_2026["endBalance"])
         assert row_2026["interestPaid"] > 0
+
+    def test_statement_date_saved_as_servicer_start_does_not_hide_prior_1098s(self, client, db, user, prop):
+        loan = prop.loans[0]
+        loan.account_number = "1392931056"
+        loan.origination_date = "2021-09-01"
+        loan.servicer_start_date = "2026-06-10"
+        loan.statement_date = "2026-06-10"
+        loan.original_amount = 1_384_000
+        loan.current_balance = 1_222_607.75
+        loan.interest_rate = 2.875
+        loan.monthly_payment = 5_742.21
+        loan.escrow_amount = 0
+        loan.principal_due = 0
+        loan.interest_due = 0
+        db.commit()
+        for year, interest, balance in [
+            (2021, 9_787.14, 1_384_000),
+            (2022, 42_484.58, 1_379_141.63),
+            (2023, 38_238.51, 1_346_155.11),
+            (2024, 37_163.92, 1_309_746.20),
+            (2025, 33_116.36, 1_272_262.70),
+        ]:
+            _add_1098_with_balance(db, prop, user.id, year, interest, balance, account="1392931056", origination_date="09/01/2021")
+        _add_mortgage_statement(
+            db,
+            prop,
+            user.id,
+            2026,
+            1_222_607.75,
+            account="1392931056",
+            statement_date="06/10/2026",
+            ytd_principal=13_865.99,
+            ytd_interest=17_674.11,
+        )
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        rows = resp.json()["loans"][0]["paydown"]["rows"]
+        rows_by_year = {row["year"]: row for row in rows if not row.get("isFullYearProjection")}
+        assert set(range(2021, 2026)).issubset(rows_by_year)
+        assert all(rows_by_year[year]["source"] == "1098" for year in range(2021, 2026))
+        assert rows_by_year[2021]["startBalance"] == 1_384_000
+        assert rows_by_year[2025]["interestPaid"] == 33_116.36
+        assert rows_by_year[2026]["source"] == "statement"
 
     def test_1098_years_used_exactly_gap_only_covers_remainder(self, client, db, user, prop):
         prop.loans[0].account_number = "ACCT-1"
@@ -519,6 +584,71 @@ class TestLoanPaydownTracking:
         assert row_2024["endingBalanceMetric"]["formula"] == "Starting balance − principal paid"
         assert row_2024["assertions"]["principalPaidEqualsPaymentLessInterest"] is True
         assert row_2024["assertions"]["endingBalanceEqualsStartMinusPrincipal"] is True
+
+    def test_1098_without_box2_uses_same_year_statement_balance(self, client, db, user, prop):
+        loan = prop.loans[0]
+        loan.account_number = "ACCT-1"
+        loan.origination_date = "2024-09-20"
+        loan.original_amount = 506_250
+        loan.current_balance = 496_610.30
+        loan.interest_rate = 6.5
+        loan.monthly_payment = 3_699.06
+        loan.escrow_amount = 499.22
+        loan.principal_due = 1_009.09
+        loan.interest_due = 2_689.97
+        db.commit()
+        _add_1098(db, prop, user.id, 2025, 32_678.20, account="ACCT-1")
+        _add_mortgage_statement(
+            db,
+            prop,
+            user.id,
+            2025,
+            499_612.34,
+            account="ACCT-1",
+            statement_date="12/10/2025",
+        )
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        row_2025 = next(row for row in resp.json()["loans"][0]["paydown"]["rows"] if row["year"] == 2025)
+        assert row_2025["source"] == "1098"
+        assert row_2025["sourceLabel"] == "1098 interest + statement balance"
+        assert row_2025["interestPaid"] == 32_678.20
+        assert row_2025["endBalance"] == 499_612.34
+        assert row_2025["endingBalanceSource"] == "reported"
+        assert row_2025["principalPaidDisplay"] != "—"
+
+    def test_loan_year_source_priority_is_1098_statement_closing(self, client, db, user, prop):
+        loan = prop.loans[0]
+        loan.account_number = "ACCT-1"
+        loan.origination_date = "2024-01-01"
+        loan.original_amount = 320_000
+        loan.current_balance = 300_000
+        loan.interest_rate = 6.0
+        loan.monthly_payment = 2_000
+        loan.escrow_amount = 0
+        loan.principal_due = 0
+        loan.interest_due = 0
+        db.commit()
+        _add_closing_loan_document(db, prop, user.id, 2024, 320_000)
+        _add_mortgage_statement(db, prop, user.id, 2024, 310_000, account="ACCT-1", statement_date="12/31/2024")
+        _add_1098_with_balance(db, prop, user.id, 2024, 17_000, 320_000, account="ACCT-1")
+        _add_1098_with_balance(db, prop, user.id, 2025, 16_000, 300_000, account="ACCT-1")
+
+        resp = client.get(f"/api/properties/{prop.id}/debt", headers=auth_headers(user.email))
+
+        assert resp.status_code == 200
+        row_2024 = next(row for row in resp.json()["loans"][0]["paydown"]["rows"] if row["year"] == 2024)
+        assert row_2024["source"] == "1098"
+        assert row_2024["sourceDocument"]["docType"] == "1098"
+        assert row_2024["interestPaid"] == 17_000
+        assert row_2024["endBalance"] == 310_000
+        assert [doc["docType"] for doc in row_2024["documents"]] == [
+            "closing_statement",
+            "mortgage_statement",
+            "1098",
+        ]
 
     def test_missing_origination_date_flags_paydown_without_guessing(self, client, db, user, prop):
         prop.loans[0].origination_date = None

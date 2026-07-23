@@ -65,6 +65,9 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploadPreview, setUploadPreview] = useState(null)
   const [uploadFileName, setUploadFileName] = useState('')
+  const [uploadQueue, setUploadQueue] = useState([])
+  const [uploadIndex, setUploadIndex] = useState(0)
+  const [uploadBatchResults, setUploadBatchResults] = useState([])
   const [previewingUpload, setPreviewingUpload] = useState(false)
   const [addressConfirmed, setAddressConfirmed] = useState(false)
   const [fieldOverrides, setFieldOverrides] = useState({})
@@ -96,6 +99,9 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
   const handleOpenUploadModal = () => {
     setUploadPreview(null)
     setUploadFileName('')
+    setUploadQueue([])
+    setUploadIndex(0)
+    setUploadBatchResults([])
     setAddressConfirmed(false)
     setFieldOverrides({})
     setDuplicateChoice('keep')
@@ -106,11 +112,14 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
     setShowUploadModal(false)
     setUploadPreview(null)
     setUploadFileName('')
+    setUploadQueue([])
+    setUploadIndex(0)
+    setUploadBatchResults([])
     setAddressConfirmed(false)
     setFieldOverrides({})
     setDuplicateChoice('keep')
   }
-  const handlePreviewUpload = async (file) => {
+  const previewUploadFile = async (file) => {
     if (!file) return
     setPreviewingUpload(true)
     setUploadFileName(file.name)
@@ -125,6 +134,14 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
     } finally {
       setPreviewingUpload(false)
     }
+  }
+  const handlePreviewUpload = async (input) => {
+    const files = normalizeUploadFiles(input)
+    if (!files.length) return
+    setUploadQueue(files)
+    setUploadIndex(0)
+    setUploadBatchResults([])
+    await previewUploadFile(files[0])
   }
   const handleAcceptUpload = async () => {
     if (!uploadPreview) return
@@ -144,9 +161,25 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
       },
     })
     if (applied) {
+      const nextResults = [...uploadBatchResults, { fileName: uploadFileName || uploadPreview.original_filename, status: 'applied' }]
+      const nextIndex = uploadIndex + 1
+      if (nextIndex < uploadQueue.length) {
+        setUploadBatchResults(nextResults)
+        setUploadIndex(nextIndex)
+        setUploadPreview(null)
+        setUploadFileName('')
+        setAddressConfirmed(false)
+        setFieldOverrides({})
+        setDuplicateChoice('keep')
+        await previewUploadFile(uploadQueue[nextIndex])
+        return
+      }
       setShowUploadModal(false)
       setUploadPreview(null)
       setUploadFileName('')
+      setUploadQueue([])
+      setUploadIndex(0)
+      setUploadBatchResults([])
       setAddressConfirmed(false)
       setFieldOverrides({})
       setDuplicateChoice('keep')
@@ -252,20 +285,11 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
       </div>
 
       <div className="mt-6">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap items-baseline gap-2">
             <h5 className="text-base font-semibold text-gray-950 dark:text-white">By year</h5>
-            <span className="text-sm text-gray-500 dark:text-neutral-500">· one continuous timeline across servicers</span>
+            <span className="text-sm text-gray-500 dark:text-neutral-500">· one continuous timeline across lenders</span>
           </div>
-          <button
-            type="button"
-            onClick={handleOpenUploadModal}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-800 hover:border-gray-400 hover:bg-gray-50 disabled:opacity-60 dark:border-neutral-600 dark:text-white dark:hover:border-neutral-400 dark:hover:bg-neutral-800"
-            disabled={uploadingStatement}
-          >
-            <Upload className="h-4 w-4" />
-            {uploadingStatement ? 'Uploading...' : 'Upload Docs'}
-          </button>
         </div>
         <LoanYearTable
           rows={paydownRows}
@@ -281,7 +305,7 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
           onRemove={handleRemoveDocument}
         />
         <p className="mt-3 text-sm text-gray-500 dark:text-neutral-500">
-          One loan, one balance chain. The servicer column shows who held it that year - no duplicate tables, no "closed loan."
+          One loan, one balance chain. The lender column shows who held it that year - no duplicate tables, no "closed loan."
         </p>
       </div>
       {selectedIssueRow ? (
@@ -311,10 +335,20 @@ export default function LoanCard({ loan: l, debt, metrics = {}, onEdit, onAmorti
           onPreview={handlePreviewUpload}
           onCancel={handleCloseUploadModal}
           onAccept={handleAcceptUpload}
+          batchFileCount={uploadQueue.length}
+          batchIndex={uploadIndex}
+          batchResults={uploadBatchResults}
         />
       ) : null}
     </div>
   )
+}
+
+function normalizeUploadFiles(input) {
+  if (!input) return []
+  if (Array.isArray(input)) return input.filter(Boolean)
+  if (typeof input.length === 'number' && !input.name) return Array.from(input).filter(Boolean)
+  return [input].filter(Boolean)
 }
 
 function ProjectedBadge({ months, helpText }) {
@@ -404,14 +438,6 @@ function LoanYearTable({
 }) {
   const [expandedRows, setExpandedRows] = useState({})
   const displayRows = loanYearDisplayRows(rows, closed)
-  useEffect(() => {
-    const defaults = {}
-    displayRows.forEach((row) => {
-      const key = row.rowKey || row.year
-      if (loanYearHasTransfer(row) && loanYearDetailRows(row, rows).length) defaults[key] = true
-    })
-    setExpandedRows((current) => ({ ...defaults, ...current }))
-  }, [rows, closed])
   const toggleRow = (rowKey) => setExpandedRows((current) => ({ ...current, [rowKey]: !current[rowKey] }))
 
   if (!rows.length) {
@@ -429,7 +455,7 @@ function LoanYearTable({
           <tr>
             <th className="px-4 py-3 font-medium">Year</th>
             <th className="px-2 py-3 text-center font-medium" aria-label="Loan event"></th>
-            <th className="px-4 py-3 font-medium">Servicer</th>
+            <th className="px-4 py-3 font-medium">Lender</th>
             <th className="px-4 py-3 text-right font-medium">Start bal.</th>
             <th className="px-4 py-3 text-right font-medium">Principal</th>
             <th className="px-4 py-3 text-right font-medium">Top-up</th>
@@ -1209,6 +1235,9 @@ function LoanDocumentUploadModal({
   onPreview,
   onCancel,
   onAccept,
+  batchFileCount = 0,
+  batchIndex = 0,
+  batchResults = [],
 }) {
   const addressValidation = preview?.addressValidation || {}
   const addressStatus = addressValidation.status
@@ -1247,7 +1276,7 @@ function LoanDocumentUploadModal({
         ['YTD interest', extracted.interest_paid_ytd_display || extracted.interest_paid_ytd || '—'],
       ]
 
-  const handleFile = (file) => onPreview?.(file)
+  const handleFile = (files) => onPreview?.(files)
   const handleOverrideChange = (key, value) => {
     onFieldOverridesChange?.({
       ...fieldOverrides,
@@ -1256,7 +1285,7 @@ function LoanDocumentUploadModal({
   }
   const handleDrop = (event) => {
     event.preventDefault()
-    handleFile(event.dataTransfer.files?.[0])
+    handleFile(event.dataTransfer.files)
   }
   const addressLine = (address, fallback) => {
     const text = [
@@ -1274,8 +1303,8 @@ function LoanDocumentUploadModal({
       <div className="w-full max-w-2xl rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
           <div>
-            <h3 id="loan-doc-upload-title" className="text-lg font-semibold text-gray-900 dark:text-white">Upload 1098 / statement</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">The backend parses the file, detects the document type and year, and verifies the address before anything is applied.</p>
+            <h3 id="loan-doc-upload-title" className="text-lg font-semibold text-gray-900 dark:text-white">Upload loan documents</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Select one or more loan documents. The backend parses each file, detects the type and year, and verifies the address before anything is applied.</p>
           </div>
           <button type="button" className="icon-btn" onClick={onCancel} aria-label="Close upload modal" disabled={previewing || accepting}>
             <X className="h-4 w-4" aria-hidden="true" />
@@ -1289,16 +1318,24 @@ function LoanDocumentUploadModal({
             onDrop={handleDrop}
           >
             <Upload className="h-6 w-6 text-gray-400" aria-hidden="true" />
-            <span className="mt-2 text-sm font-medium text-gray-900 dark:text-white">{previewing ? 'Parsing document...' : 'Drag and drop a PDF or spreadsheet'}</span>
+            <span className="mt-2 text-sm font-medium text-gray-900 dark:text-white">{previewing ? 'Parsing document...' : 'Drag and drop loan documents'}</span>
             <span className="mt-1 text-xs text-gray-500 dark:text-gray-400">or browse for PDF, XLS, or XLSX</span>
             <input
               type="file"
               accept=".pdf,.xlsx,.xls"
+              multiple
               className="sr-only"
-              onChange={(event) => handleFile(event.target.files?.[0])}
+              onChange={(event) => handleFile(event.target.files)}
               disabled={previewing || accepting}
             />
           </label>
+
+          {batchFileCount > 1 ? (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-200">
+              Processing document {Math.min(batchIndex + 1, batchFileCount)} of {batchFileCount}
+              {batchResults.length ? ` · ${batchResults.length} applied` : ''}
+            </div>
+          ) : null}
 
           {preview ? (
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/70">
@@ -1427,7 +1464,7 @@ function LoanDocumentUploadModal({
         <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-gray-800">
           <button type="button" className="btn-secondary text-sm" onClick={onCancel} disabled={previewing || accepting}>Cancel</button>
           <button type="button" className="btn-primary text-sm" onClick={onAccept} disabled={!canAccept}>
-            {accepting ? 'Applying...' : 'Accept and apply'}
+            {accepting ? 'Applying...' : batchFileCount > 1 && batchIndex < batchFileCount - 1 ? 'Accept and continue' : 'Accept and apply'}
           </button>
         </div>
       </div>

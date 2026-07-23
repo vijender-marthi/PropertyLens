@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { docAPI } from '../services/api'
 import { Upload, FileText, Trash2, ChevronDown, Wand2, CheckSquare, Square, AlertTriangle, Copy, X, RefreshCw, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { formatCurrency, formatFileSize, formatInteger, formatNumber, formatPercent } from '../utils/formatters'
+import { formatCurrency, formatExtractedFieldValue, formatFileSize, formatPercent } from '../utils/formatters'
 import DataTable from './DataTable'
 import ConfirmDialog from './ConfirmDialog'
 
@@ -20,15 +20,6 @@ const CATEGORIES = [
   { value: 'expense_receipt', label: 'Operating Expense Receipt' },
   { value: 'other', label: 'Other' },
 ]
-
-const YEAR_FIELD_RE = /year$/i
-
-const formatFieldValue = (key, value, allData) => {
-  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData?.schedule1_line5_total == null) return 'n/a'
-  if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'number') return YEAR_FIELD_RE.test(key) ? formatInteger(value) : formatNumber(value)
-  return String(value)
-}
 
 export default function DocumentUpload({ propertyId, docs, onUploaded }) {
 docs = Array.isArray(docs) ? docs : []
@@ -286,7 +277,7 @@ previewRowId: property.id || `${property.address || 'property'}-${index}`,
 const previewFieldRows = previewFields.map(([key, value]) => ({
 id: key,
 field: key.replace(/_/g, ' '),
-value: formatFieldValue(key, value, previewDoc.extracted_data),
+value: formatExtractedFieldValue(key, value, previewDoc.extracted_data),
 }))
 const previewFieldColumns = [
 { id: 'field', header: 'Field', accessor: 'field', cellClassName: 'text-gray-500 dark:text-gray-400 capitalize whitespace-nowrap' },
@@ -325,7 +316,7 @@ return (
 columns={previewFieldColumns}
 rows={previewFieldRows}
 getRowKey={(row) => row.id}
-className="max-h-72"
+tableWrapperClassName="overflow-auto max-h-72"
 />
 ) : previewProperties.length === 0 ? (
 <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -342,7 +333,7 @@ Per-property Schedule E figures ({previewProperties.length})
 columns={previewPropertyColumns}
 rows={previewPropertyRows}
 getRowKey={(row) => row.previewRowId}
-className="max-h-72"
+tableWrapperClassName="overflow-auto max-h-72"
 />
 </div>
 )}
@@ -505,7 +496,7 @@ function DocRow({ doc, catLabel, selected, onToggle, onDelete, onApply }) {
               .map(([k, v]) => (
                 <div key={k} className="flex justify-between text-xs">
                   <span className="text-gray-400 capitalize">{k.replace(/_/g, ' ')}</span>
-                  <span className="font-medium text-gray-700">{formatFieldValue(k, v, doc.extracted_data)}</span>
+                  <span className="font-medium text-gray-700">{formatExtractedFieldValue(k, v, doc.extracted_data)}</span>
                 </div>
               ))}
           </div>

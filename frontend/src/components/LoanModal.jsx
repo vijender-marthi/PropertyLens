@@ -131,20 +131,38 @@ export default function LoanModal({ propId, loan, onClose, onSaved, onUploadStat
     if (!file) return
     const fd = new FormData()
     fd.append('property_id', propId)
-    fd.append('category', 'mortgage_statement')
+    // Let the backend detect the document type from its content — a servicer
+    // "Loan Information" page, closing statement, 1098, or mortgage statement
+    // are all valid here. Forcing "mortgage_statement" mis-parsed other types.
+    fd.append('category', 'auto')
     fd.append('file', file)
     setUploadingStatement(true)
     try {
       const preview = await docAPI.previewUpload(fd)
-      const accepted = await docAPI.acceptUpload({
-        pending_upload_id: preview.data.pending_upload_id,
-        original_filename: preview.data.original_filename,
-        property_id: propId,
-        category: preview.data.category || 'mortgage_statement',
-        apply_extracted: false,
-      })
-      const review = await docAPI.loanStatementReview(accepted.data.id)
-      const extracted = accepted.data.extracted_data || {}
+      // Reuse an already-uploaded copy instead of failing on the duplicate check
+      // (the same statement is often already attached to the property).
+      let acceptedData
+      try {
+        const accepted = await docAPI.acceptUpload({
+          pending_upload_id: preview.data.pending_upload_id,
+          original_filename: preview.data.original_filename,
+          property_id: propId,
+          category: preview.data.category || 'mortgage_statement',
+          apply_extracted: false,
+          force: Boolean(preview.data.duplicate_of),
+        })
+        acceptedData = accepted.data
+      } catch (err) {
+        const duplicate = err.response?.data?.detail
+        if (!duplicate?.id) throw err
+        acceptedData = { id: duplicate.id, extracted_data: preview.data.extracted_data || {} }
+      }
+      const accepted = { data: acceptedData }
+      const review = await docAPI.loanStatementReview(acceptedData.id)
+      // The reviewed loanFields are the authoritative parsed values; fall back
+      // to the raw extraction and statement draft for anything not surfaced.
+      const reviewed = Object.fromEntries((review.data?.loanFields || []).map((field) => [field.targetKey, field.value]))
+      const extracted = { ...(accepted.data.extracted_data || {}), ...reviewed }
       const draft = review.data?.statementDraft || {}
       if (isEdit) {
         const selectedFields = (review.data?.loanFields || []).map((field) => field.targetKey)

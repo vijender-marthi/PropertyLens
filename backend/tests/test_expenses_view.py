@@ -94,3 +94,35 @@ def test_expenses_view_reports_escrow_and_hides_rental_ratio_for_primary(client,
     assert data["isPrimaryResidence"] is True
     assert data["metrics"]["expenseRatio"]["hidden"] is True
     assert data["metrics"]["inEscrow"]["value"] == 7500
+
+
+def test_expenses_view_flags_material_property_tax_year_over_year_changes(client, db, user, prop):
+    current_year = date.today().year
+    prop.purchase_date = f"{current_year - 3}-01-01"
+    for year, tax in [
+        (current_year - 3, 24757),
+        (current_year - 2, 25074),
+        (current_year - 1, 12607),
+    ]:
+        db.add(models.AnnualExpense(
+            property_id=prop.id,
+            owner_id=user.id,
+            year=year,
+            property_tax=tax,
+            insurance=2000,
+            hoa=1440,
+            property_tax_source="reported",
+        ))
+    db.commit()
+
+    resp = client.get(f"/api/properties/{prop.id}/expenses-view", headers=auth_headers(user.email))
+
+    assert resp.status_code == 200
+    rows = {row["year"]: row for row in resp.json()["rows"]}
+    assert rows[current_year - 2]["comments"] == []
+    drop_row = rows[current_year - 1]
+    assert drop_row["comments"][0]["type"] == "PROPERTY_TAX_YOY_VARIANCE"
+    assert drop_row["comments"][0]["previousValue"] == 25074
+    assert drop_row["comments"][0]["currentValue"] == 12607
+    assert "dropped" in drop_row["comments"][0]["message"]
+    assert drop_row["commentSummary"] == "Review property tax"

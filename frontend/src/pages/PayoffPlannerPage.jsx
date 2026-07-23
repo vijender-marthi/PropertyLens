@@ -3,6 +3,7 @@ import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bo
 import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
+import { formatCurrency } from '../utils/formatters'
 
 // Per-session persistence of the inputs.
 const STORAGE_KEY = 'payoffPlanner.inputs.v2'
@@ -88,8 +89,9 @@ function clamp(value, min, max) {
 }
 
 function usd(value) {
-  const amount = Math.round(Number(value) || 0)
-  return `$${amount.toLocaleString('en-US')}`
+  // Whole-dollar currency via the shared formatter (identical output for the
+  // non-negative amounts used here).
+  return formatCurrency(Math.round(Number(value) || 0))
 }
 
 export default function PayoffPlannerPage() {

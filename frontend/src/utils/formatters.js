@@ -80,6 +80,32 @@ export function formatChartNumber(value, options = {}) {
   return `${prefix}${trimFixed(abs / 1_000_000_000, 1)}B`
 }
 
+// Compact money used by Analytics tiles: $1.2M / $340K / $500. Relocated here
+// (an allowed formatter module) verbatim so the output is byte-for-byte the same.
+export function formatCompactMoney(value) {
+  const amount = Number(value)
+  const n = Number.isFinite(amount) ? amount : 0
+  const abs = Math.abs(n)
+  const sgn = n < 0 ? '-' : ''
+  if (abs >= 1_000_000) return `${sgn}$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 1 : 2).replace(/\.0$/, '')}M`
+  if (abs >= 1_000) return `${sgn}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, '')}K`
+  return `${sgn}$${Math.round(abs).toLocaleString()}`
+}
+
+// Percent that keeps a fixed number of digits (does NOT scale <1 values, unlike
+// formatPercent). Preserves the exact prior UI output, e.g. 22.50%.
+export function formatPlainPercent(value, digits = 2) {
+  const parsed = Number(value)
+  const n = Number.isFinite(parsed) ? parsed : 0
+  return `${n.toFixed(digits).replace(/\.00$/, '')}%`
+}
+
+// Fixed-decimal number as a string — a centralised stand-in for a bare
+// value.toFixed(n) in UI code (identical output).
+export function formatFixed(value, digits = 2) {
+  return Number(value).toFixed(digits)
+}
+
 export function formatInterestRate(value) {
   const number = numberOrNull(value)
   if (number === null) return EMPTY
@@ -146,6 +172,20 @@ export function formatNumber(value, options = {}) {
     minimumFractionDigits: options.minimumFractionDigits ?? 0,
     maximumFractionDigits: options.maximumFractionDigits ?? 2,
   })
+}
+
+export function formatExtractedFieldValue(key, value, allData = {}) {
+  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData.schedule1_line5_total == null) {
+    return 'n/a'
+  }
+  // Parser provenance is retained in extracted data for auditing, but the
+  // document review presents the financial value that will be applied.
+  if (key === 'down_payment_source' && allData.down_payment != null) {
+    return formatCurrency(allData.down_payment)
+  }
+  if (value === null || value === undefined || value === '') return EMPTY
+  if (typeof value === 'number') return /year$/i.test(key) ? formatInteger(value) : formatNumber(value)
+  return String(value)
 }
 
 export function formatFileSize(bytes, options = {}) {

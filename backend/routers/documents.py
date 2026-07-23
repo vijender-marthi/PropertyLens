@@ -216,19 +216,11 @@ def _normalize_loan_document_extracted(category: str, extracted: Dict[str, Any])
 
 
 def _is_supported_loan_document(category: str, extracted: Dict[str, Any]) -> bool:
-    if category in {"mortgage_statement", "1098", "loan_disclosure"}:
-        return True
-    if category != "closing_statement":
-        return False
-    data = _normalize_loan_document_extracted(category, extracted)
-    has_debt_amount = _to_float_or_none(data.get("original_amount")) not in (None, 0)
-    has_loan_term = any(data.get(key) not in (None, "") for key in (
-        "account_number",
-        "interest_rate",
-        "monthly_payment",
-        "loan_term_years",
-    ))
-    return has_debt_amount and has_loan_term
+    # Closing/settlement statements are loan-bearing documents even when
+    # extraction is incomplete (e.g. a scanned PDF). Allow them through so the
+    # review opens with whatever parsed and the user can fill the rest by hand,
+    # instead of dead-ending on a "no supported loan terms" error.
+    return category in {"mortgage_statement", "1098", "loan_disclosure", "closing_statement"}
 
 
 def _apply_loan_document_overrides(category: str, extracted: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -708,20 +700,26 @@ def _closing_setup_review_payload(document: models.Document, markdown: str = "")
     purchase_price_selection = _purchase_price_selection_payload(review_extracted, setup_import_role)
     settlement_calculations = _settlement_calculations_payload(review_extracted)
 
-    original_amount = extracted.get("original_amount") or 0
+    original_amount = _to_float(extracted.get("original_amount") or extracted.get("loan_amount")) or 0
     if setup_import_role == "settlement_document":
+        # Settlement statements describe the purchase totals, not the loan, so
+        # they never seed a loan draft (the loan comes from the closing
+        # disclosure).
         original_amount = 0
-    loan_detected = bool(original_amount and float(original_amount or 0) > 0)
+    # A closing disclosure always establishes a loan. Surface a draft even when
+    # extraction was incomplete (e.g. a scanned statement) so the user can fill
+    # the terms manually instead of hitting a dead end when re-importing.
+    loan_detected = setup_import_role != "settlement_document"
     loan_draft = None
     loan_fields = []
     if loan_detected:
-        current_balance = original_amount
+        current_balance = original_amount or ""
         loan_draft = {
             "lender_name": extracted.get("lender_name") or "",
             "loan_type": extracted.get("loan_type") or "FIXED",
             "loan_product": extracted.get("loan_product") or ("Conventional" if "conventional" in markdown.lower() else ""),
             "purpose": "Purchase" if "purchase" in markdown.lower() else "",
-            "original_amount": original_amount,
+            "original_amount": original_amount or "",
             "current_balance": current_balance,
             "current_balance_source_label": "Initial balance from closing document",
             "current_balance_verification_status": "Needs latest mortgage statement",
@@ -789,8 +787,6 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
     extracted = _normalize_loan_document_extracted(document.doc_category, _safe_extracted_data(document))
     is_disclosure = document.doc_category in {"loan_disclosure", "closing_statement"}
     current_balance = extracted.get("current_balance")
-    escrow_total = _normalized_monthly_escrow_total(extracted)
-    estimated_total = _normalized_total_monthly_payment(extracted)
     statement_fields = [
         _setup_field(extracted, "lender_name", "lender_name", "Lender", "text", 0.94),
         _setup_field(extracted, "account_number", "account_number", "Loan account number", "text", 0.98),
@@ -799,18 +795,13 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         _setup_field(extracted, "interest_rate", "interest_rate", "Interest rate", "percent", 0.95),
         _setup_field(extracted, "loan_type", "loan_type", "Loan type", "text", 0.94) if is_disclosure else None,
         _setup_field(extracted, "loan_product", "loan_product", "Loan product", "text", 0.88) if is_disclosure else None,
+        _setup_field(extracted, "transaction_purpose", "purpose", "Purpose", "text", 0.9) if is_disclosure else None,
         _setup_field(extracted, "loan_term_years", "loan_term_years", "Term", "text", 0.95) if is_disclosure else None,
         _setup_field(extracted, "monthly_payment", "monthly_payment", "Monthly principal & interest", "currency", 0.95),
         _setup_field(extracted, "principal_due", "principal_due", "Current payment principal", "currency", 0.96),
         _setup_field(extracted, "interest_due", "interest_due", "Current payment interest", "currency", 0.96),
         _setup_field(extracted, "principal_paid_ytd", "principal_paid_ytd", "Principal paid YTD", "currency", 0.98),
         _setup_field(extracted, "interest_paid_ytd", "interest_paid_ytd", "Interest paid YTD", "currency", 0.98),
-        _setup_field(extracted, "monthly_property_tax_escrow", "monthly_property_tax_escrow", "Monthly property tax escrow", "currency", 0.84),
-        _setup_field(extracted, "monthly_insurance_escrow", "monthly_insurance_escrow", "Monthly insurance escrow", "currency", 0.84),
-        _setup_field(extracted, "monthly_mortgage_insurance", "monthly_mortgage_insurance", "Monthly mortgage insurance", "currency", 0.8),
-        _setup_field(extracted, "monthly_other_escrow", "monthly_other_escrow", "Other monthly escrow", "currency", 0.75),
-        _setup_field(extracted, "escrow_amount", "escrow_amount", "Total monthly escrow", "currency", 0.84),
-        _setup_field(extracted, "estimated_total_monthly_payment", "estimated_total_monthly_payment", "Estimated total monthly payment", "currency", 0.8),
         _setup_field(extracted, "statement_date", "statement_date", "Statement date", "date", 0.9),
         _setup_field(extracted, "payment_due_date", "payment_due_date", "Payment due date", "date", 0.9),
         _setup_field(extracted, "maturity_date", "maturity_date", "Maturity date", "date", 0.9),
@@ -820,16 +811,9 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
     statement_fields = [field for field in statement_fields if field]
     statement_draft = {
         "current_balance": current_balance or "",
-        "monthly_property_tax_escrow": extracted.get("monthly_property_tax_escrow") or "",
-        "monthly_insurance_escrow": extracted.get("monthly_insurance_escrow") or "",
-        "monthly_mortgage_insurance": extracted.get("monthly_mortgage_insurance") or "",
-        "monthly_other_escrow": extracted.get("monthly_other_escrow") or "",
-        "escrow_amount": escrow_total or "",
-        "estimated_total_monthly_payment": estimated_total or "",
         "statement_date": extracted.get("statement_date") or "",
         "origination_date": extracted.get("origination_date") or "",
         "servicer_start_date": extracted.get("mortgage_acquisition_date") or "",
-        "escrow_included": bool(escrow_total or extracted.get("escrow_included")),
         "account_number": extracted.get("account_number") or "",
         "sourceDocumentId": document.id,
         "sourceDocumentType": document.doc_category,
@@ -853,7 +837,7 @@ def _statement_setup_review_payload(document: models.Document) -> Dict[str, Any]
         "loanMapping": _loan_statement_mapping_payload(getattr(document, "property", None), extracted),
         "loanFields": statement_fields,
         "addressValidation": _address_validation(getattr(document, "property", None), extracted),
-        "warnings": ["Loan disclosure values establish opening loan terms. Current balance, YTD principal, interest, and escrow require a 1098 or mortgage statement."] if is_disclosure else [],
+        "warnings": ["Loan disclosure values establish opening loan terms. Current balance, YTD principal, and interest require a 1098 or mortgage statement."] if is_disclosure else [],
     }
 
 
@@ -1171,8 +1155,8 @@ def _apply_escrow_expense_estimates(
     prop: models.Property,
     owner_id: int,
     loan: models.Loan,
+    document: models.Document,
     extracted: Dict[str, Any],
-    selected_fields: set,
     db: Session,
 ) -> Dict[str, Any]:
     year = _statement_year(extracted, loan)
@@ -1183,11 +1167,11 @@ def _apply_escrow_expense_estimates(
         ("propertyTax", "property_tax", "property_tax_source", "monthly_property_tax_escrow"),
         ("insurance", "insurance", "insurance_source", "monthly_insurance_escrow"),
     ]
-    selected_estimate_specs = [
+    available_estimate_specs = [
         spec for spec in estimate_specs
-        if spec[3] in selected_fields and _to_float(extracted.get(spec[3])) > 0
+        if _to_float(extracted.get(spec[3])) > 0
     ]
-    if not selected_estimate_specs:
+    if not available_estimate_specs:
         return {}
 
     row = db.query(models.AnnualExpense).filter(
@@ -1199,7 +1183,7 @@ def _apply_escrow_expense_estimates(
         db.add(row)
 
     result = {"year": year, "warnings": []}
-    for response_key, field, source_field, loan_field in selected_estimate_specs:
+    for response_key, field, source_field, loan_field in available_estimate_specs:
         annual_value = round(_to_float(extracted.get(loan_field)) * 12, 2)
         current_source = annual_expense_source_key(getattr(row, source_field, None))
         current_value = float(getattr(row, field, 0) or 0)
@@ -1207,6 +1191,13 @@ def _apply_escrow_expense_estimates(
         if applied:
             setattr(row, field, annual_value)
             setattr(row, source_field, EXPENSE_SOURCE_ESCROW_ESTIMATE)
+            _set_annual_expense_source_document(
+                row,
+                field,
+                document,
+                annual_value,
+                "mortgage_statement",
+            )
             if row.source_status in (None, "", EXPENSE_SOURCE_MANUAL, "manual", "estimated"):
                 row.source_status = "estimated"
         else:
@@ -1255,6 +1246,7 @@ def _setup_loan_payload(loan: models.Loan) -> Dict[str, Any]:
         "loan_term_years": loan.loan_term_years or 30,
         "origination_date": loan.origination_date,
         "maturity_date": loan.maturity_date,
+        "purpose": loan.purpose,
         "original_ltv": loan.original_ltv or 0,
         "escrow_amount": loan.escrow_amount or 0,
         "escrow_included": bool(loan.escrow_included),
@@ -1650,7 +1642,11 @@ def _set_annual_expense_source_document(
         "docType": (
             "escrow analysis"
             if category == "escrow_analysis"
-            else "tax bill" if field == "property_tax" else "dec page"
+            else "mortgage statement"
+            if category == "mortgage_statement"
+            else "tax bill"
+            if field == "property_tax"
+            else "insurance document"
         ),
         "sourceType": category,
         "amount": amount,
@@ -4181,16 +4177,25 @@ def apply_loan_statement(
         "statement_date",
         "account_number",
         "origination_date",
+        "maturity_date",
         "servicer_start_date",
+        "purpose",
     }
     for target in selected_fields & statement_targets:
         value = field_values.get(target)
         if is_periodic and target in {"current_balance", "statement_date"}:
             continue
-        if target in {"statement_date", "origination_date", "servicer_start_date"}:
+        if target in {"statement_date", "origination_date", "maturity_date", "servicer_start_date"}:
             parsed_date = _parse_date(value)
+            if (
+                doc.doc_category == "mortgage_statement"
+                and target == "servicer_start_date"
+                and parsed_date
+                and parsed_date == _parse_date(extracted.get("statement_date"))
+            ):
+                continue
             setattr(loan, target, parsed_date.isoformat() if parsed_date else value)
-        elif target in {"account_number", "lender_name", "loan_type", "loan_product"}:
+        elif target in {"account_number", "lender_name", "loan_type", "loan_product", "purpose"}:
             setattr(loan, target, value)
         elif target == "loan_term_years":
             setattr(loan, target, _to_int(value, 30))
@@ -4258,8 +4263,8 @@ def apply_loan_statement(
         prop,
         current_user.id,
         loan,
+        doc,
         extracted,
-        selected_fields,
         db,
     )
 
@@ -4607,6 +4612,23 @@ def _delete_document_and_dependents(db: Session, doc: models.Document):
         models.Loan.source_type: None,
         models.Loan.import_status: None,
     }, synchronize_session=False)
+    # Documents are only a *source* of values. The loan (and its saved field
+    # values) must outlive its source documents — a loan is removed only when
+    # the user explicitly deletes it from the Loans tab. So detach every link
+    # that points at this document; leaving them orphaned makes the loan's DTO
+    # crash on a null document and the loan appears to vanish on reload.
+    db.query(models.LoanDocumentLink).filter(
+        models.LoanDocumentLink.document_id == doc.id
+    ).delete(synchronize_session=False)
+    db.query(models.LoanBalanceSnapshot).filter(
+        models.LoanBalanceSnapshot.source_document_id == doc.id
+    ).delete(synchronize_session=False)
+    db.query(models.TransactionDocumentLink).filter(
+        models.TransactionDocumentLink.document_id == doc.id
+    ).delete(synchronize_session=False)
+    db.query(models.LoanServicerSegment).filter(
+        models.LoanServicerSegment.source_document_id == doc.id
+    ).update({models.LoanServicerSegment.source_document_id: None}, synchronize_session=False)
     db.delete(doc)
     db.flush()
     if property_record:

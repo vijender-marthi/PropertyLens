@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle,
   Building2,
@@ -7,6 +7,7 @@ import {
   LayoutGrid,
   List,
   MapPin,
+  Pencil,
   Plus,
   Search,
   Shield,
@@ -16,6 +17,7 @@ import {
 import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
 import DataTable from '../components/DataTable'
+import ConfirmDialog from '../components/ConfirmDialog'
 import MetricCard from '../components/metrics/MetricCard'
 import { propAPI } from '../services/api'
 import { homeTypeLabel } from '../config/propertySetupPresentation'
@@ -236,7 +238,7 @@ function MetricBlock({ label, value, suffix }) {
   )
 }
 
-function PrimaryResidenceSection({ records }) {
+function PrimaryResidenceSection({ records, columns, getRowProps }) {
   if (!records.length) return null
   return (
     <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5 dark:border-amber-900/70 dark:bg-amber-950/10">
@@ -246,25 +248,21 @@ function PrimaryResidenceSection({ records }) {
         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs dark:bg-amber-900/40">{records.length}</span>
       </div>
       <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">Tracked separately from rental portfolio income and expense metrics.</p>
-      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {records.map((record) => (
-          <Link key={record.id} to={`/properties/${record.id}`} className="rounded-lg border border-amber-200 bg-white p-4 shadow-sm dark:border-amber-900/60 dark:bg-gray-800">
-            <h3 className="font-semibold text-gray-900 dark:text-white">{record.name}</h3>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{[record.city, record.state].filter((item) => item && item !== '—' && item !== 'Unassigned').join(', ') || 'Location not set'}</p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <MetricBlock label="Market Value" value={metricFullDisplay(record.marketValueMetric)} />
-              <MetricBlock label="Equity" value={metricFullDisplay(record.equityMetric)} />
-              <MetricBlock label="LTV" value={metricDisplay(record.ltvMetric)} />
-              <MetricBlock label="Housing Cost" value={metricDisplay(record.monthlyHousingCostMetric)} />
-            </div>
-          </Link>
-        ))}
+      <div className="mt-4">
+        <DataTable
+          columns={columns}
+          rows={records}
+          getRowKey={(record) => record.id}
+          getRowProps={getRowProps}
+          emptyMessage="No primary homes available."
+        />
       </div>
     </section>
   )
 }
 
 export default function PropertiesPage() {
+  const navigate = useNavigate()
   const [properties, setProperties] = useState([])
   const [loading, setLoading] = useState(true)
   const [checklistSummary, setChecklistSummary] = useState(null)
@@ -273,6 +271,8 @@ export default function PropertiesPage() {
   const [groupBy, setGroupBy] = useState('state')
   const [healthFilter, setHealthFilter] = useState('All health')
   const [query, setQuery] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const refreshProperties = () => {
     propAPI.list()
@@ -336,31 +336,89 @@ export default function PropertiesPage() {
   const loanBalanceMetric = { label: 'Loan Balance', display: formatMetricCurrency(dashboard.total_loan_balance) }
   const totalPropertiesMetric = { label: 'Total Properties', display: String(properties.length) }
 
-  const handleDeleteProperty = async (property) => {
-    if (!confirm(`Delete ${propertyLabel(property)}? This cannot be undone.`)) return
+  const handleDeleteProperty = (property) => setDeleteTarget(property)
+
+  const confirmDeleteProperty = async () => {
+    if (!deleteTarget?.id) return
+    setDeleting(true)
     try {
-      await propAPI.delete(property.id)
+      await propAPI.delete(deleteTarget.id)
       toast.success('Property deleted')
+      setDeleteTarget(null)
       refreshProperties()
     } catch {
       toast.error('Failed to delete property')
+    } finally {
+      setDeleting(false)
     }
   }
 
-  const tableColumns = [
-    {
-      id: 'property',
-      header: 'Property',
-      render: (record) => (
-        <div>
-          <Link to={`/properties/${record.id}`} className="font-semibold text-gray-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-300">{record.name}</Link>
-          <p className="text-xs text-gray-500 dark:text-gray-400">{record.type}</p>
-        </div>
-      ),
-      sortValue: (record) => record.name,
-      searchValue: (record) => searchText(record),
-      cellClassName: 'min-w-56',
+  const propertyRowProps = (record) => ({
+    role: 'link',
+    tabIndex: 0,
+    'aria-label': `Open ${record.name}`,
+    onClick: () => navigate(`/properties/${record.id}`),
+    onKeyDown: (event) => {
+      if (event.target !== event.currentTarget) return
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        navigate(`/properties/${record.id}`)
+      }
     },
+    className: 'cursor-pointer odd:bg-white even:bg-gray-50/40 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:odd:bg-transparent dark:even:bg-gray-800/20 dark:hover:bg-blue-950/20',
+  })
+
+  const propertyNameColumn = {
+    id: 'property',
+    header: 'Property',
+    render: (record) => (
+      <div>
+        <span className="font-semibold text-gray-900 dark:text-white">{record.name}</span>
+        <p className="text-xs text-gray-500 dark:text-gray-400">{record.type}</p>
+      </div>
+    ),
+    sortValue: (record) => record.name,
+    searchValue: (record) => searchText(record),
+    cellClassName: 'min-w-56',
+  }
+
+  const actionColumn = {
+    id: 'actions',
+    header: 'Actions',
+    sortable: false,
+    align: 'right',
+    render: (record) => (
+      <div className="flex items-center justify-end gap-1">
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            navigate(`/properties/${record.id}/edit`)
+          }}
+          className="rounded-md p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-300"
+          title={`Edit ${record.name}`}
+          aria-label={`Edit ${record.name}`}
+        >
+          <Pencil className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            handleDeleteProperty(record.property)
+          }}
+          className="rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-300"
+          title={`Delete ${record.name}`}
+          aria-label={`Delete ${record.name}`}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+    ),
+  }
+
+  const tableColumns = [
+    propertyNameColumn,
     { id: 'city', header: 'City', accessor: 'city', sortValue: (record) => record.city },
     { id: 'cashFlow', header: 'Cash Flow', align: 'right', render: (record) => metricDisplay(record.cashFlowMetric), sortValue: (record) => record.cashFlowMetric?.value },
     { id: 'equity', header: 'Equity', align: 'right', render: (record) => metricFullDisplay(record.equityMetric), sortValue: (record) => record.equityMetric?.value },
@@ -369,12 +427,28 @@ export default function PropertiesPage() {
     { id: 'noi', header: 'NOI', align: 'right', render: (record) => metricDisplay(record.noiMetric), sortValue: (record) => record.noiMetric?.value },
     { id: 'health', header: 'Health', render: (record) => <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${badgeClasses(healthTone(record))}`}>{record.healthStatus}</span>, sortValue: (record) => record.healthStatus },
     { id: 'recommendation', header: 'Recommendation', accessor: 'recommendation', cellClassName: 'min-w-48' },
+    actionColumn,
+  ]
+
+  const primaryColumns = [
     {
-      id: 'action',
-      header: 'Action',
-      sortable: false,
-      render: (record) => <Link to={`/properties/${record.id}`} className="text-sm font-semibold text-blue-600 dark:text-blue-300">Open</Link>,
+      ...propertyNameColumn,
+      render: (record) => (
+        <div>
+          <span className="font-semibold text-gray-900 dark:text-white">{record.name}</span>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {[record.city, record.state].filter((item) => item && item !== '—' && item !== 'Unassigned').join(', ') || 'Location not set'}
+          </p>
+        </div>
+      ),
     },
+    { id: 'city', header: 'City', accessor: 'city', sortValue: (record) => record.city },
+    { id: 'marketValue', header: 'Market Value', align: 'right', render: (record) => metricFullDisplay(record.marketValueMetric), sortValue: (record) => record.marketValueMetric?.value },
+    { id: 'equity', header: 'Equity', align: 'right', render: (record) => metricFullDisplay(record.equityMetric), sortValue: (record) => record.equityMetric?.value },
+    { id: 'ltv', header: 'LTV', align: 'right', render: (record) => metricDisplay(record.ltvMetric), sortValue: (record) => record.ltvMetric?.value },
+    { id: 'housingCost', header: 'Housing Cost', align: 'right', render: (record) => metricDisplay(record.monthlyHousingCostMetric), sortValue: (record) => record.monthlyHousingCostMetric?.value },
+    { id: 'health', header: 'Health', render: (record) => <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${badgeClasses(healthTone(record))}`}>{record.healthStatus}</span>, sortValue: (record) => record.healthStatus },
+    actionColumn,
   ]
 
   if (loading) {
@@ -482,7 +556,7 @@ export default function PropertiesPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          <PrimaryResidenceSection records={primaryRecords} />
+          <PrimaryResidenceSection records={primaryRecords} columns={primaryColumns} getRowProps={propertyRowProps} />
 
           <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
             <div className="flex flex-col gap-4 border-b border-gray-200 px-5 py-4 dark:border-gray-800 xl:flex-row xl:items-center xl:justify-between">
@@ -539,6 +613,7 @@ export default function PropertiesPage() {
                   columns={tableColumns}
                   rows={filteredRentalRecords}
                   getRowKey={(record) => record.id}
+                  getRowProps={propertyRowProps}
                   emptyMessage="No rental properties match the current filters."
                 />
               </div>
@@ -561,6 +636,15 @@ export default function PropertiesPage() {
           </section>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Delete property?"
+        description={`“${deleteTarget ? propertyLabel(deleteTarget) : 'This property'}” and its related records will be permanently removed. This action cannot be undone.`}
+        confirmLabel="Delete property"
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDeleteProperty}
+      />
     </PropertiesShell>
   )
 }

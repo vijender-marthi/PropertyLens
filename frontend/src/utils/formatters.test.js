@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   formatCurrency,
   formatCurrencyCompact,
+  formatExtractedFieldValue,
   formatInterestRate,
   formatMetricCurrency,
   formatPercent,
@@ -25,5 +26,13 @@ assert.equal(`${formatMetricCurrency(7890, { threshold: 1000 })} / mo`, '$7.9K /
 assert.equal(formatYear(2021), '2021')
 assert.equal(formatPercent(0.4637), '46.37%')
 assert.equal(formatInterestRate(0.0675), '6.750%')
+assert.equal(
+  formatExtractedFieldValue(
+    'down_payment_source',
+    'purchase_price_minus_loan_amount_reconciled_to_cash_to_close',
+    { down_payment: 200000 },
+  ),
+  '$200,000',
+)
 
 console.log('formatter display tests passed')

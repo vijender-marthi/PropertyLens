@@ -725,10 +725,10 @@ def test_statement_setup_review_returns_reported_fields():
     assert review["document"]["id"] == 8
     assert review["statementDraft"]["current_balance_source"] == "mortgage_statement_reported_balance"
     assert review["statementDraft"]["current_balance_source_label"] == "Reported from mortgage statement"
-    assert review["statementDraft"]["escrow_amount"] == 700
-    assert review["statementDraft"]["estimated_total_monthly_payment"] == 2939.21
     assert any(field["targetKey"] == "current_balance" for field in review["loanFields"])
-    assert any(field["targetKey"] == "monthly_property_tax_escrow" for field in review["loanFields"])
+    assert not any("escrow" in field["targetKey"] for field in review["loanFields"])
+    assert not any(field["targetKey"] == "estimated_total_monthly_payment" for field in review["loanFields"])
+    assert "escrow_amount" not in review["statementDraft"]
 
 
 def test_apply_loan_statement_updates_reported_balance_and_clears_initial_warning(client, db, user):
@@ -789,11 +789,6 @@ def test_apply_loan_statement_updates_reported_balance_and_clears_initial_warnin
             "loan_id": loan.id,
             "selected_loan_fields": [
                 "current_balance",
-                "monthly_property_tax_escrow",
-                "monthly_insurance_escrow",
-                "monthly_mortgage_insurance",
-                "monthly_other_escrow",
-                "escrow_amount",
                 "statement_date",
             ],
             "address_override": True,
@@ -830,6 +825,10 @@ def test_apply_loan_statement_updates_reported_balance_and_clears_initial_warnin
     assert annual.property_tax_source == "escrow-estimate"
     assert annual.insurance == 1506
     assert annual.insurance_source == "escrow-estimate"
+    source_details = json.loads(annual.notes)["sources"]
+    assert source_details["property_tax"]["documentId"] == document.id
+    assert source_details["property_tax"]["docType"] == "mortgage statement"
+    assert source_details["insurance"]["documentId"] == document.id
 
 
 def test_apply_latest_statement_updates_matching_current_servicer_escrow(client, db, user):
@@ -1799,11 +1798,7 @@ def test_apply_loan_statement_does_not_overwrite_manual_expenses(client, db, use
         json={
             "property_id": prop.id,
             "loan_id": loan.id,
-            "selected_loan_fields": [
-                "monthly_property_tax_escrow",
-                "monthly_insurance_escrow",
-                "statement_date",
-            ],
+            "selected_loan_fields": ["statement_date"],
             "address_override": True,
         },
         headers=auth_headers(user.email),

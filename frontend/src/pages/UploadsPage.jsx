@@ -10,7 +10,7 @@ import {
 import toast from 'react-hot-toast'
 import { propertyLabel, shortPropertyUid } from '../utils/propertyDisplay'
 import { useAuth } from '../hooks/useAuth'
-import { formatCurrency, formatFileSize, formatInteger, formatNumber, formatPercent } from '../utils/formatters'
+import { formatCurrency, formatExtractedFieldValue, formatFileSize, formatPercent } from '../utils/formatters'
 import DataTable from '../components/DataTable'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { chartColors } from '../utils/chartTokens'
@@ -81,21 +81,10 @@ const CADENCE_BY_CATEGORY = {
 const CADENCE_LABELS = { one_time: 'One-Time', annual: 'Annual', monthly: 'Monthly', other: 'Other' }
 const cadenceOf = (category) => CADENCE_BY_CATEGORY[category] || 'other'
 const CURRENT_YEAR = new Date().getFullYear()
-const YEAR_FIELD_RE = /year$/i
 // Years must never pick up thousands separators ("2,024"); money/count
 // fields should. schedule1_line5_delta reads "n/a" (not "—") when the
 // return's own Schedule 1 total wasn't found — that's a known cross-check
 // gap, not a missing field.
-const formatFieldValue = (key, value, allData) => {
-  if (key === 'schedule1_line5_delta' && (value === null || value === undefined) && allData?.schedule1_line5_total == null) {
-    return 'n/a'
-  }
-  if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'number') {
-    return YEAR_FIELD_RE.test(key) ? formatInteger(value) : formatNumber(value)
-  }
-  return String(value)
-}
 
 function UploadProcessing({ tone = 'blue' }) {
   const color = tone === 'emerald' ? 'text-emerald-600 dark:text-emerald-300' : 'text-blue-600 dark:text-blue-400'
@@ -519,7 +508,7 @@ const previewProperties = previewDoc?.extracted_data?.properties || []
 const previewFieldRows = previewFields.map(([key, value]) => ({
 id: key,
 field: key.replace(/_/g, ' '),
-value: formatFieldValue(key, value, previewDoc.extracted_data),
+value: formatExtractedFieldValue(key, value, previewDoc.extracted_data),
 }))
 const previewPropertyRows = previewProperties.map((property, index) => ({
 ...property,
@@ -732,7 +721,7 @@ Premium
 columns={previewFieldColumns}
 rows={previewFieldRows}
 getRowKey={(row) => row.id}
-className="max-h-80"
+tableWrapperClassName="overflow-auto max-h-80"
 />
 ) : (
 <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
@@ -749,7 +738,7 @@ Per-property Schedule E figures ({previewProperties.length})
 columns={previewPropertyColumns}
 rows={previewPropertyRows}
 getRowKey={(row) => row.previewRowId}
-className="max-h-80"
+tableWrapperClassName="overflow-auto max-h-80"
 />
 </div>
 )}
@@ -1445,7 +1434,7 @@ className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 da
               .map(([k, v]) => (
                 <div key={k} className="flex justify-between text-xs py-0.5">
                   <span className="text-slate-400 dark:text-gray-500 capitalize">{k.replace(/_/g, ' ')}</span>
-                  <span className="font-medium text-slate-700 dark:text-gray-300 ml-2 truncate">{formatFieldValue(k, v, data)}</span>
+                  <span className="font-medium text-slate-700 dark:text-gray-300 ml-2 truncate">{formatExtractedFieldValue(k, v, data)}</span>
                 </div>
               ))}
           </div>

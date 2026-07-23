@@ -2,6 +2,16 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { authAPI } from '../services/api'
 
 const AuthContext = createContext(null)
+const SESSION_RETRY_DELAYS_MS = [300, 700, 1200]
+
+function clearStoredSession() {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user')
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -16,21 +26,34 @@ export function AuthProvider({ children }) {
       setAuthReady(true)
       return () => { active = false }
     }
-    authAPI.me()
-      .then(({ data }) => {
-        if (!active) return
-        localStorage.setItem('user', JSON.stringify(data))
-        setUser(data)
-      })
-      .catch(() => {
-        if (!active) return
-        localStorage.removeItem('token')
-        localStorage.removeItem('user')
-        setUser(null)
-      })
-      .finally(() => {
-        if (active) setAuthReady(true)
-      })
+    const verifySession = async () => {
+      for (let attempt = 0; attempt <= SESSION_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+          const { data } = await authAPI.me()
+          if (!active) return
+          localStorage.setItem('user', JSON.stringify(data))
+          setUser(data)
+          return
+        } catch (error) {
+          if (!active) return
+
+          // Only a confirmed unauthorized response invalidates the session.
+          // Network failures and backend startup errors retain the cached user.
+          if (error.response?.status === 401) {
+            clearStoredSession()
+            setUser(null)
+            return
+          }
+
+          if (attempt === SESSION_RETRY_DELAYS_MS.length) return
+          await wait(SESSION_RETRY_DELAYS_MS[attempt])
+        }
+      }
+    }
+
+    verifySession().finally(() => {
+      if (active) setAuthReady(true)
+    })
     return () => { active = false }
   }, [])
 
@@ -51,8 +74,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const logout = useCallback(() => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
+    clearStoredSession()
     setUser(null)
   }, [])
 
