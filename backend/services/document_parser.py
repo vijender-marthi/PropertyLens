@@ -1575,6 +1575,108 @@ def _parse_schedule_a_primary(text: str) -> Optional[dict]:
     }
 
 
+_TR_MONEY_TOKEN = re.compile(r'-?\(?\$?\d{1,3}(?:,\d{3})+(?:\.\d*)?\)?|-?\(?\$?\d+\.\d{1,2}\)?|-?\(?\$?\d+\.\)?')
+
+
+def _tr_money_values(line: str) -> list:
+    """All money-looking tokens on a line (comma-grouped or with a decimal/
+    trailing period), so integers like line numbers or day counts are ignored."""
+    out = []
+    for tok in _TR_MONEY_TOKEN.findall(line):
+        v = _tr_value(tok)
+        if v is not None:
+            out.append(v)
+    return out
+
+
+# Text-layer fallback: the column-geometry parser only reads the official blank
+# IRS form. Tax-software / CPA / e-file PDFs flatten the A/B/C columns into text,
+# so when the geometry parser finds nothing we recover values from the text of
+# each labelled Schedule E line, snapping the Nth value on each line to column N.
+def _parse_schedule_e_text_fallback(full_text: str) -> list:
+    lines = [ln.strip() for ln in full_text.splitlines() if ln.strip()]
+
+    addr = {}
+    capture = False
+    for ln in lines:
+        if 'Physical address of each property' in ln:
+            capture = True
+            continue
+        if capture:
+            if re.match(r'^1\s*b\b|Type of Property', ln):
+                break
+            m = re.match(r'^([ABC])\b\s+(.*)$', ln)
+            if m and m.group(2).strip():
+                addr[m.group(1)] = re.sub(r'^K\s+', '', m.group(2)).strip()
+
+    targets = {
+        'rents': r'Rents?\s+received',
+        'advertising': r'\b5\b.*Advertising',
+        'auto_travel': r'\b6\b.*Auto\s+and\s+travel',
+        'cleaning_maintenance': r'\b7\b.*Cleaning\s+and\s+maintenance',
+        'commissions': r'\b8\b.*Commissions',
+        'insurance': r'\b9\b.*Insurance',
+        'legal_professional': r'\b10\b.*Legal\s+and\s+other\s+professional',
+        'management_fees': r'\b11\b.*Management\s+fees',
+        'mortgage_interest': r'Mortgage\s+interest\s+paid\s+to\s+banks',
+        'other_interest': r'\b13\b.*Other\s+interest',
+        'repairs': r'\b14\b.*Repairs',
+        'supplies': r'\b15\b.*Supplies',
+        'property_taxes': r'\b16\b.*Taxes',
+        'utilities': r'\b17\b.*Utilities',
+        'depreciation': r'Depreciation\s+expense',
+        'other_expenses': r'\b19\b.*Other',
+        'total_expenses': r'Total\s+expenses',
+    }
+    found = {}
+    for key, pat in targets.items():
+        for ln in lines:
+            if re.search(pat, ln, re.IGNORECASE):
+                vals = _tr_money_values(ln)
+                if vals:
+                    found[key] = vals
+                    break
+
+    ncols = max([len(v) for v in found.values()] + [len(addr)] + [0])
+    if ncols == 0 or not found:
+        return []
+    cols = ['A', 'B', 'C'][:max(ncols, 1)]
+
+    def col_val(key, i):
+        vals = found.get(key, [])
+        return (vals[i] if i < len(vals) else 0.0) or 0.0
+
+    props = []
+    for i, col in enumerate(cols):
+        rents = col_val('rents', i)
+        total_exp = col_val('total_expenses', i)
+        # Skip a phantom column with no signal at all.
+        if rents == 0.0 and total_exp == 0.0 and col not in addr:
+            continue
+        breakdown = {k: col_val(k, i) for k in (
+            'advertising', 'auto_travel', 'cleaning_maintenance', 'commissions', 'insurance',
+            'legal_professional', 'management_fees', 'mortgage_interest', 'other_interest',
+            'repairs', 'supplies', 'utilities', 'depreciation', 'other_expenses')}
+        breakdown['taxes'] = col_val('property_taxes', i)
+        if not total_exp:
+            total_exp = round(sum(breakdown.values()), 2)
+        props.append({
+            'address': addr.get(col, f'Schedule E property {col}'),
+            'property_kind': 'rental',
+            'rents_received': rents,
+            'mortgage_interest': col_val('mortgage_interest', i),
+            'property_taxes': col_val('property_taxes', i),
+            'depreciation': col_val('depreciation', i),
+            'total_expenses': total_exp,
+            'net_income': round(rents - total_exp, 2),
+            'days_rented': 0,
+            'personal_use_days': 0,
+            'expense_breakdown': breakdown,
+            'source_refs': {'parser': 'schedule_e_text_fallback'},
+        })
+    return props
+
+
 def parse_tax_return_properties(filepath: str) -> Dict[str, Any]:
     """Full per-property extraction from a 1040 tax return: every Schedule E
     rental plus the Schedule A primary residence. SSNs and taxpayer names are
@@ -1608,6 +1710,11 @@ def parse_tax_return_properties(filepath: str) -> Dict[str, Any]:
             txt = page.extract_text() or ''
             if 'Physical address of each property' in txt and 'Rents received' in txt:
                 properties.extend(_parse_schedule_e_page(page))
+
+    # Column-geometry parsing only reads the official blank form; fall back to a
+    # text-layer scan for tax-software / CPA / e-file PDFs that flatten columns.
+    if not any(p.get('property_kind') == 'rental' for p in properties):
+        properties.extend(_parse_schedule_e_text_fallback(full_text))
 
     primary = _parse_schedule_a_primary(full_text)
     if primary:

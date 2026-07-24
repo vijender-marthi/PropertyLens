@@ -2188,14 +2188,15 @@ async def preview_upload_document(
     save_path, pending_upload_id, _suffix, file_size = await _save_pending_upload(file, current_user)
     extracted = {}
     markdown = ""
+    tax_return_hint = (category == "tax_return")
     try:
         category, extracted, markdown = parse_document(str(save_path), category)
     except Exception as e:
-        category = "other" if category == "auto" else category
-        extracted = {"parse_error": str(e)}
-        if category == "tax_return":
-            _discard_uploaded_source(save_path)
-            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
+        # Don't hard-fail the upload when auto-extraction stumbles on an unusual
+        # PDF layout (tax software, scans, e-file exports). Keep the document and
+        # surface a soft warning so the user can accept it and enter values.
+        category = "tax_return" if tax_return_hint else ("other" if category == "auto" else category)
+        extracted = {"parse_error": str(e), "parse_warning": "Could not auto-read this file's layout. You can still save it and enter the values, or try a text-based PDF export."}
     extracted = _normalize_loan_document_extracted(category, extracted)
 
     prop = None
