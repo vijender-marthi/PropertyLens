@@ -33,7 +33,7 @@ import { propAPI } from '../services/api'
 import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
 import { formatChartCurrency, formatCurrency, formatCurrencyCompact, formatFixed, formatPercent } from '../utils/formatters'
 
-const TAX_TABS = ['Overview', 'Deductions', 'Depreciation', 'Property Taxes', 'Documents', 'Estimated Taxes', 'Tax Reports', 'History']
+const TAX_TABS = ['Overview', 'Schedule E', 'Deductions', 'Depreciation', 'Property Taxes', 'Documents', 'Estimated Taxes', 'Tax Reports', 'History']
 
 const CATEGORY_COLORS = {
   depreciation: chartColors.purple,
@@ -206,6 +206,122 @@ function StatusList({ count }) {
   )
 }
 
+function ScheduleELines({ lines }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-neutral-500">
+            <th className="px-3 py-2">Line</th>
+            <th className="px-3 py-2 text-right">Filed (return)</th>
+            <th className="px-3 py-2 text-right">PropertyLens</th>
+            <th className="px-3 py-2 text-right">Variance</th>
+          </tr>
+        </thead>
+        <tbody className="tabular-nums">
+          {lines.map((line) => (
+            <tr key={line.key} className="border-t border-gray-100 dark:border-neutral-800">
+              <td className="px-3 py-2 text-gray-600 dark:text-neutral-300"><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</td>
+              <td className="px-3 py-2 text-right">{line.filed?.display ?? '—'}</td>
+              <td className="px-3 py-2 text-right">{line.computed?.display ?? '—'}</td>
+              <td className={`px-3 py-2 text-right ${!line.filed ? 'text-gray-400 dark:text-neutral-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ScheduleEReconciliation({ properties, year }) {
+  const [byProp, setByProp] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(null)
+  const rentals = (properties || []).filter((p) => String(p.usage_type || 'Rental').toLowerCase() !== 'primary')
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    Promise.all(rentals.map((p) => propAPI.scheduleE(p.id, year).then((r) => [p.id, r.data]).catch(() => [p.id, null])))
+      .then((entries) => { if (!cancelled) setByProp(Object.fromEntries(entries)) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [properties, year])
+
+  const exportCsv = () => {
+    const rows = [['Property', 'Line', 'Item', 'Filed', 'PropertyLens', 'Variance']]
+    rentals.forEach((p) => {
+      (byProp[p.id]?.lines || []).forEach((line) => {
+        rows.push([p.name, line.lineNumber, line.lineItem, line.filed?.value ?? '', line.computed?.value ?? '', line.delta?.value ?? ''])
+      })
+    })
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const anchor = document.createElement('a')
+    anchor.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    anchor.download = `PropertyLens_Schedule_E_${year}.csv`
+    anchor.click()
+    URL.revokeObjectURL(anchor.href)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Schedule E — filed vs. PropertyLens · {year}</h3>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">Upload a filed return to reconcile past years; export the current year to hand to your preparer.</p>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={exportCsv} className="btn-secondary inline-flex items-center gap-2 text-xs px-2.5 py-1.5"><Download className="h-3.5 w-3.5" />Export CSV</button>
+          <Link to="/uploads" className="btn-secondary inline-flex items-center gap-2 text-xs px-2.5 py-1.5"><Upload className="h-3.5 w-3.5" />Upload filed return</Link>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="card py-8 text-center text-sm text-gray-500 dark:text-neutral-400">Loading Schedule E…</div>
+      ) : rentals.length === 0 ? (
+        <EmptyState text="No rental properties for Schedule E in this scope." />
+      ) : (
+        rentals.map((p) => {
+          const data = byProp[p.id]
+          const net = data?.topStrip?.netScheduleE
+          const summary = data?.summary
+          const filedNet = (data?.lines || []).find((l) => l.key === 'net_income')?.filed
+          const ties = summary?.netDelta?.value === 0
+          const open = expanded === p.id
+          return (
+            <div key={p.id} className="card overflow-hidden p-0">
+              <button type="button" onClick={() => setExpanded(open ? null : p.id)} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">{p.name}</div>
+                  <div className="truncate text-xs text-gray-500 dark:text-neutral-400">{summary?.filedSource || 'No filed Schedule E'}{summary?.linesFiled ? ` · ${summary.linesFiled} filed lines` : ''}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  <div className="text-right">
+                    <div className="text-[11px] text-gray-400 dark:text-neutral-500">Net Sch E</div>
+                    <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{net?.display ?? '—'}</div>
+                  </div>
+                  {filedNet ? (
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${ties ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'}`}>
+                      {ties ? 'Ties filed' : `Δ ${summary?.netDelta?.display}`}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-neutral-800 dark:text-neutral-400">Not filed</span>
+                  )}
+                  <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                </div>
+              </button>
+              {open ? <div className="border-t border-gray-100 px-4 py-3 dark:border-neutral-800"><ScheduleELines lines={data?.lines || []} /></div> : null}
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
 export default function TaxCenterPage() {
   const [loading, setLoading] = useState(true)
   const [analysis, setAnalysis] = useState(null)
@@ -360,6 +476,7 @@ export default function TaxCenterPage() {
               </div>
             </div> : null}
 
+            {activeTab === 'Schedule E' ? <ScheduleEReconciliation properties={properties} year={selectedYear} /> : null}
             {activeTab === 'Documents' ? <Panel title="Tax Documents" subtitle="Canonical property documents remain the source of tax values."><Link to="/uploads" className="btn-secondary inline-flex items-center gap-2"><Upload className="h-4 w-4" />Open Documents</Link></Panel> : null}
             {activeTab === 'Estimated Taxes' ? <Panel title="Estimate Status" subtitle="Planning values use the backend tax-rate assumption."><p className="text-sm text-gray-600 dark:text-neutral-300">Estimated liability: <strong>{money(model.totals.estimatedLiability)}</strong> at {formatFixed(model.assumptions?.effectiveTaxRate || 0, 2)}%.</p></Panel> : null}
           </main>
