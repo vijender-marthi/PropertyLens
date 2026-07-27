@@ -764,17 +764,18 @@ function ResultsPanel({ report, loading }) {
         <div className="card">
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Payment rollover</h2>
-            <div className="flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
               <span className="flex items-center gap-1.5"><Coin own order={2} /> its own payment</span>
-              <span className="flex items-center gap-1.5"><Coin order={1} /> freed from a cleared home (its colour)</span>
+              <span className="flex items-center gap-1.5"><Coin order={1} /> freed from a cleared home</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-4 rounded-sm" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #d97706, #d97706 3px, #fbbf24 3px, #fbbf24 6px)' }} /> monthly top-up</span>
             </div>
           </div>
           <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
-            When a loan clears, its monthly payment becomes a coin that rolls onto the next. Each amount is shown <span className="font-medium">net of that home&apos;s operating expenses</span> (property tax, insurance, HOA, management, solar) — the leftover that actually rolls forward, split by source home.
+            When a loan clears, its monthly payment rolls onto the next. Each bar is a <span className="font-medium">complete month of firepower</span> split by source: each home&apos;s payment (net of its operating expenses — tax, insurance, HOA, management, solar) plus your striped <span className="font-medium text-amber-600 dark:text-amber-400">monthly top-up</span>. On the left, <span className="font-medium text-emerald-600 dark:text-emerald-400">when the loan clears</span> and <span className="font-medium text-blue-600 dark:text-blue-400">when its rollover starts</span>.
           </p>
           <ol className="space-y-3.5">
             {report.rollover.map((step) => (
-              <RolloverStep key={`${step.order}-${step.name}`} step={step} maxMonthly={report.rolloverMaxMonthlyNet || 1} />
+              <RolloverStep key={`${step.order}-${step.name}`} step={step} />
             ))}
           </ol>
         </div>
@@ -810,9 +811,12 @@ function coinTitle(c) {
   return `${who}: ${c.display}/mo`
 }
 
-function RolloverStep({ step, maxMonthly }) {
+function RolloverStep({ step }) {
   const never = step.neverPaysOff
-  const monthly = Number(step.rollingPaymentNet) || 0
+  const coinsNet = Number(step.rollingPaymentNet) || 0
+  const topUp = Number(step.topUp) || 0
+  const barTotal = coinsNet + topUp
+  const pct = (amt) => (barTotal > 0 ? (amt / barTotal) * 100 : 0)
   const coins = step.coins || []
   return (
     <li className="flex items-start gap-3">
@@ -827,33 +831,43 @@ function RolloverStep({ step, maxMonthly }) {
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-gray-900 dark:text-white">{step.name}</div>
-            <div className="truncate text-[11px] text-gray-500 dark:text-gray-400">{never ? 'Never clears' : `clears ${step.payoffDate}`}</div>
-          </div>
-          {monthly > 0 ? (
-            /* A capped fraction of the row (not a fixed size), so the bar stays
-               narrow and every row lines up on the same right edge whatever the
-               panel width. */
-            <div className="flex w-2/5 max-w-[15rem] shrink-0 items-center gap-2">
-              <div
-                className="relative h-8 min-w-0 flex-1 overflow-hidden rounded-md bg-gray-100 ring-1 ring-inset ring-gray-200 dark:bg-gray-800 dark:ring-gray-700"
-                title={`${step.name}: ${step.rollingPaymentNetDisplay}/mo attacking this loan (net of operating expenses)`}
-              >
-                <div className="absolute inset-y-0 left-0 flex" style={{ width: `${Math.max((monthly / maxMonthly) * 100, 2)}%` }}>
-                  {coins.map((c, i) => {
-                    const hex = homeAccent(c.order, c.own && never).hex
-                    const segPct = monthly > 0 ? (Number(c.amount) || 0) / monthly * 100 : 0
-                    return (
-                      <div
-                        key={`${c.name}-${i}`}
-                        className="h-full border-r border-white/70 last:border-r-0 dark:border-gray-900/50"
-                        style={{ width: `${segPct}%`, backgroundColor: c.own ? hex : `${hex}B3` }}
-                        title={coinTitle(c)}
-                      />
-                    )
-                  })}
-                </div>
+            {never ? (
+              <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">Never clears</div>
+            ) : (
+              <div className="flex flex-wrap gap-x-2 gap-y-0 text-[11px] leading-tight">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400">Loan clears {step.payoffDate}</span>
+                {step.rolloverStartDate ? <span className="font-semibold text-blue-600 dark:text-blue-400">Rollover starts {step.rolloverStartDate}</span> : null}
               </div>
-              <span className="w-[4.5rem] shrink-0 text-right text-[10px] font-medium tabular-nums text-gray-400 dark:text-gray-500">{step.rollingPaymentNetDisplay}/mo</span>
+            )}
+          </div>
+          {barTotal > 0 ? (
+            <div className="flex w-2/5 max-w-[15rem] shrink-0 items-center gap-2">
+              {/* Complete (full-width) bar: each home's net payment fills its share,
+                  plus a distinct striped segment for the monthly top-up. */}
+              <div
+                className="relative flex h-8 min-w-0 flex-1 overflow-hidden rounded-md ring-1 ring-inset ring-gray-200 dark:ring-gray-700"
+                title={`${step.name}: ${usd(barTotal)}/mo total attacking this loan`}
+              >
+                {coins.map((c, i) => {
+                  const hex = homeAccent(c.order, c.own && never).hex
+                  return (
+                    <div
+                      key={`${c.name}-${i}`}
+                      className="h-full border-r border-white/70 dark:border-gray-900/50"
+                      style={{ width: `${pct(Number(c.amount) || 0)}%`, backgroundColor: c.own ? hex : `${hex}B3` }}
+                      title={coinTitle(c)}
+                    />
+                  )
+                })}
+                {topUp > 0 ? (
+                  <div
+                    className="h-full"
+                    style={{ width: `${pct(topUp)}%`, backgroundImage: 'repeating-linear-gradient(45deg, #d97706, #d97706 4px, #fbbf24 4px, #fbbf24 8px)' }}
+                    title={`Monthly top-up (your extra contribution): ${step.topUpDisplay}/mo`}
+                  />
+                ) : null}
+              </div>
+              <span className="w-[4.5rem] shrink-0 text-right text-[10px] font-medium tabular-nums text-gray-400 dark:text-gray-500">{usd(barTotal)}/mo</span>
             </div>
           ) : null}
         </div>
@@ -863,8 +877,15 @@ function RolloverStep({ step, maxMonthly }) {
           {step.coins.map((coin, idx) => (
             <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
           ))}
+          {topUp > 0 ? (
+            <span title={`Monthly top-up: ${step.topUpDisplay}/mo`}
+              className="inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-bold text-amber-900"
+              style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fcd34d, #fcd34d 3px, #fde68a 3px, #fde68a 6px)' }}>
+              +{step.topUpDisplay}
+            </span>
+          ) : null}
           <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">=</span>
-          <span className="text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{step.rollingPaymentNetDisplay}/mo</span>
+          <span className="text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{usd(barTotal)}/mo</span>
           {step.freedCount > 0 ? (
             <span className="text-[11px] text-gray-400 dark:text-gray-500">
               ({step.freedPaymentNetDisplay}/mo rolled in from {step.freedCount} cleared)

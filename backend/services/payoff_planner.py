@@ -663,10 +663,24 @@ def build_report(
         # order), then this home's own payment last.
         groups.sort(key=lambda g: (g["own"], g["order"]))
 
+        # Monthly external top-up (extra contribution) active while this target is
+        # being attacked — shown as its own bar segment, distinct from the homes'
+        # freed payments. Zero once the top-up's target years have elapsed.
+        top_up = (
+            float(extra_monthly)
+            if extra_monthly and (extra_monthly_years <= 0 or (pm or cap) <= extra_monthly_years * 12)
+            else 0.0
+        )
+        # The month the freed payment starts rolling onto the next home.
+        rollover_start = None if never else _format_month_year(_add_months(start_date, pm + 1))
+
         rollover.append({
             "order": k,
             "name": l["name"],
             "payoffDate": None if never else _format_month_year(_add_months(start_date, pm)),
+            "rolloverStartDate": rollover_start,
+            "topUp": round(top_up, 2),
+            "topUpDisplay": format_currency(top_up),
             "neverPaysOff": never,
             "coinCount": len(coins),
             "freedCount": len(freed_coins),
