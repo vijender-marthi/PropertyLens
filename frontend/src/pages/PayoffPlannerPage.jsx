@@ -877,22 +877,24 @@ function RolloverStep({ step }) {
           {step.coins.map((coin, idx) => (
             <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
           ))}
+          {step.freedCount > 0 ? (
+            <span title={`Rolled in from ${step.freedCount} cleared home${step.freedCount > 1 ? 's' : ''}`}
+              className="inline-flex h-5 items-center rounded-full bg-blue-50 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+              +{step.freedPaymentNetDisplay} rollover
+            </span>
+          ) : null}
           {topUp > 0 ? (
             <span title={`Monthly top-up: ${step.topUpDisplay}/mo`}
               className="inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-bold text-amber-900"
               style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fcd34d, #fcd34d 3px, #fde68a 3px, #fde68a 6px)' }}>
-              +{step.topUpDisplay}
+              +{step.topUpDisplay} top-up
             </span>
           ) : null}
           <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">=</span>
           <span className="text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{usd(barTotal)}/mo</span>
-          {step.freedCount > 0 ? (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">
-              ({step.freedPaymentNetDisplay}/mo rolled in from {step.freedCount} cleared)
-            </span>
-          ) : (
+          {step.freedCount === 0 ? (
             <span className="text-[11px] text-gray-400 dark:text-gray-500">(first target)</span>
-          )}
+          ) : null}
         </div>
       </div>
     </li>
