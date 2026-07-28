@@ -2276,14 +2276,14 @@ async def accept_upload_document(
 
     extracted = {}
     markdown = ""
+    _tax_hint = (req.category == "tax_return")
     try:
         category, extracted, markdown = parse_document(str(save_path), req.category)
     except Exception as e:
-        category = "other" if req.category == "auto" else req.category
-        extracted = {"parse_error": str(e)}
-        if category == "tax_return":
-            _discard_uploaded_source(save_path)
-            raise HTTPException(status_code=422, detail=f"Tax return parse failed: {e}")
+        # Keep the document even if auto-extraction stumbles on an unusual layout
+        # (per-property Schedule E rows are still imported by _commit_parsed_document).
+        category = "tax_return" if _tax_hint else ("other" if req.category == "auto" else req.category)
+        extracted = {"parse_error": str(e), "parse_warning": "Could not auto-read this file's layout; saved it anyway."}
     extracted = _apply_loan_document_overrides(category, extracted, req.field_overrides)
 
     try:
