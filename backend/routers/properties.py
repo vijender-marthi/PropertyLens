@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from datetime import date, datetime, timedelta
@@ -9267,6 +9267,57 @@ def get_schedule_e_capture(
         },
         "warnings": warnings,
     }
+
+
+@router.get("/analysis/schedule-e-unmatched")
+def list_unmatched_schedule_e(
+    year: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Filed Schedule E rows that were parsed from a return but never linked to a
+    property (address didn't match). The user can assign each to a property."""
+    q = db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.owner_id == current_user.id,
+        models.TaxReturnEntry.property_id.is_(None),
+        models.TaxReturnEntry.property_kind == "rental",
+    )
+    if year:
+        q = q.filter(models.TaxReturnEntry.tax_year == int(year))
+    entries = q.order_by(models.TaxReturnEntry.tax_year.desc()).all()
+    return {
+        "entries": [
+            {
+                "id": e.id,
+                "taxYear": e.tax_year,
+                "address": e.address or "Unnamed Schedule E property",
+                "rentsReceived": _schedule_e_money(e.rents_received or 0),
+                "netIncome": _schedule_e_money(e.net_income or 0),
+            }
+            for e in entries
+        ],
+    }
+
+
+@router.post("/analysis/schedule-e-assign")
+def assign_schedule_e_entry(
+    entry_id: int = Body(..., embed=True),
+    property_id: int = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Link a parsed-but-unmatched filed Schedule E row to one of the user's
+    properties so it shows up in that property's reconciliation."""
+    entry = db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.id == int(entry_id),
+        models.TaxReturnEntry.owner_id == current_user.id,
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Filed Schedule E entry not found")
+    _get_accessible_property(int(property_id), db, current_user)  # enforce ownership/access
+    entry.property_id = int(property_id)
+    db.commit()
+    return {"ok": True, "id": entry.id, "propertyId": int(property_id), "taxYear": entry.tax_year}
 
 
 @router.get("/{prop_id}/rawdata")

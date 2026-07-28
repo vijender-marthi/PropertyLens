@@ -239,8 +239,10 @@ function ScheduleELines({ lines }) {
 function ScheduleEReconciliation({ properties, year }) {
   const [selYear, setSelYear] = useState(year)
   const [byProp, setByProp] = useState({})
+  const [unmatched, setUnmatched] = useState([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const probedRef = useRef(false)
   const rentals = useMemo(() => (properties || []).filter((p) => String(p.usage_type || 'Rental').toLowerCase() !== 'primary'), [properties])
   const nowYear = new Date().getFullYear()
@@ -253,7 +255,20 @@ function ScheduleEReconciliation({ properties, year }) {
       .then((entries) => { if (!cancelled) setByProp(Object.fromEntries(entries)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [rentals, selYear])
+  }, [rentals, selYear, reloadKey])
+
+  useEffect(() => {
+    let cancelled = false
+    propAPI.scheduleEUnmatched(selYear).then((r) => { if (!cancelled) setUnmatched(r.data?.entries || []) }).catch(() => { if (!cancelled) setUnmatched([]) })
+    return () => { cancelled = true }
+  }, [selYear, reloadKey])
+
+  const assign = (entryId, propertyId) => {
+    if (!propertyId) return
+    propAPI.scheduleEAssign(entryId, Number(propertyId))
+      .then(() => setReloadKey((k) => k + 1))
+      .catch(() => toast.error('Could not assign the filed return.'))
+  }
 
   const anyFiled = rentals.some((p) => (byProp[p.id]?.summary?.linesFiled || 0) > 0)
 
@@ -307,10 +322,34 @@ function ScheduleEReconciliation({ properties, year }) {
         </div>
       </div>
 
-      {!loading && rentals.length > 0 && !anyFiled ? (
+      {!loading && rentals.length > 0 && !anyFiled && unmatched.length === 0 ? (
         <div className="card-sm flex items-start gap-2 border border-amber-200 bg-amber-50 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>No filed return found for {selYear}. If you uploaded one, pick the tax year it actually covers (returns are usually a year or two back), or re-upload it under <Link to="/uploads" className="underline">Documents</Link>.</span>
+        </div>
+      ) : null}
+
+      {unmatched.length > 0 ? (
+        <div className="card border border-amber-200 dark:border-amber-900/60">
+          <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />Filed rows not yet linked to a property
+          </h4>
+          <p className="mb-3 mt-0.5 text-xs text-gray-500 dark:text-neutral-400">These Schedule E rows were read from your return but their address didn&apos;t match a property. Assign each one so it shows in that property&apos;s reconciliation.</p>
+          <div className="space-y-2">
+            {unmatched.map((u) => (
+              <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2 dark:border-neutral-800">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-gray-800 dark:text-neutral-100">{u.address}</div>
+                  <div className="text-xs text-gray-500 dark:text-neutral-400">{u.taxYear} · rents {u.rentsReceived.display} · net {u.netIncome.display}</div>
+                </div>
+                <select defaultValue="" onChange={(e) => assign(u.id, e.target.value)} aria-label={`Assign ${u.address} to a property`}
+                  className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                  <option value="" disabled>Assign to property…</option>
+                  {rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
 
