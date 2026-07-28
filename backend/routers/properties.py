@@ -11670,6 +11670,183 @@ def payoff_planner(
     return report
 
 
+# ── Exit planner ──────────────────────────────────────────────────────────────
+RECAPTURE_RATE = 0.25  # IRS §1250 unrecaptured-gain rate on depreciation
+
+
+def _future_loan_balance(prop, months: int, today: date) -> float:
+    """Total balance of all active loans amortized forward `months`, using each
+    loan's rate and current P&I (closed-form)."""
+    total = 0.0
+    for loan in (prop.loans or []):
+        if _is_closed_loan_status(getattr(loan, "status", None)):
+            continue
+        bal = current_loan_balance(loan, today)
+        if bal <= 0:
+            continue
+        r = float(loan.interest_rate or 0) / 100.0 / 12.0
+        pmt = _loan_monthly_pi(loan)
+        if r <= 0:
+            fb = bal - pmt * months
+        else:
+            growth = (1 + r) ** months
+            fb = bal * growth - pmt * (growth - 1) / r
+        total += max(fb, 0.0)
+    return round(total, 2)
+
+
+def _exit_projection(prop, *, appreciation, marginal_tax, cap_gains, selling_costs_pct, hold_years, today):
+    """Year-by-year exit projection for one property + the sale/profit summary."""
+    metrics = compute_property_metrics(prop)
+    current_value = float(prop.market_value or 0.0)
+    purchase_price = float(prop.purchase_price or 0.0)
+    annual_dep = float(metrics.get("annual_depreciation", 0.0) or 0.0)
+    dep_years = float(prop.depreciation_years or 27.5)
+    annual_cf = float(metrics.get("annual_cash_flow", 0.0) or 0.0)
+    annual_opex = float(metrics.get("monthly_expenses", 0.0) or 0.0) * 12.0
+    original_invested = float(prop.down_payment or 0.0) + float(prop.closing_costs or 0.0)
+
+    start = _parse_iso_date(getattr(prop, "rental_start_date", None)) or _parse_iso_date(getattr(prop, "purchase_date", None))
+    years_elapsed = max(0.0, (today - start).days / 365.25) if start else 0.0
+    dep_used_so_far = min(years_elapsed, dep_years)
+    accumulated_so_far = annual_dep * dep_used_so_far
+
+    g = float(appreciation) / 100.0
+    marg = float(marginal_tax) / 100.0
+    rows = []
+    cum_dep_savings = 0.0
+    cum_cash_flow = 0.0
+    for y in range(0, int(hold_years) + 1):
+        value = current_value * ((1 + g) ** y)
+        loan = _future_loan_balance(prop, y * 12, today)
+        dep_active = annual_dep if (dep_used_so_far + y) < dep_years else 0.0
+        if y > 0:
+            cum_dep_savings += dep_active * marg
+            cum_cash_flow += annual_cf
+        rows.append({
+            "year": today.year + y,
+            "offset": y,
+            "value": round(value, 2), "valueDisplay": format_currency(value),
+            "loanBalance": round(loan, 2), "loanBalanceDisplay": format_currency(loan),
+            "equity": round(value - loan, 2), "equityDisplay": format_currency(value - loan),
+            "depreciationTaxSavings": round(cum_dep_savings, 2), "depreciationTaxSavingsDisplay": format_currency(cum_dep_savings),
+            "cashFlow": round(cum_cash_flow, 2), "cashFlowDisplay": format_currency(cum_cash_flow),
+        })
+
+    hy = int(hold_years)
+    exit_row = rows[hy]
+    sale_price = exit_row["value"]
+    selling_costs = sale_price * float(selling_costs_pct) / 100.0
+    loan_payoff = exit_row["loanBalance"]
+    future_dep_years = min(max(dep_years - dep_used_so_far, 0.0), hy)
+    accumulated_at_exit = accumulated_so_far + annual_dep * future_dep_years
+    adjusted_basis = purchase_price - accumulated_at_exit
+    total_gain = (sale_price - selling_costs) - adjusted_basis
+    recapture_amount = max(min(accumulated_at_exit, total_gain), 0.0)
+    capital_gain = max(total_gain - recapture_amount, 0.0)
+    recapture_tax = recapture_amount * RECAPTURE_RATE
+    cap_gains_tax = capital_gain * float(cap_gains) / 100.0
+    net_proceeds = sale_price - selling_costs - loan_payoff - recapture_tax - cap_gains_tax
+    total_cash_flow = annual_cf * hy
+    total_dep_savings = cum_dep_savings
+    final_profit = net_proceeds + total_cash_flow + total_dep_savings - original_invested
+
+    def m(v):
+        return {"value": round(v, 2), "display": format_currency(v)}
+
+    return {
+        "id": prop.id,
+        "name": prop.name or _default_property_name(prop.address, prop.id),
+        "isPrimary": str(prop.usage_type or "Rental").lower() == "primary",
+        "rows": rows,
+        "purchasePrice": m(purchase_price),
+        "originalInvested": m(original_invested),
+        "totalExpenses": m(annual_opex * hy),
+        "exit": {
+            "year": today.year + hy,
+            "salePrice": m(sale_price),
+            "sellingCosts": m(selling_costs),
+            "loanPayoff": m(loan_payoff),
+            "accumulatedDepreciation": m(accumulated_at_exit),
+            "recaptureTax": m(recapture_tax),
+            "capitalGain": m(capital_gain),
+            "capitalGainsTax": m(cap_gains_tax),
+            "netProceeds": m(net_proceeds),
+            "cumulativeCashFlow": m(total_cash_flow),
+            "depreciationTaxSavings": m(total_dep_savings),
+            "finalProfit": m(final_profit),
+        },
+    }
+
+
+@router.get("/analysis/exit-planner")
+def exit_planner(
+    appreciation: float = 4.0,
+    marginal_tax: float = 24.0,
+    capital_gains: float = 15.0,
+    selling_costs: float = 6.0,
+    hold_years: int = 10,
+    include_primary_residence: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Per-property exit projection (value, equity, depreciation tax savings by
+    year) plus the sale/profit summary, and a portfolio roll-up. All rates are
+    caller-supplied assumptions; recapture is fixed at the IRS 25%."""
+    hold_years = max(1, min(int(hold_years), 30))
+    today = date.today()
+    own_props = db.query(models.Property).filter(models.Property.owner_id == current_user.id).all()
+    shared_owner_ids = [
+        s.owner_id for s in db.query(models.UserSharing).filter(
+            models.UserSharing.shared_with_id == current_user.id).all()
+    ]
+    shared_props = (
+        db.query(models.Property).filter(models.Property.owner_id.in_(shared_owner_ids)).all()
+        if shared_owner_ids else []
+    )
+    props = own_props + shared_props
+    if not include_primary_residence:
+        props = [p for p in props if str(p.usage_type or "Rental").lower() != "primary"]
+
+    projections = [
+        _exit_projection(
+            p, appreciation=appreciation, marginal_tax=marginal_tax, cap_gains=capital_gains,
+            selling_costs_pct=selling_costs, hold_years=hold_years, today=today,
+        )
+        for p in props
+    ]
+    projections.sort(key=lambda x: -x["exit"]["finalProfit"]["value"])
+
+    def _sum(path):
+        total = 0.0
+        for proj in projections:
+            node = proj
+            for key in path:
+                node = node[key]
+            total += float(node["value"])
+        return total
+
+    portfolio = {
+        "propertyCount": len(projections),
+        "finalProfit": {"value": round(_sum(["exit", "finalProfit"]), 2), "display": format_currency(_sum(["exit", "finalProfit"]))},
+        "netProceeds": {"value": round(_sum(["exit", "netProceeds"]), 2), "display": format_currency(_sum(["exit", "netProceeds"]))},
+        "salePrice": {"value": round(_sum(["exit", "salePrice"]), 2), "display": format_currency(_sum(["exit", "salePrice"]))},
+        "depreciationTaxSavings": {"value": round(_sum(["exit", "depreciationTaxSavings"]), 2), "display": format_currency(_sum(["exit", "depreciationTaxSavings"]))},
+        "recaptureTax": {"value": round(_sum(["exit", "recaptureTax"]), 2), "display": format_currency(_sum(["exit", "recaptureTax"]))},
+        "capitalGainsTax": {"value": round(_sum(["exit", "capitalGainsTax"]), 2), "display": format_currency(_sum(["exit", "capitalGainsTax"]))},
+    }
+
+    return {
+        "assumptions": {
+            "appreciation": appreciation, "marginalTax": marginal_tax, "capitalGains": capital_gains,
+            "sellingCosts": selling_costs, "holdYears": hold_years, "recaptureRate": RECAPTURE_RATE * 100,
+            "asOfYear": today.year,
+        },
+        "properties": projections,
+        "portfolio": portfolio,
+    }
+
+
 def _rental_occupancy_months(prop, today: date):
     """Occupied vs available months for a rental, derived from its tenancy
     (RentalPeriod) records against the window it has been available for rent.

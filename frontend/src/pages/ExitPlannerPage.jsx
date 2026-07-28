@@ -1,0 +1,241 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank } from 'lucide-react'
+import PageContainer from '../components/PageContainer'
+import { propAPI } from '../services/api'
+
+const DEFAULTS = { appreciation: 4, holdYears: 10, marginalTax: 24, capitalGains: 15, sellingCosts: 6 }
+
+function clampNum(v, min, max) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return min
+  return Math.min(Math.max(n, min), max)
+}
+
+// Numeric field the user types into (mobile keypad, no spinner).
+function NumField({ label, value, onChange, min, max, suffix, step = false }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">{label}</span>
+      <div className="flex items-center rounded-md border border-gray-200 bg-white px-2 py-1.5 focus-within:border-blue-400 dark:border-gray-700 dark:bg-gray-900">
+        <input
+          type="text"
+          inputMode={step ? 'numeric' : 'decimal'}
+          value={value}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            const raw = e.target.value.replace(step ? /[^0-9]/g : /[^0-9.]/g, '')
+            onChange(raw)
+          }}
+          onBlur={() => onChange(String(clampNum(value, min, max)))}
+          aria-label={label}
+          className="w-full bg-transparent text-[13px] text-gray-900 outline-none dark:text-white"
+        />
+        {suffix ? <span className="ml-1 text-[11px] text-gray-400">{suffix}</span> : null}
+      </div>
+    </label>
+  )
+}
+
+function StatCard({ icon: Icon, label, value, tone = 'default' }) {
+  const toneCls = tone === 'positive' ? 'text-emerald-600 dark:text-emerald-400'
+    : tone === 'negative' ? 'text-red-600 dark:text-red-400'
+    : 'text-gray-900 dark:text-white'
+  return (
+    <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800/60">
+      <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+        {Icon ? <Icon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{label}
+      </div>
+      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${toneCls}`}>{value}</div>
+    </div>
+  )
+}
+
+function ExitSummary({ proj }) {
+  const e = proj.exit
+  const line = (label, node, sign) => (
+    <div className="flex justify-between py-1 text-sm">
+      <span className="text-gray-500 dark:text-gray-400">{label}</span>
+      <span className={`tabular-nums ${sign === '-' ? 'text-red-600 dark:text-red-400' : sign === '+' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
+        {sign === '-' ? '−' : sign === '+' ? '+' : ''}{node.display}
+      </span>
+    </div>
+  )
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {/* Sale math */}
+      <div className="card-sm">
+        <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Net sale proceeds · {e.year}</h3>
+        {line('Sale price', e.salePrice)}
+        {line('Selling costs', e.sellingCosts, '-')}
+        {line('Pay off remaining loan', e.loanPayoff, '-')}
+        {line(`Depreciation recapture (25% of ${e.accumulatedDepreciation.display})`, e.recaptureTax, '-')}
+        {line('Capital gains tax', e.capitalGainsTax, '-')}
+        <div className="mt-1 flex justify-between border-t border-gray-100 pt-2 text-sm font-semibold dark:border-gray-700">
+          <span className="text-gray-900 dark:text-white">Net proceeds</span>
+          <span className="tabular-nums text-emerald-600 dark:text-emerald-400">{e.netProceeds.display}</span>
+        </div>
+      </div>
+      {/* Lifetime profit */}
+      <div className="card-sm">
+        <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit if sold in {e.year}</h3>
+        {line('Net sale proceeds', e.netProceeds)}
+        {line('Cumulative cash flow', e.cumulativeCashFlow, '+')}
+        {line('Depreciation tax savings', e.depreciationTaxSavings, '+')}
+        {line('Original cash invested', proj.originalInvested, '-')}
+        <div className="mt-1 flex justify-between border-t border-gray-100 pt-2 text-sm font-semibold dark:border-gray-700">
+          <span className="text-gray-900 dark:text-white">Final profit</span>
+          <span className="tabular-nums text-emerald-600 dark:text-emerald-400">{e.finalProfit.display}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function YearTable({ rows }) {
+  return (
+    <div className="table-scroll">
+      <table className="w-full border-collapse text-sm tabular-nums">
+        <thead>
+          <tr className="text-right text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            <th className="px-3 py-2 text-left">Year</th>
+            <th className="px-3 py-2">Value</th>
+            <th className="px-3 py-2">Loan</th>
+            <th className="px-3 py-2">Equity</th>
+            <th className="px-3 py-2">Depr. tax saved</th>
+            <th className="px-3 py-2">Cash flow</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.offset} className={`border-t border-gray-100 text-right dark:border-gray-800 ${r.offset === rows.length - 1 ? 'font-semibold' : ''}`}>
+              <td className="px-3 py-2 text-left text-gray-600 dark:text-gray-300">{r.year}{r.offset === 0 ? ' (now)' : ''}{r.offset === rows.length - 1 ? ' · exit' : ''}</td>
+              <td className="px-3 py-2 text-gray-900 dark:text-white">{r.valueDisplay}</td>
+              <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{r.loanBalanceDisplay}</td>
+              <td className="px-3 py-2 text-gray-900 dark:text-white">{r.equityDisplay}</td>
+              <td className="px-3 py-2 text-emerald-600 dark:text-emerald-400">{r.depreciationTaxSavingsDisplay}</td>
+              <td className="px-3 py-2 text-emerald-600 dark:text-emerald-400">{r.cashFlowDisplay}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+export default function ExitPlannerPage() {
+  const [inputs, setInputs] = useState(DEFAULTS)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [selectedId, setSelectedId] = useState(null)
+  const debounceRef = useRef(null)
+
+  const update = (patch) => setInputs((prev) => ({ ...prev, ...patch }))
+
+  useEffect(() => {
+    let active = true
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setLoading(true)
+      propAPI.exitPlanner({
+        appreciation: clampNum(inputs.appreciation, 0, 30),
+        marginal_tax: clampNum(inputs.marginalTax, 0, 50),
+        capital_gains: clampNum(inputs.capitalGains, 0, 40),
+        selling_costs: clampNum(inputs.sellingCosts, 0, 15),
+        hold_years: clampNum(inputs.holdYears, 1, 30),
+      }).then((res) => {
+        if (!active) return
+        setData(res.data)
+        setError(null)
+        setSelectedId((cur) => cur ?? res.data?.properties?.[0]?.id ?? null)
+      }).catch(() => { if (active) setError('Could not load the exit plan.') })
+        .finally(() => { if (active) setLoading(false) })
+    }, 260)
+    return () => { active = false }
+  }, [inputs])
+
+  const properties = data?.properties || []
+  const selected = useMemo(() => properties.find((p) => p.id === selectedId) || properties[0], [properties, selectedId])
+  const portfolio = data?.portfolio
+
+  return (
+    <PageContainer>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-bold text-gray-900 dark:text-white">
+            <DoorOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />Exit planner
+          </h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Project each property forward at your appreciation rate, tally depreciation tax savings by year, and see the net proceeds and final profit after recapture and capital gains.
+          </p>
+        </div>
+        {portfolio ? (
+          <div className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-right dark:border-emerald-900 dark:bg-emerald-950/40">
+            <div className="text-[11px] text-emerald-700 dark:text-emerald-300">Portfolio profit · exit all in {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
+            <div className="text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300">{portfolio.finalProfit.display}</div>
+            <div className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{portfolio.propertyCount} propert{portfolio.propertyCount === 1 ? 'y' : 'ies'}</div>
+          </div>
+        ) : null}
+      </header>
+
+      {/* Assumptions */}
+      <div className="card">
+        <h2 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Assumptions</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <NumField label="Appreciation / yr" value={inputs.appreciation} onChange={(v) => update({ appreciation: v })} min={0} max={30} suffix="%" />
+          <NumField label="Hold" value={inputs.holdYears} onChange={(v) => update({ holdYears: v })} min={1} max={30} suffix="yrs" step />
+          <NumField label="Marginal tax" value={inputs.marginalTax} onChange={(v) => update({ marginalTax: v })} min={0} max={50} suffix="%" />
+          <NumField label="Capital gains" value={inputs.capitalGains} onChange={(v) => update({ capitalGains: v })} min={0} max={40} suffix="%" />
+          <NumField label="Selling costs" value={inputs.sellingCosts} onChange={(v) => update({ sellingCosts: v })} min={0} max={15} suffix="%" />
+        </div>
+        <p className="mt-2 text-[11px] text-gray-400 dark:text-gray-500">Long-run home appreciation is typically ~3–4%/yr; depreciation recapture is fixed at the IRS 25%.</p>
+      </div>
+
+      {error ? (
+        <div className="card flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
+          <AlertCircle className="h-4 w-4 shrink-0" />{error}
+        </div>
+      ) : null}
+
+      {loading && !data ? (
+        <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">Projecting exit scenarios…</div>
+      ) : properties.length === 0 ? (
+        <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">No rental properties to plan an exit for.</div>
+      ) : (
+        <>
+          {/* Property picker */}
+          <div className="flex flex-wrap gap-2">
+            {properties.map((p) => (
+              <button key={p.id} type="button" onClick={() => setSelectedId(p.id)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  selected?.id === p.id
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                }`}>
+                {p.name} · {p.exit.finalProfit.display}
+              </button>
+            ))}
+          </div>
+
+          {selected ? (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display} />
+                <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone="positive" />
+                <StatCard icon={PiggyBank} label="Depreciation tax saved" value={selected.exit.depreciationTaxSavings.display} tone="positive" />
+                <StatCard icon={DoorOpen} label="Final profit" value={selected.exit.finalProfit.display} tone="positive" />
+              </div>
+
+              <div className="card">
+                <h2 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{selected.name} — year by year</h2>
+                <YearTable rows={selected.rows} />
+              </div>
+
+              <ExitSummary proj={selected} />
+            </>
+          ) : null}
+        </>
+      )}
+    </PageContainer>
+  )
+}

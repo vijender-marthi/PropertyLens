@@ -4,7 +4,7 @@ import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut, Home, Plus,
   BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark,
-  Sun, Moon,
+  Sun, Moon, DoorOpen,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import BrandLogo from './BrandLogo'
@@ -43,6 +43,7 @@ function StairsDown({ className }) {
 
 const SCENARIOS_NAV = [
   { to: '/payoff-planner', icon: StairsDown, label: 'Payoff planner' },
+  { to: '/exit-planner', icon: DoorOpen, label: 'Exit planner' },
 ]
 
 const TOOLS_NAV = [

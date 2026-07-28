@@ -83,6 +83,7 @@ export const propAPI = {
   dashboard: (excludeIds = '') => api.get('/properties/dashboard/summary', { params: { exclude_ids: excludeIds } }),
   portfolioAnalysis: (params = {}, config = {}) => api.get('/properties/analysis/portfolio', { ...config, params }),
   payoffPlanner: (params = {}, config = {}) => api.get('/properties/analysis/payoff-planner', { ...config, params }),
+  exitPlanner: (params = {}, config = {}) => api.get('/properties/analysis/exit-planner', { ...config, params }),
   // Saved payoff scenarios (per user)
   listScenarios: () => api.get('/payoff/scenarios'),
   createScenario: (data) => api.post('/payoff/scenarios', data),

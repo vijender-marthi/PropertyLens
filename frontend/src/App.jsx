@@ -18,6 +18,7 @@ import AnalyticsPage from './pages/AnalyticsPage'
 import TaxCenterPage from './pages/TaxCenterPage'
 import LoansPage from './pages/LoansPage'
 import PayoffPlannerPage from './pages/PayoffPlannerPage'
+import ExitPlannerPage from './pages/ExitPlannerPage'
 import IncomeExpensesPage from './pages/IncomeExpensesPage'
 import AdminPage from './pages/AdminPage'
 
@@ -57,6 +58,7 @@ function AppRoutes() {
                 <Route path="/uploads" element={<UploadsPage />} />
                 <Route path="/loans" element={<LoansPage />} />
                 <Route path="/payoff-planner" element={<PayoffPlannerPage />} />
+                <Route path="/exit-planner" element={<ExitPlannerPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/tax-center" element={<TaxCenterPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
