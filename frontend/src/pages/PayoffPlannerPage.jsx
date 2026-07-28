@@ -767,6 +767,7 @@ function ResultsPanel({ report, loading }) {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
               <span className="flex items-center gap-1.5"><Coin own order={2} /> its own payment</span>
               <span className="flex items-center gap-1.5"><Coin order={1} /> freed from a cleared home</span>
+              <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-4 rounded-sm" style={{ backgroundColor: '#059669' }} /> net income (NOI)</span>
               <span className="flex items-center gap-1.5"><span className="inline-block h-3 w-4 rounded-sm" style={{ backgroundImage: 'repeating-linear-gradient(45deg, #d97706, #d97706 3px, #fbbf24 3px, #fbbf24 6px)' }} /> monthly top-up</span>
             </div>
           </div>
@@ -815,13 +816,15 @@ function RolloverStep({ step }) {
   const never = step.neverPaysOff
   const coinsNet = Number(step.rollingPaymentNet) || 0
   const topUp = Number(step.topUp) || 0
-  const barTotal = coinsNet + topUp
+  const noi = Number(step.noiSurplus) || 0
+  const barTotal = coinsNet + noi + topUp
   const pct = (amt) => (barTotal > 0 ? (amt / barTotal) * 100 : 0)
   const coins = step.coins || []
   const ownCoin = coins.find((c) => c.own)
   const firstFreed = coins.find((c) => !c.own)
   const regColor = homeAccent(step.order, never).hex               // this home's own payment
   const rollColor = firstFreed ? homeAccent(firstFreed.order).hex : '#2563eb'  // rolled-in payment
+  const NOI_HEX = '#059669'                                         // net rental income (NOI)
   const TOPUP_HEX = '#d97706'                                       // monthly top-up
   return (
     <li className="flex items-start gap-3">
@@ -864,6 +867,13 @@ function RolloverStep({ step }) {
                     />
                   )
                 })}
+                {noi > 0 ? (
+                  <div
+                    className="h-full border-r border-white/70 dark:border-gray-900/50"
+                    style={{ width: `${pct(noi)}%`, backgroundColor: NOI_HEX }}
+                    title={`Net rental income (NOI) attacking each month: ${step.noiSurplusDisplay}/mo`}
+                  />
+                ) : null}
                 {topUp > 0 ? (
                   <div
                     className="h-full"
@@ -877,19 +887,26 @@ function RolloverStep({ step }) {
           ) : null}
         </div>
 
-        {/* Monthly rollover story — the coins that stack up as loans clear. */}
-        <div className="mt-2 flex flex-wrap items-center gap-1">
-          {step.coins.map((coin, idx) => (
-            <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
-          ))}
-          {/* Amounts spelled out, each in the colour of its dollar:
-              $<own payment> + $<rolled-in> + $<top-up> = $<total>/mo */}
-          <span className="ml-1 flex flex-wrap items-center gap-1 text-xs font-semibold tabular-nums">
+        {/* Rollover story — line 1: the coloured coins; line 2: the amount
+            equation grouped below, each figure in the colour of its dollar. */}
+        <div className="mt-2 space-y-1">
+          <div className="flex flex-wrap items-center gap-1">
+            {step.coins.map((coin, idx) => (
+              <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1 text-xs font-semibold tabular-nums">
             {ownCoin ? <span style={{ color: regColor }} title={`${step.name}: own payment`}>{ownCoin.display}</span> : null}
             {step.freedCount > 0 ? (
               <>
                 <span className="text-gray-400 dark:text-gray-500">+</span>
                 <span style={{ color: rollColor }} title={`Rolled in from ${step.freedCount} cleared`}>{step.freedPaymentNetDisplay}</span>
+              </>
+            ) : null}
+            {noi > 0 ? (
+              <>
+                <span className="text-gray-400 dark:text-gray-500">+</span>
+                <span style={{ color: NOI_HEX }} title="Net rental income (NOI)">{step.noiSurplusDisplay}</span>
               </>
             ) : null}
             {topUp > 0 ? (
@@ -900,7 +917,7 @@ function RolloverStep({ step }) {
             ) : null}
             <span className="text-gray-400 dark:text-gray-500">=</span>
             <span className="text-gray-900 dark:text-white">{usd(barTotal)}/mo</span>
-          </span>
+          </div>
         </div>
       </div>
     </li>

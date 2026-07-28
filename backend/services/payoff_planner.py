@@ -627,6 +627,10 @@ def build_report(
     rollover: List[Dict[str, Any]] = []
     freed_coins: List[Dict[str, Any]] = []  # payments freed by loans already cleared
     name_to_order = {row["name"]: i for i, row in enumerate(ordered, start=1)}
+    # Monthly net rental income above total debt service — the income that also
+    # attacks the balance each month (floored at 0). Constant across steps.
+    _total_pi = sum(float(l.get("pi", 0.0) or 0.0) for l in loans)
+    noi_surplus = max(float(noi_sum) - _total_pi, 0.0)
     for k, l in enumerate(ordered, start=1):
         pm = l["payoff_month"]
         never = pm is None or pm > cap
@@ -681,6 +685,8 @@ def build_report(
             "rolloverStartDate": rollover_start,
             "topUp": round(top_up, 2),
             "topUpDisplay": format_currency(top_up),
+            "noiSurplus": round(noi_surplus, 2),
+            "noiSurplusDisplay": format_currency(noi_surplus),
             "neverPaysOff": never,
             "coinCount": len(coins),
             "freedCount": len(freed_coins),
