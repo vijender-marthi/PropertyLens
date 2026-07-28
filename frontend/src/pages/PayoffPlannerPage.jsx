@@ -818,6 +818,11 @@ function RolloverStep({ step }) {
   const barTotal = coinsNet + topUp
   const pct = (amt) => (barTotal > 0 ? (amt / barTotal) * 100 : 0)
   const coins = step.coins || []
+  const ownCoin = coins.find((c) => c.own)
+  const firstFreed = coins.find((c) => !c.own)
+  const regColor = homeAccent(step.order, never).hex               // this home's own payment
+  const rollColor = firstFreed ? homeAccent(firstFreed.order).hex : '#2563eb'  // rolled-in payment
+  const TOPUP_HEX = '#d97706'                                       // monthly top-up
   return (
     <li className="flex items-start gap-3">
       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600 dark:bg-gray-700 dark:text-gray-200">
@@ -877,24 +882,25 @@ function RolloverStep({ step }) {
           {step.coins.map((coin, idx) => (
             <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
           ))}
-          {step.freedCount > 0 ? (
-            <span title={`Rolled in from ${step.freedCount} cleared home${step.freedCount > 1 ? 's' : ''}`}
-              className="inline-flex h-5 items-center rounded-full bg-blue-50 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
-              +{step.freedPaymentNetDisplay} rollover
-            </span>
-          ) : null}
-          {topUp > 0 ? (
-            <span title={`Monthly top-up: ${step.topUpDisplay}/mo`}
-              className="inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-bold text-amber-900"
-              style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fcd34d, #fcd34d 3px, #fde68a 3px, #fde68a 6px)' }}>
-              +{step.topUpDisplay} top-up
-            </span>
-          ) : null}
-          <span className="ml-1.5 text-xs text-gray-400 dark:text-gray-500">=</span>
-          <span className="text-xs font-semibold text-gray-900 dark:text-white tabular-nums">{usd(barTotal)}/mo</span>
-          {step.freedCount === 0 ? (
-            <span className="text-[11px] text-gray-400 dark:text-gray-500">(first target)</span>
-          ) : null}
+          {/* Amounts spelled out, each in the colour of its dollar:
+              $<own payment> + $<rolled-in> + $<top-up> = $<total>/mo */}
+          <span className="ml-1 flex flex-wrap items-center gap-1 text-xs font-semibold tabular-nums">
+            {ownCoin ? <span style={{ color: regColor }} title={`${step.name}: own payment`}>{ownCoin.display}</span> : null}
+            {step.freedCount > 0 ? (
+              <>
+                <span className="text-gray-400 dark:text-gray-500">+</span>
+                <span style={{ color: rollColor }} title={`Rolled in from ${step.freedCount} cleared`}>{step.freedPaymentNetDisplay}</span>
+              </>
+            ) : null}
+            {topUp > 0 ? (
+              <>
+                <span className="text-gray-400 dark:text-gray-500">+</span>
+                <span style={{ color: TOPUP_HEX }} title="Monthly top-up">{step.topUpDisplay}</span>
+              </>
+            ) : null}
+            <span className="text-gray-400 dark:text-gray-500">=</span>
+            <span className="text-gray-900 dark:text-white">{usd(barTotal)}/mo</span>
+          </span>
         </div>
       </div>
     </li>
