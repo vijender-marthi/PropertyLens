@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank } from 'lucide-react'
+import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
+import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
+import { formatChartCurrency } from '../utils/formatters'
+
+// Colour by the sign of a backend money node ({value, display}).
+const toneFor = (node) => ((Number(node?.value) || 0) < 0 ? 'negative' : 'positive')
 
 const DEFAULTS = { appreciation: 4, holdYears: 10, marginalTax: 24, capitalGains: 15, sellingCosts: 6 }
 
@@ -72,7 +78,7 @@ function ExitSummary({ proj }) {
         {line('Capital gains tax', e.capitalGainsTax, '-')}
         <div className="mt-1 flex justify-between border-t border-gray-100 pt-2 text-sm font-semibold dark:border-gray-700">
           <span className="text-gray-900 dark:text-white">Net proceeds</span>
-          <span className="tabular-nums text-emerald-600 dark:text-emerald-400">{e.netProceeds.display}</span>
+          <span className={`tabular-nums ${toneFor(e.netProceeds) === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{e.netProceeds.display}</span>
         </div>
       </div>
       {/* Lifetime profit */}
@@ -84,7 +90,7 @@ function ExitSummary({ proj }) {
         {line('Original cash invested', proj.originalInvested, '-')}
         <div className="mt-1 flex justify-between border-t border-gray-100 pt-2 text-sm font-semibold dark:border-gray-700">
           <span className="text-gray-900 dark:text-white">Final profit</span>
-          <span className="tabular-nums text-emerald-600 dark:text-emerald-400">{e.finalProfit.display}</span>
+          <span className={`tabular-nums ${toneFor(e.finalProfit) === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{e.finalProfit.display}</span>
         </div>
       </div>
     </div>
@@ -118,6 +124,30 @@ function YearTable({ rows }) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function ProjectionChart({ rows }) {
+  return (
+    <div className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={rows} margin={{ left: 0, right: 12, top: 10, bottom: 0 }}>
+          <defs>
+            <linearGradient id="exitValueFill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="5%" stopColor={chartColors.primary} stopOpacity={0.24} />
+              <stop offset="95%" stopColor={chartColors.primary} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+          <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+          <YAxis tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} tickFormatter={formatChartCurrency} />
+          <Tooltip formatter={(value) => formatChartCurrency(value)} contentStyle={chartTooltipStyle(false)} />
+          <Area type="monotone" dataKey="value" name="Market value" stroke={chartColors.primary} strokeWidth={2} fill="url(#exitValueFill)" dot={false} />
+          <Line type="monotone" dataKey="equity" name="Equity" stroke={chartColors.positive} strokeWidth={2.5} dot={false} />
+          <Line type="monotone" dataKey="loanBalance" name="Loan" stroke={chartColors.danger} strokeWidth={2} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
     </div>
   )
 }
@@ -170,11 +200,18 @@ export default function ExitPlannerPage() {
           </p>
         </div>
         {portfolio ? (
-          <div className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-right dark:border-emerald-900 dark:bg-emerald-950/40">
-            <div className="text-[11px] text-emerald-700 dark:text-emerald-300">Portfolio profit · exit all in {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
-            <div className="text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300">{portfolio.finalProfit.display}</div>
-            <div className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">{portfolio.propertyCount} propert{portfolio.propertyCount === 1 ? 'y' : 'ies'}</div>
-          </div>
+          (() => {
+            const pos = toneFor(portfolio.finalProfit) === 'positive'
+            const box = pos ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40' : 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40'
+            const txt = pos ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
+            return (
+              <div className={`shrink-0 rounded-xl border px-4 py-2 text-right ${box}`}>
+                <div className={`text-[11px] ${txt}`}>Portfolio profit · exit all in {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
+                <div className={`text-xl font-bold tabular-nums ${txt}`}>{portfolio.finalProfit.display}</div>
+                <div className={`text-[11px] ${txt} opacity-80`}>{portfolio.propertyCount} propert{portfolio.propertyCount === 1 ? 'y' : 'ies'}</div>
+              </div>
+            )
+          })()
         ) : null}
       </header>
 
@@ -221,17 +258,29 @@ export default function ExitPlannerPage() {
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display} />
-                <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone="positive" />
+                <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone={toneFor(selected.exit.netProceeds)} />
                 <StatCard icon={PiggyBank} label="Depreciation tax saved" value={selected.exit.depreciationTaxSavings.display} tone="positive" />
-                <StatCard icon={DoorOpen} label="Final profit" value={selected.exit.finalProfit.display} tone="positive" />
+                <StatCard icon={DoorOpen} label="Final profit" value={selected.exit.finalProfit.display} tone={toneFor(selected.exit.finalProfit)} />
               </div>
 
               <div className="card">
-                <h2 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{selected.name} — year by year</h2>
-                <YearTable rows={selected.rows} />
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{selected.name} — value, equity &amp; loan over time</h2>
+                  <div className="flex gap-3 text-[11px] text-gray-500 dark:text-gray-400">
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: chartColors.primary }} />value</span>
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: chartColors.positive }} />equity</span>
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: chartColors.danger }} />loan</span>
+                  </div>
+                </div>
+                <ProjectionChart rows={selected.rows} />
               </div>
 
               <ExitSummary proj={selected} />
+
+              <details className="card-sm">
+                <summary className="cursor-pointer text-sm font-semibold text-gray-900 dark:text-white">{selected.name} — year-by-year detail</summary>
+                <div className="mt-3"><YearTable rows={selected.rows} /></div>
+              </details>
             </>
           ) : null}
         </>
