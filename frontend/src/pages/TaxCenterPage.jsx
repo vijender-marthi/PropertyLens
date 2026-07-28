@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
+  AlertTriangle,
   ArrowRight,
   CalendarDays,
   CheckCircle2,
@@ -236,20 +237,43 @@ function ScheduleELines({ lines }) {
 }
 
 function ScheduleEReconciliation({ properties, year }) {
+  const [selYear, setSelYear] = useState(year)
   const [byProp, setByProp] = useState({})
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState(null)
-  const rentals = (properties || []).filter((p) => String(p.usage_type || 'Rental').toLowerCase() !== 'primary')
+  const probedRef = useRef(false)
+  const rentals = useMemo(() => (properties || []).filter((p) => String(p.usage_type || 'Rental').toLowerCase() !== 'primary'), [properties])
+  const nowYear = new Date().getFullYear()
+  const yearOptions = Array.from({ length: 8 }, (_, i) => nowYear - i)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    Promise.all(rentals.map((p) => propAPI.scheduleE(p.id, year).then((r) => [p.id, r.data]).catch(() => [p.id, null])))
+    Promise.all(rentals.map((p) => propAPI.scheduleE(p.id, selYear).then((r) => [p.id, r.data]).catch(() => [p.id, null])))
       .then((entries) => { if (!cancelled) setByProp(Object.fromEntries(entries)) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [properties, year])
+  }, [rentals, selYear])
+
+  const anyFiled = rentals.some((p) => (byProp[p.id]?.summary?.linesFiled || 0) > 0)
+
+  // If nothing is filed for the selected year, probe recent years once and jump
+  // to the most recent year that actually has a filed return.
+  useEffect(() => {
+    if (loading || anyFiled || probedRef.current || rentals.length === 0) return
+    probedRef.current = true
+    let cancelled = false
+    ;(async () => {
+      for (const y of yearOptions) {
+        if (y === selYear) continue
+        try {
+          const results = await Promise.all(rentals.map((p) => propAPI.scheduleE(p.id, y).then((r) => r.data?.summary?.linesFiled || 0).catch(() => 0)))
+          if (!cancelled && results.some((n) => n > 0)) { setSelYear(y); return }
+        } catch { /* ignore */ }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [loading, anyFiled, rentals, selYear, yearOptions])
 
   const exportCsv = () => {
     const rows = [['Property', 'Line', 'Item', 'Filed', 'PropertyLens', 'Variance']]
@@ -261,7 +285,7 @@ function ScheduleEReconciliation({ properties, year }) {
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
     const anchor = document.createElement('a')
     anchor.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-    anchor.download = `PropertyLens_Schedule_E_${year}.csv`
+    anchor.download = `PropertyLens_Schedule_E_${selYear}.csv`
     anchor.click()
     URL.revokeObjectURL(anchor.href)
   }
@@ -270,14 +294,25 @@ function ScheduleEReconciliation({ properties, year }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Schedule E — filed vs. PropertyLens · {year}</h3>
-          <p className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">Upload a filed return to reconcile past years; export the current year to hand to your preparer.</p>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Schedule E — filed vs. PropertyLens</h3>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">Pick the tax year your filed return covers to reconcile it; export any year to hand to your preparer.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <select value={selYear} onChange={(e) => setSelYear(Number(e.target.value))} aria-label="Tax year"
+            className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+            {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
           <button type="button" onClick={exportCsv} className="btn-secondary inline-flex items-center gap-2 text-xs px-2.5 py-1.5"><Download className="h-3.5 w-3.5" />Export CSV</button>
           <Link to="/uploads" className="btn-secondary inline-flex items-center gap-2 text-xs px-2.5 py-1.5"><Upload className="h-3.5 w-3.5" />Upload filed return</Link>
         </div>
       </div>
+
+      {!loading && rentals.length > 0 && !anyFiled ? (
+        <div className="card-sm flex items-start gap-2 border border-amber-200 bg-amber-50 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>No filed return found for {selYear}. If you uploaded one, pick the tax year it actually covers (returns are usually a year or two back), or re-upload it under <Link to="/uploads" className="underline">Documents</Link>.</span>
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="card py-8 text-center text-sm text-gray-500 dark:text-neutral-400">Loading Schedule E…</div>
