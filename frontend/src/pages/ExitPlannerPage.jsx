@@ -58,14 +58,25 @@ function StatCard({ icon: Icon, label, value, tone = 'default' }) {
 
 function ExitSummary({ proj }) {
   const e = proj.exit
-  const line = (label, node, sign) => (
-    <div className="flex justify-between py-1 text-sm">
-      <span className="text-gray-500 dark:text-gray-400">{label}</span>
-      <span className={`tabular-nums ${sign === '-' ? 'text-red-600 dark:text-red-400' : sign === '+' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
-        {sign === '-' ? '−' : sign === '+' ? '+' : ''}{node.display}
-      </span>
-    </div>
-  )
+  // op: '+' = added to profit, '-' = subtracted, undefined = a plain figure.
+  // For an added line whose value is negative (e.g. cash flow that was a loss),
+  // show its own "−" and colour it red instead of a confusing "+ −$…".
+  const line = (label, node, op) => {
+    const v = Number(node?.value) || 0
+    let prefix = ''
+    let cls = 'text-gray-900 dark:text-white'
+    if (op === '-') { prefix = '−'; cls = 'text-red-600 dark:text-red-400' }
+    else if (op === '+') {
+      if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' }
+      else { prefix = '+'; cls = 'text-emerald-600 dark:text-emerald-400' }
+    }
+    return (
+      <div className="flex justify-between py-1 text-sm">
+        <span className="text-gray-500 dark:text-gray-400">{label}</span>
+        <span className={`tabular-nums ${cls}`}>{prefix}{node.display}</span>
+      </div>
+    )
+  }
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       {/* Sale math */}
