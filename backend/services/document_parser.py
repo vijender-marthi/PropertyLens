@@ -409,6 +409,16 @@ def detect_category(text: str) -> str:
         and re.search(r'(?:next|monthly|regular)\s+payment(?:\s+amount)?', t)
     ):
         return 'mortgage_statement'
+    # A full 1040 return references Form 1098 (Schedule E line 12 is "Mortgage
+    # interest paid to banks ... on Form 1098") and W-2/1099s, but it is a tax
+    # return, not a standalone 1098. Detect the return first when unmistakable
+    # 1040/Schedule E structure is present, so its per-property Schedule E rows
+    # are imported instead of the whole file being treated as a 1098.
+    if (
+        re.search(r'physical\s+address\s+of\s+each\s+property', t)
+        or (re.search(r'\bschedule\s*e\b', t) and re.search(r'form\s*1040|individual\s+income\s+tax\s+return|income\s+or\s+loss\s+from\s+rental\s+real\s+estate', t))
+    ):
+        return 'tax_return'
     # 1098/1099 forms must be matched before tax_return: their boilerplate
     # references "Form 1040 / Schedule A", which otherwise trips tax_return.
     if re.search(r'form\s*1098|mortgage\s+interest\s+statement|mortgage\s+interest\s+received\s+from', t):
