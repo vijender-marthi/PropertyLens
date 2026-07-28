@@ -226,46 +226,20 @@ export default function ExitPlannerPage() {
         ) : null}
       </header>
 
-      {/* Assumptions */}
-      <div className="card">
-        <h2 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Assumptions</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <NumField label="Appreciation / yr" value={inputs.appreciation} onChange={(v) => update({ appreciation: v })} min={0} max={30} suffix="%" />
-          <NumField label="Hold" value={inputs.holdYears} onChange={(v) => update({ holdYears: v })} min={1} max={30} suffix="yrs" step />
-          <NumField label="Marginal tax" value={inputs.marginalTax} onChange={(v) => update({ marginalTax: v })} min={0} max={50} suffix="%" />
-          <NumField label="Capital gains" value={inputs.capitalGains} onChange={(v) => update({ capitalGains: v })} min={0} max={40} suffix="%" />
-          <NumField label="Selling costs" value={inputs.sellingCosts} onChange={(v) => update({ sellingCosts: v })} min={0} max={15} suffix="%" />
-        </div>
-        <p className="mt-2 text-[11px] text-gray-400 dark:text-gray-500">Long-run home appreciation is typically ~3–4%/yr; depreciation recapture is fixed at the IRS 25%.</p>
-      </div>
+      <div className="flex flex-col gap-6 lg:flex-row">
+        {/* Results (left) */}
+        <div className="order-2 min-w-0 flex-1 space-y-6 lg:order-1">
+          {error ? (
+            <div className="card flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
+              <AlertCircle className="h-4 w-4 shrink-0" />{error}
+            </div>
+          ) : null}
 
-      {error ? (
-        <div className="card flex items-center gap-2 text-sm text-red-600 dark:text-red-400" role="alert">
-          <AlertCircle className="h-4 w-4 shrink-0" />{error}
-        </div>
-      ) : null}
-
-      {loading && !data ? (
-        <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">Projecting exit scenarios…</div>
-      ) : properties.length === 0 ? (
-        <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">No rental properties to plan an exit for.</div>
-      ) : (
-        <>
-          {/* Property picker */}
-          <div className="flex flex-wrap gap-2">
-            {properties.map((p) => (
-              <button key={p.id} type="button" onClick={() => setSelectedId(p.id)}
-                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  selected?.id === p.id
-                    ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300'
-                }`}>
-                {p.name} · {p.exit.finalProfit.display}
-              </button>
-            ))}
-          </div>
-
-          {selected ? (
+          {loading && !data ? (
+            <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">Projecting exit scenarios…</div>
+          ) : properties.length === 0 ? (
+            <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">No rental properties to plan an exit for.</div>
+          ) : selected ? (
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display} />
@@ -294,8 +268,45 @@ export default function ExitPlannerPage() {
               </details>
             </>
           ) : null}
-        </>
-      )}
+        </div>
+
+        {/* Control panel (right, sticky) — property + assumptions */}
+        <aside className="order-1 lg:order-2 lg:w-80 lg:shrink-0">
+          <div className="space-y-4 lg:sticky lg:top-4">
+            <div className="card space-y-4">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Exit plan</h2>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">Property</span>
+                <select
+                  value={selected?.id ?? ''}
+                  onChange={(e) => setSelectedId(Number(e.target.value))}
+                  disabled={properties.length === 0}
+                  aria-label="Property"
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                >
+                  {properties.length === 0 ? <option value="">No rentals</option> : null}
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} · {p.exit.finalProfit.display}</option>
+                  ))}
+                </select>
+              </label>
+
+              <div>
+                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Assumptions</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <NumField label="Appreciation / yr" value={inputs.appreciation} onChange={(v) => update({ appreciation: v })} min={0} max={30} suffix="%" />
+                  <NumField label="Hold" value={inputs.holdYears} onChange={(v) => update({ holdYears: v })} min={1} max={30} suffix="yrs" step />
+                  <NumField label="Marginal tax" value={inputs.marginalTax} onChange={(v) => update({ marginalTax: v })} min={0} max={50} suffix="%" />
+                  <NumField label="Capital gains" value={inputs.capitalGains} onChange={(v) => update({ capitalGains: v })} min={0} max={40} suffix="%" />
+                  <NumField label="Selling costs" value={inputs.sellingCosts} onChange={(v) => update({ sellingCosts: v })} min={0} max={15} suffix="%" />
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">Long-run home appreciation is typically ~3–4%/yr; depreciation recapture is fixed at the IRS 25%.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
     </PageContainer>
   )
 }
