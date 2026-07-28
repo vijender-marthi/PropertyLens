@@ -887,22 +887,26 @@ function RolloverStep({ step }) {
           ) : null}
         </div>
 
-        {/* Rollover story — line 1: the coloured coins; line 2: the amount
-            equation grouped below, each figure in the colour of its dollar. */}
-        <div className="mt-2 space-y-1">
+        {/* Rollover story — line 1: the coloured coin glyphs + the top-up chip;
+            a divider; line 2: the amounts, rolled-in first then this home's own
+            payment (then NOI), each figure in the colour of its dollar. */}
+        <div className="mt-2">
           <div className="flex flex-wrap items-center gap-1">
             {step.coins.map((coin, idx) => (
               <Coin key={`${coin.name}-${idx}`} own={coin.own} order={coin.order} never={coin.own && never} title={coinTitle(coin)} />
             ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-1 text-xs font-semibold tabular-nums">
-            {ownCoin ? <span style={{ color: regColor }} title={`${step.name}: own payment`}>{ownCoin.display}</span> : null}
-            {step.freedCount > 0 ? (
-              <>
-                <span className="text-gray-400 dark:text-gray-500">+</span>
-                <span style={{ color: rollColor }} title={`Rolled in from ${step.freedCount} cleared`}>{step.freedPaymentNetDisplay}</span>
-              </>
+            {topUp > 0 ? (
+              <span title={`Monthly top-up: ${step.topUpDisplay}/mo`}
+                className="inline-flex h-5 items-center rounded-full px-1.5 text-[10px] font-bold text-amber-900"
+                style={{ backgroundImage: 'repeating-linear-gradient(45deg, #fcd34d, #fcd34d 3px, #fde68a 3px, #fde68a 6px)' }}>
+                +{step.topUpDisplay}
+              </span>
             ) : null}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-1 text-xs font-semibold tabular-nums dark:border-gray-700/60">
+            {step.freedCount > 0 ? <span style={{ color: rollColor }} title={`Rolled in from ${step.freedCount} cleared`}>{step.freedPaymentNetDisplay}</span> : null}
+            {step.freedCount > 0 && ownCoin ? <span className="text-gray-400 dark:text-gray-500">+</span> : null}
+            {ownCoin ? <span style={{ color: regColor }} title={`${step.name}: own payment`}>{ownCoin.display}</span> : null}
             {noi > 0 ? (
               <>
                 <span className="text-gray-400 dark:text-gray-500">+</span>
