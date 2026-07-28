@@ -9,7 +9,7 @@ import { formatChartCurrency } from '../utils/formatters'
 // Colour by the sign of a backend money node ({value, display}).
 const toneFor = (node) => ((Number(node?.value) || 0) < 0 ? 'negative' : 'positive')
 
-const DEFAULTS = { appreciation: 4, holdYears: 10, marginalTax: 24, capitalGains: 15, sellingCosts: 6 }
+const DEFAULTS = { appreciation: 4, holdYears: 10, marginalTax: 24, capitalGains: 15, sellingCosts: 6, includePrimary: true }
 
 function clampNum(v, min, max) {
   const n = Number(v)
@@ -184,11 +184,15 @@ export default function ExitPlannerPage() {
         capital_gains: clampNum(inputs.capitalGains, 0, 40),
         selling_costs: clampNum(inputs.sellingCosts, 0, 15),
         hold_years: clampNum(inputs.holdYears, 1, 30),
+        include_primary_residence: inputs.includePrimary,
       }).then((res) => {
         if (!active) return
         setData(res.data)
         setError(null)
-        setSelectedId((cur) => cur ?? res.data?.properties?.[0]?.id ?? null)
+        setSelectedId((cur) => {
+          const ids = (res.data?.properties || []).map((p) => p.id)
+          return cur && ids.includes(cur) ? cur : ids[0] ?? null
+        })
       }).catch(() => { if (active) setError('Could not load the exit plan.') })
         .finally(() => { if (active) setLoading(false) })
     }, 260)
@@ -302,7 +306,18 @@ export default function ExitPlannerPage() {
                   <NumField label="Selling costs" value={inputs.sellingCosts} onChange={(v) => update({ sellingCosts: v })} min={0} max={15} suffix="%" />
                 </div>
               </div>
-              <p className="text-[11px] text-gray-400 dark:text-gray-500">Long-run home appreciation is typically ~3–4%/yr; depreciation recapture is fixed at the IRS 25%.</p>
+
+              <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={inputs.includePrimary}
+                  onChange={(e) => update({ includePrimary: e.target.checked })}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                />
+                Include primary home
+              </label>
+
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">Long-run home appreciation is typically ~3–4%/yr; depreciation recapture is fixed at the IRS 25%. A primary home earns no rental depreciation, so its tax savings show as $0.</p>
             </div>
           </div>
         </aside>

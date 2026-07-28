@@ -31,7 +31,19 @@ const [category, setCategory] = useState('auto')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [previewDoc, setPreviewDoc] = useState(null)
   const [acceptingPreview, setAcceptingPreview] = useState(false)
+  // Per-property Schedule E rows the user has UNchecked in the preview (by
+  // previewRowId). Empty set = import every property (the default).
+  const [excludedProps, setExcludedProps] = useState(() => new Set())
   const inputRef = useRef()
+
+  const previewRowId = (property, index) => property.id || `${property.address || 'property'}-${index}`
+
+  const togglePreviewProp = (rowId) => setExcludedProps((prev) => {
+    const next = new Set(prev)
+    if (next.has(rowId)) next.delete(rowId)
+    else next.add(rowId)
+    return next
+  })
 
   const duplicateDocs = docs.filter((d) => d.is_duplicate)
   const hasDuplicates  = duplicateDocs.length > 0
@@ -45,6 +57,7 @@ const [category, setCategory] = useState('auto')
     try {
       const { data } = await docAPI.previewUpload(fd)
       setPreviewDoc(data)
+      setExcludedProps(new Set())
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Upload failed')
     } finally {
@@ -56,11 +69,21 @@ const [category, setCategory] = useState('auto')
     if (!previewDoc) return
     setAcceptingPreview(true)
     try {
+      const previewProps = previewDoc.extracted_data?.properties || []
+      // Only send the filter when this document actually has per-property rows;
+      // undefined keeps the default (import all) for every other document type.
+      const selectedAddresses = previewProps.length
+        ? previewProps
+            .filter((p, i) => !excludedProps.has(previewRowId(p, i)))
+            .map((p) => p.address)
+            .filter(Boolean)
+        : undefined
       const { data } = await docAPI.acceptUpload({
         pending_upload_id: previewDoc.pending_upload_id,
         original_filename: previewDoc.original_filename,
         property_id: propertyId,
         category: previewDoc.category,
+        selected_property_addresses: selectedAddresses,
       })
       if (data.tax_import_error)
         toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
@@ -285,6 +308,20 @@ const previewFieldColumns = [
 ]
 const previewPropertyColumns = [
 {
+id: 'select',
+header: '',
+render: (row) => (
+<input
+type="checkbox"
+checked={!excludedProps.has(row.previewRowId)}
+onChange={() => togglePreviewProp(row.previewRowId)}
+aria-label={`Include ${row.address || 'property'} in import`}
+className="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+/>
+),
+cellClassName: 'w-8',
+},
+{
 id: 'property',
 header: 'Property',
 accessor: 'address',
@@ -326,8 +363,26 @@ No structured fields extracted. Cancel upload to skip, or save to keep the docum
 
 {previewProperties.length > 0 && (
 <div className="mt-4">
-<p className="text-xs font-bold uppercase tracking-wide text-blue-500 mb-2">
-Per-property Schedule E figures ({previewProperties.length})
+<div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+<p className="text-xs font-bold uppercase tracking-wide text-blue-500">
+Per-property Schedule E figures — {previewPropertyRows.length - excludedProps.size} of {previewPropertyRows.length} selected
+</p>
+<button
+type="button"
+onClick={() => setExcludedProps(
+excludedProps.size < previewPropertyRows.length
+? new Set(previewPropertyRows.map((r) => r.previewRowId))
+: new Set()
+)}
+className="flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+>
+{excludedProps.size === 0
+? (<><CheckSquare className="h-3.5 w-3.5" /> Deselect all</>)
+: (<><Square className="h-3.5 w-3.5" /> Select all</>)}
+</button>
+</div>
+<p className="mb-2 text-xs text-gray-400 dark:text-gray-500">
+Only checked properties are imported into your Schedule E figures.
 </p>
 <DataTable
 columns={previewPropertyColumns}
@@ -347,12 +402,22 @@ tableWrapperClassName="overflow-auto max-h-72"
 </div>
 )}
 
-<div className="mt-5 flex justify-end gap-3">
+{(() => {
+const previewPropCount = (previewDoc.extracted_data?.properties || []).length
+const includedCount = previewPropCount - excludedProps.size
+const blocked = previewPropCount > 0 && includedCount === 0
+return (
+<div className="mt-5 flex items-center justify-end gap-3">
+{blocked && <span className="mr-auto text-xs text-amber-600 dark:text-amber-400">Select at least one property to import.</span>}
 <button type="button" onClick={cancelPreview} className="btn-secondary">Cancel</button>
-<button type="button" onClick={acceptPreview} disabled={acceptingPreview} className="btn-primary inline-flex items-center gap-2">
-{acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><CheckCircle2 className="w-4 h-4" /> Save and accept</>}
+<button type="button" onClick={acceptPreview} disabled={acceptingPreview || blocked} className="btn-primary inline-flex items-center gap-2">
+{acceptingPreview
+? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</>
+: <><CheckCircle2 className="w-4 h-4" /> Save and accept{previewPropCount > 0 ? ` (${includedCount})` : ''}</>}
 </button>
 </div>
+)
+})()}
 </div>
 )}
 

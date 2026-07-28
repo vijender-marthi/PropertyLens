@@ -118,6 +118,9 @@ class UploadAcceptRequest(BaseModel):
     replace_document_id: Optional[int] = None  # "Replace" — delete this doc first
     apply_extracted: bool = True
     field_overrides: Dict[str, Any] = Field(default_factory=dict)
+    # Tax returns only: raw Schedule E addresses the user checked in the preview.
+    # None = import every parsed property; a list = import only those addresses.
+    selected_property_addresses: Optional[List[str]] = None
 
 
 class SetupImportApplyRequest(BaseModel):
@@ -1997,6 +2000,7 @@ async def _commit_parsed_document(
     force: bool = False,
     replace_document_id: Optional[int] = None,
     apply_extracted: bool = True,
+    selected_property_addresses: Optional[List[str]] = None,
 ):
     content_hash = _file_hash(save_path)
 
@@ -2131,7 +2135,8 @@ async def _commit_parsed_document(
     if is_tax_return:
         try:
             tax_entries_imported = await import_tax_return(
-                db, current_user.id, doc.id, str(save_path))
+                db, current_user.id, doc.id, str(save_path),
+                include_addresses=selected_property_addresses)
         except Exception as e:
             tax_entries_imported = 0
             tax_import_error = str(e)
@@ -2302,6 +2307,7 @@ async def accept_upload_document(
             force=req.force,
             replace_document_id=req.replace_document_id,
             apply_extracted=req.apply_extracted,
+            selected_property_addresses=req.selected_property_addresses,
         )
     except Exception:
         db.rollback()

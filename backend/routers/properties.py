@@ -7567,7 +7567,13 @@ def _default_primary_property(db: Session, owner_id: int, props: list, year: int
     return explicit_primary[0] if explicit_primary else None
 
 
-async def import_tax_return(db: Session, owner_id: int, document_id, filepath: str) -> int:
+async def import_tax_return(
+    db: Session,
+    owner_id: int,
+    document_id,
+    filepath: str,
+    include_addresses: Optional[List[str]] = None,
+) -> int:
     """Parse a 1040 return and upsert per-property tax entries.
 
     Schedule E rental rows are matched to managed properties by address. A row
@@ -7589,8 +7595,20 @@ async def import_tax_return(db: Session, owner_id: int, document_id, filepath: s
     ).all()
     primary_prop = _default_primary_property(db, owner_id, props, year, parsed.get("properties", []))
 
+    # When the user checked a subset of properties in the upload preview, only
+    # import those Schedule E rows. Match on the raw parsed address (identical
+    # between the preview parse and this one, since it's the same file).
+    def _norm_addr(text):
+        return re.sub(r'\s+', ' ', (text or '')).strip().upper()
+    include_set = (
+        {_norm_addr(a) for a in include_addresses}
+        if include_addresses is not None else None
+    )
+
     count = 0
     for entry in parsed.get("properties", []):
+        if include_set is not None and _norm_addr(entry.get("address")) not in include_set:
+            continue
         kind = entry.get("property_kind", "rental")
         if kind == "primary":
             matched = primary_prop
@@ -11755,6 +11773,14 @@ def _exit_projection(prop, *, appreciation, marginal_tax, cap_gains, selling_cos
     dep_years = float(prop.depreciation_years or 27.5)
     annual_cf = float(metrics.get("annual_cash_flow", 0.0) or 0.0)
     annual_opex = float(metrics.get("monthly_expenses", 0.0) or 0.0) * 12.0
+
+    # A primary residence isn't a rental: no depreciation deduction (so no tax
+    # savings and no recapture at sale) and no rental cash flow. Capital gains
+    # on the appreciation still apply (§121 exclusion isn't modeled here).
+    is_primary = str(prop.usage_type or "Rental").lower() == "primary"
+    if is_primary:
+        annual_dep = 0.0
+        annual_cf = 0.0
     original_invested = float(prop.down_payment or 0.0) + float(prop.closing_costs or 0.0)
 
     start = _parse_iso_date(getattr(prop, "rental_start_date", None)) or _parse_iso_date(getattr(prop, "purchase_date", None))
@@ -11808,7 +11834,7 @@ def _exit_projection(prop, *, appreciation, marginal_tax, cap_gains, selling_cos
     return {
         "id": prop.id,
         "name": prop.name or _default_property_name(prop.address, prop.id),
-        "isPrimary": str(prop.usage_type or "Rental").lower() == "primary",
+        "isPrimary": is_primary,
         "rows": rows,
         "purchasePrice": m(purchase_price),
         "originalInvested": m(original_invested),
