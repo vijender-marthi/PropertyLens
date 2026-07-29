@@ -2944,6 +2944,8 @@ const [result, setResult] = useState(null)
   const [scheduleFilter, setScheduleFilter] = useState('yearly')
   const [scheduleSearch, setScheduleSearch] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showSchedule, setShowSchedule] = useState(false)
 
 const parseAmount = (value) => {
 const parsed = Number(String(value || '').replace(/[^0-9.]/g, ''))
@@ -3111,31 +3113,17 @@ toast.success('Saved scenarios cleared')
   if (!loans.length) return <div className="card text-sm text-gray-500 dark:text-gray-400">Add a loan before running payoff scenarios.</div>
 
   return <div className="space-y-5">
-    <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-      <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Scenario simulator</h3>
-            {loading ? <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">Updating live...</span> : <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300">Live simulator</span>}
-          </div>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Compare payoff strategies, cash deployed, interest saved, and investing alternatives using backend scenario results.</p>
-        </div>
-        <div className="grid gap-2 text-xs text-gray-500 sm:grid-cols-3 lg:min-w-[28rem]">
-          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/40">
-            <p className="font-semibold uppercase tracking-wide">Loan</p>
-            <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">{loanLabel(selectedLoanRecord)}</p>
-          </div>
-          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/40">
-            <p className="font-semibold uppercase tracking-wide">Strategy</p>
-            <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">{scenarioName || 'Custom strategy'}</p>
-          </div>
-          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-800 dark:bg-gray-950/40">
-            <p className="font-semibold uppercase tracking-wide">Saved</p>
-            <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{savedScenarios.length}</p>
-          </div>
-        </div>
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Payoff scenarios</h3>
+        <p className="mt-0.5 truncate text-sm text-gray-500 dark:text-gray-400">
+          {loanLabel(selectedLoanRecord)} · <span className="font-medium text-gray-700 dark:text-gray-300">{scenarioName || 'Custom strategy'}</span>
+        </p>
       </div>
-    </section>
+      {loading
+        ? <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">Updating…</span>
+        : <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300">Live</span>}
+    </div>
 
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
       <div className="space-y-4">
@@ -3186,12 +3174,21 @@ toast.success('Saved scenarios cleared')
             <label className="block"><span className="label">Lump month</span><select disabled={!typeAllowsAnnual} className="input h-9 w-full text-sm disabled:opacity-40" value={annualMonth} onChange={(e) => setAnnualMonth(e.target.value)}><option value="1">January</option><option value="4">Tax Refund</option><option value="6">Bonus Month</option><option value="12">December</option></select></label>
             <ScenarioSlider disabled={!typeAllowsOneTime} label="One-time" value={parseAmount(oneTimeAmount)} min={0} max={100000} step={1000} display={money(parseAmount(oneTimeAmount))} onChange={(value) => setOneTimeAmount(String(value))} footer={<input disabled={!typeAllowsOneTime} type="month" className="input mt-2 h-9 w-full text-sm disabled:opacity-40" value={oneTimeDate} onChange={(e) => setOneTimeDate(e.target.value)} />} />
           </ScenarioControlGroup>
-          <ScenarioControlGroup title="Compare vs investing">
-            <label className="block"><span className="label">Best by</span><select className="input h-9 w-full text-sm" value={highlightGoal} onChange={(e) => setHighlightGoal(e.target.value)}><option value="interest_saved">Max interest saved</option><option value="roi">Best annualized return</option></select></label>
-            <ScenarioSlider label="Invest return" value={parseAmount(sp500Rate)} min={0} max={14} step={0.25} display={`${formatNumber(parseAmount(sp500Rate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setSp500Rate(String(value))} />
-            <ScenarioSlider label="HYSA" value={parseAmount(hysaRate)} min={0} max={8} step={0.1} display={`${formatNumber(parseAmount(hysaRate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setHysaRate(String(value))} />
-            <ScenarioSlider label="Next rental" value={parseAmount(rentalRate)} min={0} max={14} step={0.25} display={`${formatNumber(parseAmount(rentalRate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setRentalRate(String(value))} />
-          </ScenarioControlGroup>
+          <section className="border-t border-gray-200 pt-3 dark:border-gray-800">
+            <button type="button" onClick={() => setShowAdvanced((v) => !v)}
+              className="flex w-full items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span>Advanced — compare vs investing</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+            </button>
+            {showAdvanced ? (
+              <div className="mt-3 space-y-3">
+                <label className="block"><span className="label">Best by</span><select className="input h-9 w-full text-sm" value={highlightGoal} onChange={(e) => setHighlightGoal(e.target.value)}><option value="interest_saved">Max interest saved</option><option value="roi">Best annualized return</option></select></label>
+                <ScenarioSlider label="Invest return" value={parseAmount(sp500Rate)} min={0} max={14} step={0.25} display={`${formatNumber(parseAmount(sp500Rate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setSp500Rate(String(value))} />
+                <ScenarioSlider label="HYSA" value={parseAmount(hysaRate)} min={0} max={8} step={0.1} display={`${formatNumber(parseAmount(hysaRate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setHysaRate(String(value))} />
+                <ScenarioSlider label="Next rental" value={parseAmount(rentalRate)} min={0} max={14} step={0.25} display={`${formatNumber(parseAmount(rentalRate), { maximumFractionDigits: 2 })}%`} onChange={(value) => setRentalRate(String(value))} />
+              </div>
+            ) : null}
+          </section>
           {savedScenarios.length ? <ScenarioControlGroup title={editingScenarioId ? 'Editing saved' : 'Saved'}><div className="flex flex-wrap gap-2">{savedScenarios.map((scenario) => <button key={scenario.id} type="button" className={`rounded-full border px-2.5 py-1 text-xs font-medium ${editingScenarioId === scenario.id ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-700'}`} onClick={() => loadSavedScenario(scenario)}>{scenario.name}</button>)}</div>{editingScenarioId ? <button type="button" className="mt-2 text-xs font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200" onClick={() => setEditingScenarioId(null)}>Cancel edit</button> : null}</ScenarioControlGroup> : null}
           <div className="border-t border-gray-200 pt-3 dark:border-gray-800">
             {editingScenarioId ? <button className="btn-secondary mb-2 w-full justify-center" onClick={updateScenario}>Update scenario</button> : null}
@@ -3217,7 +3214,7 @@ getRowKey={(item) => item.id}
 getRowProps={(item) => ({ className: `border-t border-gray-100 dark:border-gray-700 ${item.is_best ? 'bg-green-50 dark:bg-green-950/20' : ''}` })}
 /></div></div>}
 
-    {result && <div className="card"><div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-gray-900 dark:text-white">Amortization Schedule</h4><div className="flex flex-wrap gap-2"><select className="input w-32" value={scheduleFilter} onChange={(e) => setScheduleFilter(e.target.value)}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select><input className="input w-44" placeholder="Search" value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} /><button className="btn-secondary" onClick={exportSchedule}><Download className="h-4 w-4" /> Export CSV</button></div></div><DataTable
+    {result && <div className="card"><div className="flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={() => setShowSchedule((v) => !v)} className="flex items-center gap-2 font-semibold text-gray-900 dark:text-white"><ChevronDown className={`h-4 w-4 transition-transform ${showSchedule ? 'rotate-180' : ''}`} />Amortization schedule</button>{showSchedule ? <div className="flex flex-wrap gap-2"><select className="input w-32" value={scheduleFilter} onChange={(e) => setScheduleFilter(e.target.value)}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select><input className="input w-44" placeholder="Search" value={scheduleSearch} onChange={(e) => setScheduleSearch(e.target.value)} /><button className="btn-secondary" onClick={exportSchedule}><Download className="h-4 w-4" /> Export CSV</button></div> : null}</div>{showSchedule ? <DataTable
 className="mt-4 max-h-[520px] overflow-auto"
 columns={[
 { id: 'payment_number', header: 'Payment #', accessor: 'payment_number', align: 'center' },
@@ -3235,7 +3232,7 @@ rows={rows}
 getRowKey={(row) => row.payment_number}
 defaultSort={{ id: 'payment_number', direction: 'asc' }}
 getRowProps={() => ({ className: 'border-t border-gray-100 dark:border-gray-700' })}
-/></div>}
+/> : null}</div>}
   </div>
 }
 
