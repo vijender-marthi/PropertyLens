@@ -104,6 +104,7 @@ from services.document_config import (
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 property_tax_router = APIRouter(prefix="/api/properties", tags=["property taxes"])
 property_tax_logger = logging.getLogger("propertylens.property_tax_pipeline")
+logger = logging.getLogger("propertylens.documents")
 
 
 class BatchDeleteRequest(BaseModel):
@@ -4540,20 +4541,43 @@ def apply_document(
     # straight from the stored extracted_data — this is what actually persists
     # the parsed figures into the user's Schedule E entries.
     if doc.doc_category == "tax_return":
-        count = import_tax_return_from_parsed(
-            db, current_user.id, doc.id, data,
-            include_addresses=req.selected_property_addresses,
-            property_map=req.property_map,
-        )
+        stored_props = data.get("properties") or []
+        stored_year = data.get("tax_year") or data.get("statement_year")
+        try:
+            count = import_tax_return_from_parsed(
+                db, current_user.id, doc.id, data,
+                include_addresses=req.selected_property_addresses,
+                property_map=req.property_map,
+            )
+        except Exception as exc:  # surface the real reason instead of a 500
+            db.rollback()
+            logger.exception("Schedule E import failed for document %s", doc.id)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Schedule E import failed: {type(exc).__name__}: {exc}. "
+                    f"(stored rows: {len(stored_props)}, tax year: {stored_year})"
+                ),
+            )
+        if not count:
+            # Nothing saved — say precisely why so it isn't a silent no-op.
+            reason = (
+                "the stored document has no tax year" if not stored_year
+                else "the stored document has no per-property Schedule E rows" if not stored_props
+                else "no rows were selected to import" if req.selected_property_addresses == []
+                else "the selected rows didn't match the parsed data"
+            )
+            return {
+                "applied": {},
+                "document_config": config_as_dict(doc.doc_category),
+                "extraction_schema": extraction_schema(doc.doc_category, data),
+                "message": f"No Schedule E rows were imported — {reason} (rows in file: {len(stored_props)}, year: {stored_year}).",
+            }
         return {
-            "applied": {"tax_entries": count} if count else {},
+            "applied": {"tax_entries": count},
             "document_config": config_as_dict(doc.doc_category),
             "extraction_schema": extraction_schema(doc.doc_category, data),
-            "message": (
-                f"Imported {count} Schedule E propert{'y' if count == 1 else 'ies'} into your tax figures"
-                if count else
-                "No Schedule E property rows were found to import"
-            ),
+            "message": f"Imported {count} Schedule E propert{'y' if count == 1 else 'ies'} into your tax figures",
         }
 
     if not doc.property:

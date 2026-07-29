@@ -7664,103 +7664,122 @@ def import_tax_return_from_parsed(
     props_by_id = {p.id: p for p in props}
 
     count = 0
+    errors = []
     for entry in parsed.get("properties", []):
         if include_set is not None and _norm_addr(entry.get("address")) not in include_set:
             continue
-        kind = entry.get("property_kind", "rental")
-        if kind == "primary":
-            matched = primary_prop
-            address = matched.address if matched else "Primary Residence"
-        else:
-            address = entry.get("address")
-            norm = _norm_addr(address)
-            if norm in override_map:
-                # Explicit user choice wins: a valid id links it, 0/None keeps
-                # it unassigned regardless of what address matching would do.
-                matched = props_by_id.get(override_map[norm])
-            else:
-                # Only ever link to a property already in the user's Property
-                # List — an unmatched Schedule E row is kept as an unassigned
-                # tax entry (property_id=None) rather than auto-creating one.
-                matched = _match_property(address, props)
-
-        # Dedupe on the resolved property when we have one — the raw parsed
-        # address text varies slightly between re-uploads of the same return
-        # (OCR/whitespace differences), so keying on it directly let two
-        # uploads of the same return create duplicate rows for one property.
-        dedup_filter = dict(owner_id=owner_id, tax_year=year, property_kind=kind)
-        if matched:
-            dedup_filter["property_id"] = matched.id
-        else:
-            dedup_filter["address"] = address
-        existing = db.query(models.TaxReturnEntry).filter_by(**dedup_filter).first()
-        if existing is None and matched:
-            # Re-link a row imported earlier while unmatched (property_id NULL)
-            # — same owner/year/kind and an address that resolves to this
-            # property — instead of leaving an orphan and creating a duplicate.
-            for orphan in db.query(models.TaxReturnEntry).filter_by(
-                owner_id=owner_id, tax_year=year, property_kind=kind, property_id=None
-            ).all():
-                if _match_property(orphan.address, [matched]) is not None:
-                    existing = orphan
-                    break
-        rec = existing or models.TaxReturnEntry(
-            owner_id=owner_id,
-            tax_year=year,
-            property_kind=kind,
-            address=address,
-        )
-        rec.property_id = matched.id if matched else None
-        rec.document_id = document_id
-
-        for field in TAX_ENTRY_FIELDS:
-            setattr(rec, field, entry.get(field, 0.0) or 0.0)
-        for field in TAX_ENTRY_EXTRA_FIELDS:
-            setattr(rec, field, entry.get(field))
-        for field in TAX_ENTRY_JSON_FIELDS:
-            default = [] if field == "unresolved_fields" else {}
-            setattr(rec, field, json.dumps(entry.get(field, default)))
-
-        if matched:
-            # land_value/construction_price default to 0, which is
-            # indistinguishable from "never entered" — so treat neither being
-            # set as "split missing" rather than checking basis <= 0 (which is
-            # never true once purchase_price is set, making that check dead).
-            land_split_missing = not (matched.construction_price or matched.land_value)
-            basis = _depreciable_basis(matched)
-            period = matched.depreciation_years or 27.5
-            accumulated = entry.get("depreciation") or 0.0
-            try:
-                purchase_year = int(re.search(r'(?:19|20)\d{2}', matched.purchase_date or "").group(0))
-                years_elapsed = max(0, int(year) - purchase_year + 1)
-                if basis and period:
-                    accumulated = min(basis, round((basis / period) * years_elapsed, 2))
-            except Exception:
-                pass
-
-            rec.depreciable_basis = basis
-            rec.annual_straight_line_depreciation = round(basis / period, 2) if basis and period else 0.0
-            rec.accumulated_depreciation = accumulated
-            rec.remaining_depreciable_basis = max(basis - accumulated, 0)
-            rec.years_remaining = (
-                round(rec.remaining_depreciable_basis / rec.annual_straight_line_depreciation, 2)
-                if rec.annual_straight_line_depreciation else 0.0
-            )
-
-            if land_split_missing and entry.get("depreciation"):
-                unresolved = entry.get("unresolved_fields") or []
-                unresolved.append(
-                    "Land/building split missing; depreciable basis estimated at 75% "
-                    "of purchase price. Enter land value or construction price to correct it."
-                )
-                rec.unresolved_fields = json.dumps(unresolved)
-
-        if not existing:
-            db.add(rec)
-        count += 1
+        try:
+            # Per-row savepoint: a single bad row (odd property field, math
+            # error) rolls back only itself instead of aborting the whole
+            # import and leaving nothing saved.
+            with db.begin_nested():
+                _upsert_tax_entry(db, owner_id, year, document_id, entry,
+                                  props, primary_prop, override_map, props_by_id)
+            count += 1
+        except Exception as exc:
+            errors.append(f"{entry.get('address') or 'row'}: {type(exc).__name__}: {exc}")
 
     db.commit()
+    if count == 0 and errors:
+        # Nothing saved and every row errored — surface the reason instead of a
+        # silent zero so the caller can report it.
+        raise RuntimeError("; ".join(errors[:3]))
     return count
+
+
+def _upsert_tax_entry(db, owner_id, year, document_id, entry,
+                      props, primary_prop, override_map, props_by_id):
+    """Create or update one TaxReturnEntry from a parsed Schedule E row."""
+    def _norm_addr(text):
+        return re.sub(r'\s+', ' ', (text or '')).strip().upper()
+
+    kind = entry.get("property_kind", "rental")
+    if kind == "primary":
+        matched = primary_prop
+        address = matched.address if matched else "Primary Residence"
+    else:
+        address = entry.get("address")
+        norm = _norm_addr(address)
+        if norm in override_map:
+            # Explicit user choice wins: a valid id links it, 0/None keeps it
+            # unassigned regardless of what address matching would do.
+            matched = props_by_id.get(override_map[norm])
+        else:
+            # Only ever link to a property already in the user's Property List —
+            # an unmatched Schedule E row is kept as an unassigned tax entry
+            # (property_id=None) rather than auto-creating one.
+            matched = _match_property(address, props)
+
+    # Dedupe on the resolved property when we have one — the raw parsed address
+    # text varies slightly between re-uploads of the same return (OCR/whitespace
+    # differences), so keying on it directly created duplicate rows.
+    dedup_filter = dict(owner_id=owner_id, tax_year=year, property_kind=kind)
+    if matched:
+        dedup_filter["property_id"] = matched.id
+    else:
+        dedup_filter["address"] = address
+    existing = db.query(models.TaxReturnEntry).filter_by(**dedup_filter).first()
+    if existing is None and matched:
+        # Re-link a row imported earlier while unmatched (property_id NULL) —
+        # same owner/year/kind and an address that resolves to this property —
+        # instead of leaving an orphan and creating a duplicate.
+        for orphan in db.query(models.TaxReturnEntry).filter_by(
+            owner_id=owner_id, tax_year=year, property_kind=kind, property_id=None
+        ).all():
+            if _match_property(orphan.address, [matched]) is not None:
+                existing = orphan
+                break
+    rec = existing or models.TaxReturnEntry(
+        owner_id=owner_id,
+        tax_year=year,
+        property_kind=kind,
+        address=address,
+    )
+    rec.property_id = matched.id if matched else None
+    rec.document_id = document_id
+
+    for field in TAX_ENTRY_FIELDS:
+        setattr(rec, field, entry.get(field, 0.0) or 0.0)
+    for field in TAX_ENTRY_EXTRA_FIELDS:
+        setattr(rec, field, entry.get(field))
+    for field in TAX_ENTRY_JSON_FIELDS:
+        default = [] if field == "unresolved_fields" else {}
+        setattr(rec, field, json.dumps(entry.get(field, default)))
+
+    if matched:
+        # land_value/construction_price default to 0, which is indistinguishable
+        # from "never entered" — so treat neither being set as "split missing".
+        land_split_missing = not (matched.construction_price or matched.land_value)
+        basis = _depreciable_basis(matched)
+        period = matched.depreciation_years or 27.5
+        accumulated = entry.get("depreciation") or 0.0
+        try:
+            purchase_year = int(re.search(r'(?:19|20)\d{2}', matched.purchase_date or "").group(0))
+            years_elapsed = max(0, int(year) - purchase_year + 1)
+            if basis and period:
+                accumulated = min(basis, round((basis / period) * years_elapsed, 2))
+        except Exception:
+            pass
+
+        rec.depreciable_basis = basis
+        rec.annual_straight_line_depreciation = round(basis / period, 2) if basis and period else 0.0
+        rec.accumulated_depreciation = accumulated
+        rec.remaining_depreciable_basis = max(basis - accumulated, 0)
+        rec.years_remaining = (
+            round(rec.remaining_depreciable_basis / rec.annual_straight_line_depreciation, 2)
+            if rec.annual_straight_line_depreciation else 0.0
+        )
+
+        if land_split_missing and entry.get("depreciation"):
+            unresolved = entry.get("unresolved_fields") or []
+            unresolved.append(
+                "Land/building split missing; depreciable basis estimated at 75% "
+                "of purchase price. Enter land value or construction price to correct it."
+            )
+            rec.unresolved_fields = json.dumps(unresolved)
+
+    if not existing:
+        db.add(rec)
 
 
 @router.get("/{prop_id}/performance")
