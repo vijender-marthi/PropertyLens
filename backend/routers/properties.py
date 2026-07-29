@@ -7647,6 +7647,16 @@ def import_tax_return_from_parsed(
         else:
             dedup_filter["address"] = address
         existing = db.query(models.TaxReturnEntry).filter_by(**dedup_filter).first()
+        if existing is None and matched:
+            # Re-link a row imported earlier while unmatched (property_id NULL)
+            # — same owner/year/kind and an address that resolves to this
+            # property — instead of leaving an orphan and creating a duplicate.
+            for orphan in db.query(models.TaxReturnEntry).filter_by(
+                owner_id=owner_id, tax_year=year, property_kind=kind, property_id=None
+            ).all():
+                if _match_property(orphan.address, [matched]) is not None:
+                    existing = orphan
+                    break
         rec = existing or models.TaxReturnEntry(
             owner_id=owner_id,
             tax_year=year,
