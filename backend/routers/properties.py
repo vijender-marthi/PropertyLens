@@ -7663,6 +7663,17 @@ def import_tax_return_from_parsed(
     )
     props_by_id = {p.id: p for p in props}
 
+    # Deselecting a property in the import list means "remove it from Schedule E",
+    # not just "skip". When a selection is given, drop this document's rows for
+    # the year whose address isn't in the selection, so re-importing without a
+    # property (e.g. the Concord Manhattan units) clears it from the reconciliation.
+    if include_set is not None and document_id is not None:
+        for stale in db.query(models.TaxReturnEntry).filter_by(
+            owner_id=owner_id, tax_year=year, document_id=document_id
+        ).all():
+            if _norm_addr(stale.address) not in include_set:
+                db.delete(stale)
+
     count = 0
     errors = []
     for entry in parsed.get("properties", []):
