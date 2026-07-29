@@ -471,9 +471,14 @@ const downloadTemplate = () => {
       setDeletingDocument(false)
     }
   }
-  const handleApply = async (id) => {
+  const handleApply = async (id, selectedAddresses) => {
 if (isDemo) { toast.error('Applying uploaded documents is a premium feature. Use Manual Entry in demo mode.'); return }
-try { const { data } = await docAPI.apply(id); toast(data.message, { icon: Object.keys(data.applied||{}).length ? '✅' : 'ℹ️' }) } catch(e) { toast.error(e.response?.data?.detail||'Apply failed') }
+try {
+  const body = selectedAddresses ? { selected_property_addresses: selectedAddresses } : {}
+  const { data } = await docAPI.apply(id, body)
+  toast(data.message, { icon: Object.keys(data.applied||{}).length ? '✅' : 'ℹ️' })
+  loadDocs()
+} catch(e) { toast.error(e.response?.data?.detail||'Apply failed') }
 }
 const handleReparse = async (id) => {
 if (isDemo) { toast.error('Re-parsing uploaded documents is a premium feature. Use Manual Entry in demo mode.'); return }
@@ -1313,7 +1318,7 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                 {groupDocs.map((doc) => (
                   <DocRow key={doc.id} doc={doc} properties={properties} isDemo={isDemo}
                     onDelete={() => requestDelete(doc)}
-                    onApply={() => handleApply(doc.id)}
+                    onApply={(addrs) => handleApply(doc.id, addrs)}
                     onReparse={() => handleReparse(doc.id)} />
                 ))}
               </div>
@@ -1344,6 +1349,28 @@ function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onRep
   const linkedProperty = properties.find((p) => String(p.id) === String(doc.property_id))
   const hasData    = Object.keys(data).length > 0 && !data.parse_error
   const applicable = hasData && !data.raw_text_preview
+
+  const isTaxReturn = doc.doc_category === 'tax_return'
+  const taxProperties = isTaxReturn ? (data.properties || []) : []
+  // Schedule E addresses the user has UNchecked. Empty = import all (default).
+  const [excludedAddrs, setExcludedAddrs] = useState(() => new Set())
+  const toggleAddr = (addr) => setExcludedAddrs((prev) => {
+    const next = new Set(prev)
+    if (next.has(addr)) next.delete(addr)
+    else next.add(addr)
+    return next
+  })
+  const selectedAddresses = taxProperties
+    .map((p) => p.address)
+    .filter((a) => a && !excludedAddrs.has(a))
+  const applyClick = () => {
+    if (isTaxReturn) {
+      if (!expanded) { setExpanded(true); setShowMarkdown(false) }
+      onApply(taxProperties.length ? selectedAddresses : undefined)
+    } else {
+      onApply()
+    }
+  }
 
   const toggleMarkdown = async () => {
     if (showMarkdown) { setShowMarkdown(false); return }
@@ -1406,9 +1433,9 @@ className="p-1.5 rounded text-slate-400 dark:text-gray-500 hover:text-slate-700 
  <RefreshCw className="w-3.5 h-3.5" />
  </button>
  {applicable && (
- <button onClick={onApply} disabled={isDemo} title={isDemo ? 'Premium feature' : 'Apply extracted data to property'}
+ <button onClick={applyClick} disabled={isDemo} title={isDemo ? 'Premium feature' : (isTaxReturn ? 'Import the selected Schedule E properties into your tax figures' : 'Apply extracted data to property')}
 className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300 hover:text-emerald-800 dark:hover:text-emerald-100 px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors disabled:cursor-not-allowed disabled:opacity-40">
- <Wand2 className="w-3.5 h-3.5" /> {isDemo ? 'Premium' : 'Apply'}
+ <Wand2 className="w-3.5 h-3.5" /> {isDemo ? 'Premium' : (isTaxReturn ? `Import${taxProperties.length ? ` (${selectedAddresses.length})` : ''}` : 'Apply')}
  </button>
  )}
  <button onClick={onDelete}
@@ -1438,7 +1465,44 @@ className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 da
                 </div>
               ))}
           </div>
-          {(data.properties || []).length > 0 && (
+          {isTaxReturn && taxProperties.length > 0 ? (
+            <div className="mt-2 text-[11px] text-slate-500 dark:text-gray-400">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-slate-400 dark:text-gray-500">
+                  Properties to import — {selectedAddresses.length} of {taxProperties.filter((p) => p.address).length} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setExcludedAddrs(
+                    excludedAddrs.size === 0
+                      ? new Set(taxProperties.map((p) => p.address).filter(Boolean))
+                      : new Set()
+                  )}
+                  className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
+                >
+                  {excludedAddrs.size === 0 ? 'Deselect all' : 'Select all'}
+                </button>
+              </div>
+              <div className="space-y-1">
+                {taxProperties.map((p, i) => (
+                  <label key={i} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      disabled={!p.address}
+                      checked={Boolean(p.address) && !excludedAddrs.has(p.address)}
+                      onChange={() => toggleAddr(p.address)}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="flex-1 truncate text-slate-600 dark:text-gray-300">{p.address || 'Unknown address'}</span>
+                    {p.rents_received != null && (
+                      <span className="shrink-0 tabular-nums text-slate-400 dark:text-gray-500">{formatCurrency(p.rents_received)}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] text-slate-400 dark:text-gray-500">Click <strong>Import</strong> above to save the checked properties into your Schedule E tax figures.</p>
+            </div>
+          ) : (data.properties || []).length > 0 && (
             <div className="mt-1.5 text-[11px] text-slate-500 dark:text-gray-400">
               <span className="block text-slate-400 dark:text-gray-500">Properties:</span>
               {data.properties.map((p, i) => (
