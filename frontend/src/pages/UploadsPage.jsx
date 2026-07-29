@@ -483,10 +483,12 @@ const downloadTemplate = () => {
       setDeletingDocument(false)
     }
   }
-  const handleApply = async (id, selectedAddresses) => {
+  const handleApply = async (id, selectedAddresses, propertyMap) => {
 if (isDemo) { toast.error('Applying uploaded documents is a premium feature. Use Manual Entry in demo mode.'); return }
 try {
-  const body = selectedAddresses ? { selected_property_addresses: selectedAddresses } : {}
+  const body = {}
+  if (selectedAddresses) body.selected_property_addresses = selectedAddresses
+  if (propertyMap && Object.keys(propertyMap).length) body.property_map = propertyMap
   const { data } = await docAPI.apply(id, body)
   toast(data.message, { icon: Object.keys(data.applied||{}).length ? '✅' : 'ℹ️' })
   loadDocs()
@@ -1374,7 +1376,7 @@ onChange={(e) => { setCategory('tax_return'); handleUpload([...e.target.files], 
                 {groupDocs.map((doc) => (
                   <DocRow key={doc.id} doc={doc} properties={properties} isDemo={isDemo}
                     onDelete={() => requestDelete(doc)}
-                    onApply={(addrs) => handleApply(doc.id, addrs)}
+                    onApply={(addrs, pmap) => handleApply(doc.id, addrs, pmap)}
                     onReparse={() => handleReparse(doc.id)} />
                 ))}
               </div>
@@ -1408,8 +1410,17 @@ function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onRep
 
   const isTaxReturn = doc.doc_category === 'tax_return'
   const taxProperties = isTaxReturn ? (data.properties || []) : []
+  // Candidate properties for the mapping dropdown (rentals first), from the
+  // backend annotation; fall back to the page's property list.
+  const candidates = (data.match_candidates || properties).filter(
+    (c) => String(c.usage_type || 'Rental').toLowerCase() !== 'primary'
+  )
   // Schedule E addresses the user has UNchecked. Empty = import all (default).
   const [excludedAddrs, setExcludedAddrs] = useState(() => new Set())
+  // { address: property_id } chosen in the mapping dropdowns. '' = unassigned.
+  const [propMap, setPropMap] = useState({})
+  const mappedId = (p) => (p.address in propMap ? propMap[p.address] : (p.matched_property_id ?? ''))
+  const setMapping = (addr, val) => setPropMap((prev) => ({ ...prev, [addr]: val === '' ? '' : Number(val) }))
   const toggleAddr = (addr) => setExcludedAddrs((prev) => {
     const next = new Set(prev)
     if (next.has(addr)) next.delete(addr)
@@ -1422,7 +1433,15 @@ function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onRep
   const applyClick = () => {
     if (isTaxReturn) {
       if (!expanded) { setExpanded(true); setShowMarkdown(false) }
-      onApply(taxProperties.length ? selectedAddresses : undefined)
+      // Send the resolved mapping for every included row (chosen id, or 0 to
+      // force unassigned) so the user's choice always wins over auto-matching.
+      const pm = {}
+      taxProperties.forEach((p) => {
+        if (!p.address || excludedAddrs.has(p.address)) return
+        const id = mappedId(p)
+        pm[p.address] = id === '' || id == null ? 0 : Number(id)
+      })
+      onApply(taxProperties.length ? selectedAddresses : undefined, pm)
     } else {
       onApply()
     }
@@ -1539,24 +1558,46 @@ className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 da
                   {excludedAddrs.size === 0 ? 'Deselect all' : 'Select all'}
                 </button>
               </div>
-              <div className="space-y-1">
-                {taxProperties.map((p, i) => (
-                  <label key={i} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      disabled={!p.address}
-                      checked={Boolean(p.address) && !excludedAddrs.has(p.address)}
-                      onChange={() => toggleAddr(p.address)}
-                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="flex-1 truncate text-slate-600 dark:text-gray-300">{p.address || 'Unknown address'}</span>
-                    {p.rents_received != null && (
-                      <span className="shrink-0 tabular-nums text-slate-400 dark:text-gray-500">{formatCurrency(p.rents_received)}</span>
-                    )}
-                  </label>
-                ))}
+              <div className="space-y-1.5">
+                {taxProperties.map((p, i) => {
+                  const included = Boolean(p.address) && !excludedAddrs.has(p.address)
+                  const cur = mappedId(p)
+                  const autoMatched = p.matched_property_id != null
+                  return (
+                    <div key={i} className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="checkbox"
+                        disabled={!p.address}
+                        checked={included}
+                        onChange={() => toggleAddr(p.address)}
+                        className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-gray-300" title={p.address}>{p.address || 'Unknown address'}</span>
+                      {p.rents_received != null && (
+                        <span className="shrink-0 tabular-nums text-slate-400 dark:text-gray-500">{formatCurrency(p.rents_received)}</span>
+                      )}
+                      <span className="shrink-0 text-slate-300 dark:text-gray-600">→</span>
+                      <select
+                        value={cur === '' || cur == null ? '' : String(cur)}
+                        disabled={!included}
+                        onChange={(e) => setMapping(p.address, e.target.value)}
+                        aria-label={`Map ${p.address || 'row'} to a property`}
+                        className={`shrink-0 rounded-md border px-1.5 py-1 text-[11px] disabled:opacity-40 dark:bg-gray-900 ${
+                          included && (cur === '' || cur == null)
+                            ? 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300'
+                            : 'border-slate-200 text-slate-700 dark:border-gray-600 dark:text-gray-200'
+                        }`}
+                      >
+                        <option value="">{autoMatched ? 'Leave unassigned' : '⚠ Pick a property…'}</option>
+                        {candidates.map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name}{autoMatched && c.id === p.matched_property_id ? ' (matched)' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })}
               </div>
-              <p className="mt-1.5 text-[10px] text-slate-400 dark:text-gray-500">Click <strong>Import</strong> above to save the checked properties into your Schedule E tax figures.</p>
+              <p className="mt-1.5 text-[10px] text-slate-400 dark:text-gray-500">Each row maps to a property on the right — change it if the auto-match is wrong. Then click <strong>Import</strong> above.</p>
             </div>
           ) : (data.properties || []).length > 0 && (
             <div className="mt-1.5 text-[11px] text-slate-500 dark:text-gray-400">

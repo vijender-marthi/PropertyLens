@@ -81,6 +81,7 @@ from routers.properties import (
     annual_expense_source_key,
     import_tax_return,
     import_tax_return_from_parsed,
+    annotate_tax_property_matches,
 )
 from services.document_parser import parse_document
 from services.document_conversion import MarkItDownConverter
@@ -122,6 +123,9 @@ class UploadAcceptRequest(BaseModel):
     # Tax returns only: raw Schedule E addresses the user checked in the preview.
     # None = import every parsed property; a list = import only those addresses.
     selected_property_addresses: Optional[List[str]] = None
+    # Tax returns only: {schedule-E address: property_id} overrides chosen in the
+    # import UI. Wins over auto-matching; 0/None forces the row unassigned.
+    property_map: Optional[Dict[str, int]] = None
 
 
 class SetupImportApplyRequest(BaseModel):
@@ -2002,6 +2006,7 @@ async def _commit_parsed_document(
     replace_document_id: Optional[int] = None,
     apply_extracted: bool = True,
     selected_property_addresses: Optional[List[str]] = None,
+    property_map: Optional[Dict[str, int]] = None,
 ):
     content_hash = _file_hash(save_path)
 
@@ -2137,7 +2142,8 @@ async def _commit_parsed_document(
         try:
             tax_entries_imported = await import_tax_return(
                 db, current_user.id, doc.id, str(save_path),
-                include_addresses=selected_property_addresses)
+                include_addresses=selected_property_addresses,
+                property_map=property_map)
         except Exception as e:
             tax_entries_imported = 0
             tax_import_error = str(e)
@@ -2242,6 +2248,12 @@ async def preview_upload_document(
         match_type = "similar"
     duplicate_of = _duplicate_of_payload(duplicate_doc, match_type) if duplicate_doc else None
 
+    match_candidates = None
+    if category == "tax_return" and extracted.get("properties"):
+        annotated, match_candidates = annotate_tax_property_matches(
+            db, current_user.id, extracted.get("properties"))
+        extracted = {**extracted, "properties": annotated}
+
     return {
         "pending_upload_id": pending_upload_id,
         "original_filename": file.filename,
@@ -2249,6 +2261,7 @@ async def preview_upload_document(
         "category": category,
         "file_size": file_size,
         "extracted_data": extracted,
+        "match_candidates": match_candidates,
         "document_config": config_as_dict(category),
         "extraction_schema": extraction_schema(category, extracted),
         "requiredFields": _loan_document_required_fields(category, extracted),
@@ -2309,6 +2322,7 @@ async def accept_upload_document(
             replace_document_id=req.replace_document_id,
             apply_extracted=req.apply_extracted,
             selected_property_addresses=req.selected_property_addresses,
+            property_map=req.property_map,
         )
     except Exception:
         db.rollback()
@@ -3365,6 +3379,18 @@ def list_all_documents(
     for d in docs:
         ensure_document_record_uuid(d)
     db.commit()
+
+    def _doc_extracted(d):
+        data = _safe_extracted_data(d)
+        # Annotate tax-return rows with their suggested property match + the
+        # picker's candidate list, so the Documents checklist can show and let
+        # the user override the mapping before Import.
+        if d.doc_category == "tax_return" and data.get("properties"):
+            annotated, candidates = annotate_tax_property_matches(
+                db, current_user.id, data.get("properties"))
+            data = {**data, "properties": annotated, "match_candidates": candidates}
+        return data
+
     return [
         {
             "id": d.id,
@@ -3377,7 +3403,7 @@ def list_all_documents(
             "doc_category": d.doc_category,
             "module_tags": [tag for tag in (d.module_tags or "").split(",") if tag],
             "file_size": d.file_size,
-            "extracted_data": _safe_extracted_data(d),
+            "extracted_data": _doc_extracted(d),
             "document_config": config_as_dict(d.doc_category),
             "extraction_schema": extraction_schema(d.doc_category, _safe_extracted_data(d)),
             "loan_account_number": d.loan_account_number,
@@ -4487,6 +4513,8 @@ async def reprocess_all_documents(
 class ApplyDocumentRequest(BaseModel):
     # Tax returns only: raw Schedule E addresses to import (None = every property).
     selected_property_addresses: Optional[List[str]] = None
+    # Tax returns only: {schedule-E address: property_id} overrides (0/None = unassigned).
+    property_map: Optional[Dict[str, int]] = None
 
 
 @router.post("/{doc_id}/apply")
@@ -4515,6 +4543,7 @@ def apply_document(
         count = import_tax_return_from_parsed(
             db, current_user.id, doc.id, data,
             include_addresses=req.selected_property_addresses,
+            property_map=req.property_map,
         )
         return {
             "applied": {"tax_entries": count} if count else {},

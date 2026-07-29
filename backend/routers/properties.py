@@ -7498,6 +7498,34 @@ def _match_property(address: str, props):
     return None
 
 
+def annotate_tax_property_matches(db, owner_id, properties):
+    """Annotate parsed Schedule E rows with the managed property each resolves
+    to, so the upload/import UI can show the mapping and let the user override
+    it. Returns a new list; does not mutate the input. Also exposes the list of
+    candidate properties for the picker."""
+    props = db.query(models.Property).filter(
+        models.Property.owner_id == owner_id
+    ).all()
+    annotated = []
+    for row in (properties or []):
+        matched = (
+            None if row.get("property_kind") == "primary"
+            else _match_property(row.get("address"), props)
+        )
+        item = dict(row)
+        item["matched_property_id"] = matched.id if matched else None
+        item["matched_property_name"] = (
+            (matched.name or matched.address) if matched else None
+        )
+        annotated.append(item)
+    candidates = [
+        {"id": p.id, "name": p.name or _default_property_name(p.address, p.id),
+         "address": p.address, "usage_type": p.usage_type or "Rental"}
+        for p in props
+    ]
+    return annotated, candidates
+
+
 TAX_ENTRY_FIELDS = ("rents_received", "mortgage_interest", "property_taxes",
 "depreciation", "total_expenses", "net_income",
 "days_rented", "personal_use_days")
@@ -7573,6 +7601,7 @@ async def import_tax_return(
     document_id,
     filepath: str,
     include_addresses: Optional[List[str]] = None,
+    property_map: Optional[Dict[str, int]] = None,
 ) -> int:
     """Parse a 1040 return and upsert per-property tax entries.
 
@@ -7587,7 +7616,8 @@ async def import_tax_return(
 
     parsed = parse_tax_return_properties(filepath)
     return import_tax_return_from_parsed(
-        db, owner_id, document_id, parsed, include_addresses=include_addresses)
+        db, owner_id, document_id, parsed,
+        include_addresses=include_addresses, property_map=property_map)
 
 
 def import_tax_return_from_parsed(
@@ -7596,12 +7626,17 @@ def import_tax_return_from_parsed(
     document_id,
     parsed: Dict[str, Any],
     include_addresses: Optional[List[str]] = None,
+    property_map: Optional[Dict[str, int]] = None,
 ) -> int:
     """Upsert per-property tax entries from an already-parsed return dict.
 
     Shares the matching/dedup logic with :func:`import_tax_return`; used when the
     parse is re-run from a document's stored ``extracted_data`` (the Apply
     action) so the original PDF no longer needs to be on disk.
+
+    ``property_map`` is an optional {address: property_id} override the user
+    chose in the import UI. It wins over address auto-matching; a 0/falsy value
+    forces the row to stay unassigned.
     """
     year = parsed.get("tax_year")
     if not year:
@@ -7621,6 +7656,12 @@ def import_tax_return_from_parsed(
         {_norm_addr(a) for a in include_addresses}
         if include_addresses is not None else None
     )
+    # User-chosen {address: property_id} overrides, keyed by normalized address.
+    override_map = (
+        {_norm_addr(a): pid for a, pid in property_map.items()}
+        if property_map else {}
+    )
+    props_by_id = {p.id: p for p in props}
 
     count = 0
     for entry in parsed.get("properties", []):
@@ -7631,11 +7672,17 @@ def import_tax_return_from_parsed(
             matched = primary_prop
             address = matched.address if matched else "Primary Residence"
         else:
-            # Only ever link to a property already in the user's Property
-            # List — an unmatched Schedule E row is kept as an unassigned tax
-            # entry (property_id=None) rather than auto-creating a new one.
-            matched = _match_property(entry.get("address"), props)
             address = entry.get("address")
+            norm = _norm_addr(address)
+            if norm in override_map:
+                # Explicit user choice wins: a valid id links it, 0/None keeps
+                # it unassigned regardless of what address matching would do.
+                matched = props_by_id.get(override_map[norm])
+            else:
+                # Only ever link to a property already in the user's Property
+                # List — an unmatched Schedule E row is kept as an unassigned
+                # tax entry (property_id=None) rather than auto-creating one.
+                matched = _match_property(address, props)
 
         # Dedupe on the resolved property when we have one — the raw parsed
         # address text varies slightly between re-uploads of the same return
