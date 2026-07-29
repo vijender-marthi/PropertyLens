@@ -263,6 +263,14 @@ function ScheduleEReconciliation({ properties, year }) {
     return () => { cancelled = true }
   }, [selYear, reloadKey])
 
+  const [debug, setDebug] = useState(null)
+  const [showDebug, setShowDebug] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    propAPI.scheduleEDebug().then((r) => { if (!cancelled) setDebug(r.data) }).catch(() => { if (!cancelled) setDebug(null) })
+    return () => { cancelled = true }
+  }, [reloadKey])
+
   const assign = (entryId, propertyId) => {
     if (!propertyId) return
     propAPI.scheduleEAssign(entryId, Number(propertyId))
@@ -392,6 +400,61 @@ function ScheduleEReconciliation({ properties, year }) {
           )
         })
       )}
+
+      <div className="card">
+        <button type="button" onClick={() => setShowDebug((v) => !v)}
+          className="flex w-full items-center justify-between text-left text-xs font-semibold text-gray-500 dark:text-neutral-400">
+          <span>Diagnostics — what's actually stored ({debug?.entryCount ?? 0} tax entr{(debug?.entryCount ?? 0) === 1 ? 'y' : 'ies'})</span>
+          <ChevronDown className={`h-4 w-4 transition-transform ${showDebug ? 'rotate-180' : ''}`} />
+        </button>
+        {showDebug ? (
+          <div className="mt-3 space-y-3 text-xs">
+            {!debug || debug.entryCount === 0 ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                No Schedule E tax entries are stored in your account at all. That means the <strong>Import</strong> step on the Documents page hasn't successfully saved any rows yet — open a tax return there, expand it, and click Import.
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {(debug.byYear || []).map((y) => (
+                    <button key={y.year} type="button" onClick={() => setSelYear(y.year)}
+                      className={`rounded-full border px-2.5 py-1 font-medium ${y.year === selYear ? 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'border-gray-200 text-gray-600 dark:border-neutral-700 dark:text-neutral-300'}`}>
+                      {y.year}: {y.total} row{y.total === 1 ? '' : 's'} ({y.matched} linked, {y.unmatched} unmatched)
+                    </button>
+                  ))}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] border-collapse">
+                    <thead>
+                      <tr className="text-left text-gray-400 dark:text-neutral-500">
+                        <th className="py-1 pr-3 font-medium">Year</th>
+                        <th className="py-1 pr-3 font-medium">Return address</th>
+                        <th className="py-1 pr-3 font-medium">Linked property</th>
+                        <th className="py-1 pr-3 text-right font-medium">Rents</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(debug.entries || []).map((e) => (
+                        <tr key={e.id} className="border-t border-gray-100 dark:border-neutral-800">
+                          <td className="py-1 pr-3 tabular-nums">{e.taxYear}</td>
+                          <td className="py-1 pr-3 text-gray-600 dark:text-neutral-300">{e.address || '—'}</td>
+                          <td className="py-1 pr-3">
+                            {e.linkedName
+                              ? <span className="text-emerald-600 dark:text-emerald-400">{e.linkedName}</span>
+                              : <span className="text-amber-600 dark:text-amber-400">unmatched</span>}
+                          </td>
+                          <td className="py-1 pr-3 text-right tabular-nums">{formatCurrency(e.rentsReceived)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-gray-400 dark:text-neutral-500">Click a year chip to jump the reconciliation there. Rows shown as “unmatched” won’t appear per-property until linked — use the mapping dropdowns on the Documents page and re-Import.</p>
+              </>
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

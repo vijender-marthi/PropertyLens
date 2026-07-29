@@ -106,6 +106,7 @@ export const propAPI = {
   taxEntries: (propId) => api.get(`/properties/${propId}/tax-entries`),
   scheduleE: (propId, year) => api.get(`/properties/${propId}/taxes/schedule-e`, { params: year ? { year } : {} }),
   scheduleEUnmatched: (year) => api.get('/properties/analysis/schedule-e-unmatched', { params: year ? { year } : {} }),
+  scheduleEDebug: () => api.get('/properties/analysis/schedule-e-debug'),
   scheduleEAssign: (entryId, propertyId) => api.post('/properties/analysis/schedule-e-assign', { entry_id: entryId, property_id: propertyId }),
   upsertYearEntry: (propId, data) => api.post(`/properties/${propId}/tax-entries`, data),
   taxComparison: () => api.get('/properties/tax-returns/comparison'),

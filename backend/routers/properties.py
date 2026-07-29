@@ -9411,6 +9411,55 @@ def list_unmatched_schedule_e(
     }
 
 
+@router.get("/analysis/schedule-e-debug")
+def schedule_e_debug(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Plain readout of the caller's Schedule E state — every stored tax entry
+    with its linked property (or 'unmatched'), plus the property list — so the
+    UI can show exactly what import produced without any computation in between."""
+    props = db.query(models.Property).filter(
+        models.Property.owner_id == current_user.id
+    ).all()
+    props_by_id = {p.id: p for p in props}
+    entries = (
+        db.query(models.TaxReturnEntry)
+        .filter(models.TaxReturnEntry.owner_id == current_user.id)
+        .order_by(models.TaxReturnEntry.tax_year.desc(), models.TaxReturnEntry.id)
+        .all()
+    )
+    by_year: Dict[int, Dict[str, int]] = {}
+    entry_rows = []
+    for e in entries:
+        y = int(e.tax_year) if e.tax_year else 0
+        bucket = by_year.setdefault(y, {"total": 0, "matched": 0, "unmatched": 0})
+        bucket["total"] += 1
+        linked = props_by_id.get(e.property_id) if e.property_id else None
+        bucket["matched" if linked else "unmatched"] += 1
+        entry_rows.append({
+            "id": e.id,
+            "taxYear": e.tax_year,
+            "propertyId": e.property_id,
+            "linkedName": (linked.name or linked.address) if linked else None,
+            "address": e.address,
+            "rentsReceived": round(float(e.rents_received or 0), 2),
+            "documentId": e.document_id,
+        })
+    return {
+        "entryCount": len(entries),
+        "byYear": [
+            {"year": y, **counts} for y, counts in sorted(by_year.items(), reverse=True)
+        ],
+        "entries": entry_rows,
+        "properties": [
+            {"id": p.id, "name": p.name or _default_property_name(p.address, p.id),
+             "address": p.address, "usageType": p.usage_type or "Rental"}
+            for p in props
+        ],
+    }
+
+
 @router.post("/analysis/schedule-e-assign")
 def assign_schedule_e_entry(
     entry_id: int = Body(..., embed=True),
