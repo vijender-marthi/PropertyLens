@@ -1567,38 +1567,51 @@ className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 da
                   const included = Boolean(p.address) && !excludedAddrs.has(p.address)
                   const cur = mappedId(p)
                   const autoMatched = p.matched_property_id != null
+                  const field = (label, val) => (
+                    <span>{label} <span className="tabular-nums text-slate-600 dark:text-gray-300">{formatCurrency(val)}</span></span>
+                  )
                   return (
-                    <div key={i} className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="checkbox"
-                        disabled={!p.address}
-                        checked={included}
-                        onChange={() => toggleAddr(p.address)}
-                        className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-gray-300" title={p.address}>{p.address || 'Unknown address'}</span>
-                      {p.rents_received != null && (
-                        <span className="shrink-0 tabular-nums text-slate-400 dark:text-gray-500">{formatCurrency(p.rents_received)}</span>
-                      )}
-                      <span className="shrink-0 text-slate-300 dark:text-gray-600">→</span>
-                      <select
-                        value={cur === '' || cur == null ? '' : String(cur)}
-                        disabled={!included}
-                        onChange={(e) => setMapping(p.address, e.target.value)}
-                        aria-label={`Map ${p.address || 'row'} to a property`}
-                        className={`shrink-0 rounded-md border px-1.5 py-1 text-[11px] disabled:opacity-40 dark:bg-gray-900 ${
-                          included && (cur === '' || cur == null)
-                            ? 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300'
-                            : 'border-slate-200 text-slate-700 dark:border-gray-600 dark:text-gray-200'
-                        }`}
-                      >
-                        <option value="">{autoMatched ? 'Leave unassigned' : '⚠ Pick a property…'}</option>
-                        {candidates.map((c) => {
-                          const isPrimary = String(c.usage_type || 'Rental').toLowerCase() === 'primary'
-                          const tag = autoMatched && c.id === p.matched_property_id ? ' (matched)' : (isPrimary ? ' (primary home)' : '')
-                          return <option key={c.id} value={String(c.id)}>{c.name}{tag}</option>
-                        })}
-                      </select>
+                    <div key={i} className="rounded-md border border-slate-100 dark:border-gray-700/60 px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="checkbox"
+                          disabled={!p.address}
+                          checked={included}
+                          onChange={() => toggleAddr(p.address)}
+                          className="h-3.5 w-3.5 shrink-0 rounded border-slate-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-gray-300" title={p.address}>{p.address || 'Unknown address'}</span>
+                        {p.property_kind && (
+                          <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-slate-500 dark:bg-gray-700 dark:text-gray-300">{p.property_kind}</span>
+                        )}
+                        <span className="shrink-0 text-slate-300 dark:text-gray-600">→</span>
+                        <select
+                          value={cur === '' || cur == null ? '' : String(cur)}
+                          disabled={!included}
+                          onChange={(e) => setMapping(p.address, e.target.value)}
+                          aria-label={`Map ${p.address || 'row'} to a property`}
+                          className={`shrink-0 rounded-md border px-1.5 py-1 text-[11px] disabled:opacity-40 dark:bg-gray-900 ${
+                            included && (cur === '' || cur == null)
+                              ? 'border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-300'
+                              : 'border-slate-200 text-slate-700 dark:border-gray-600 dark:text-gray-200'
+                          }`}
+                        >
+                          <option value="">{autoMatched ? 'Leave unassigned' : '⚠ Pick a property…'}</option>
+                          {candidates.map((c) => {
+                            const isPrimary = String(c.usage_type || 'Rental').toLowerCase() === 'primary'
+                            const tag = autoMatched && c.id === p.matched_property_id ? ' (matched)' : (isPrimary ? ' (primary home)' : '')
+                            return <option key={c.id} value={String(c.id)}>{c.name}{tag}</option>
+                          })}
+                        </select>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-[10px] text-slate-400 dark:text-gray-500">
+                        {field('Rents', p.rents_received)}
+                        {field('Total exp', p.total_expenses)}
+                        {field('Mortgage int', p.mortgage_interest)}
+                        {field('Depreciation', p.depreciation)}
+                        {field('Net', p.net_income)}
+                        {p.confidence != null && <span>Confidence <span className="tabular-nums text-slate-600 dark:text-gray-300">{Math.round((p.confidence || 0) * 100)}%</span></span>}
+                      </div>
                     </div>
                   )
                 })}
