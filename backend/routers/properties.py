@@ -9136,6 +9136,26 @@ def get_schedule_e_capture(
         models.TaxReturnEntry.property_id == prop_id,
     ).all()
     filed_by_year = {int(entry.tax_year): entry for entry in filed_entries if entry.tax_year}
+
+    # Resilience: also surface unmatched Schedule E rows (property_id IS NULL)
+    # whose stored address resolves to THIS property. Import links rows to
+    # properties by address, but if that failed — address stored differently, or
+    # the return was imported before the property existed — the filed figures
+    # would otherwise never appear here even though they were parsed and stored.
+    # Only fills a year that has no directly-linked entry, so linked rows win.
+    unmatched_rows = db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.owner_id == prop.owner_id,
+        models.TaxReturnEntry.property_id.is_(None),
+    ).all()
+    for entry in unmatched_rows:
+        if not entry.tax_year:
+            continue
+        y = int(entry.tax_year)
+        if y in filed_by_year:
+            continue
+        if _match_property(entry.address, [prop]) is not None:
+            filed_by_year[y] = entry
+
     current_year = date.today().year
     available_years = sorted(set(yearly_by_year) | set(filed_by_year) | {current_year})
     selected_year = int(year or lifetime_payload.get("tax_summary", {}).get("current_year") or (available_years[-1] if available_years else current_year))
