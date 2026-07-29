@@ -145,7 +145,7 @@ export const docAPI = {
   lifecycle: (propertyId) => api.get(`/documents/property/${propertyId}/lifecycle`),
   resolveLifecycle: (propertyId) => api.post(`/documents/property/${propertyId}/resolve-lifecycle`),
   listAll: () => api.get('/documents'),
-  apply: (docId) => api.post(`/documents/${docId}/apply`),
+  apply: (docId, data = {}) => api.post(`/documents/${docId}/apply`, data),
   reparse: (docId) => api.post(`/documents/${docId}/reparse`),
   reprocessAll: () => api.post('/documents/reprocess-all'),
   markdown: (docId) => api.get(`/documents/${docId}/markdown`),

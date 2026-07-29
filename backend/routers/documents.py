@@ -9,7 +9,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 import models
@@ -80,6 +80,7 @@ from routers.properties import (
     _servicing_transfer_candidates,
     annual_expense_source_key,
     import_tax_return,
+    import_tax_return_from_parsed,
 )
 from services.document_parser import parse_document
 from services.document_conversion import MarkItDownConverter
@@ -4483,9 +4484,15 @@ async def reprocess_all_documents(
     }
 
 
+class ApplyDocumentRequest(BaseModel):
+    # Tax returns only: raw Schedule E addresses to import (None = every property).
+    selected_property_addresses: Optional[List[str]] = None
+
+
 @router.post("/{doc_id}/apply")
 def apply_document(
     doc_id: int,
+    req: ApplyDocumentRequest = Body(default_factory=ApplyDocumentRequest),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -4497,8 +4504,30 @@ def apply_document(
     ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    data = json.loads(doc.extracted_data) if doc.extracted_data else {}
+
+    # A tax return is a "Common" document (not attached to a single property), so
+    # the per-property path below can't handle it. Re-import its Schedule E rows
+    # straight from the stored extracted_data — this is what actually persists
+    # the parsed figures into the user's Schedule E entries.
+    if doc.doc_category == "tax_return":
+        count = import_tax_return_from_parsed(
+            db, current_user.id, doc.id, data,
+            include_addresses=req.selected_property_addresses,
+        )
+        return {
+            "applied": {"tax_entries": count} if count else {},
+            "document_config": config_as_dict(doc.doc_category),
+            "extraction_schema": extraction_schema(doc.doc_category, data),
+            "message": (
+                f"Imported {count} Schedule E propert{'y' if count == 1 else 'ies'} into your tax figures"
+                if count else
+                "No Schedule E property rows were found to import"
+            ),
+        }
+
     if not doc.property:
-        data = json.loads(doc.extracted_data) if doc.extracted_data else {}
         return {
             "applied": {},
             "document_config": config_as_dict(doc.doc_category),
@@ -4506,7 +4535,6 @@ def apply_document(
             "message": "Common documents (tax returns) apply to all properties automatically",
         }
 
-    data = json.loads(doc.extracted_data) if doc.extracted_data else {}
     applied = _apply_extracted(db, doc.property, data, doc.doc_category)
 
     if not applied:

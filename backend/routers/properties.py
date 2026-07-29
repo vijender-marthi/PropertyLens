@@ -7586,6 +7586,23 @@ async def import_tax_return(
     from services.document_parser import parse_tax_return_properties
 
     parsed = parse_tax_return_properties(filepath)
+    return import_tax_return_from_parsed(
+        db, owner_id, document_id, parsed, include_addresses=include_addresses)
+
+
+def import_tax_return_from_parsed(
+    db: Session,
+    owner_id: int,
+    document_id,
+    parsed: Dict[str, Any],
+    include_addresses: Optional[List[str]] = None,
+) -> int:
+    """Upsert per-property tax entries from an already-parsed return dict.
+
+    Shares the matching/dedup logic with :func:`import_tax_return`; used when the
+    parse is re-run from a document's stored ``extracted_data`` (the Apply
+    action) so the original PDF no longer needs to be on disk.
+    """
     year = parsed.get("tax_year")
     if not year:
         return 0

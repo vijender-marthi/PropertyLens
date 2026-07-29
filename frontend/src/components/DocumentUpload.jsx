@@ -167,9 +167,12 @@ const [category, setCategory] = useState('auto')
     }
   }
 
-  const handleApply = async (docId) => {
+  const handleApply = async (docId, selectedAddresses) => {
     try {
-      const { data } = await docAPI.apply(docId)
+      const { data } = await docAPI.apply(
+        docId,
+        selectedAddresses ? { selected_property_addresses: selectedAddresses } : {},
+      )
       if (Object.keys(data.applied).length) {
         toast.success(data.message)
         onUploaded()
@@ -463,7 +466,7 @@ return (
                 selected={selected.has(doc.id)}
                 onToggle={() => toggleSelect(doc.id)}
                 onDelete={() => requestDelete(doc)}
-                onApply={() => handleApply(doc.id)} />
+                onApply={(addrs) => handleApply(doc.id, addrs)} />
             ))}
           </div>
         )}
@@ -489,6 +492,25 @@ function DocRow({ doc, catLabel, selected, onToggle, onDelete, onApply }) {
   const hasData = Object.keys(data).length > 0
   const applicable = hasData && !data.parse_error && !data.raw_text_preview
   const isDup = doc.is_duplicate
+
+  const isTaxReturn = doc.doc_category === 'tax_return'
+  const taxProperties = isTaxReturn ? (data.properties || []) : []
+  // Which Schedule E addresses to import. null = all (the default); a Set of
+  // addresses once the user starts unchecking.
+  const [excludedAddrs, setExcludedAddrs] = useState(() => new Set())
+  const toggleAddr = (addr) => setExcludedAddrs((prev) => {
+    const next = new Set(prev)
+    if (next.has(addr)) next.delete(addr)
+    else next.add(addr)
+    return next
+  })
+  const selectedAddresses = taxProperties
+    .map((p) => p.address)
+    .filter((a) => a && !excludedAddrs.has(a))
+  const applyTaxReturn = () => {
+    if (!expanded) setExpanded(true)
+    onApply(taxProperties.length ? selectedAddresses : undefined)
+  }
 
   return (
     <div className={`border rounded-lg overflow-hidden transition-colors ${
@@ -531,9 +553,14 @@ function DocRow({ doc, catLabel, selected, onToggle, onDelete, onApply }) {
           </button>
         )}
         {applicable && !isDup && (
-          <button onClick={onApply} title="Apply extracted data to property/loan"
+          <button
+            onClick={isTaxReturn ? applyTaxReturn : onApply}
+            title={isTaxReturn ? 'Import the selected Schedule E properties into your tax figures' : 'Apply extracted data to property/loan'}
             className="text-xs text-green-600 hover:text-green-800 flex items-center gap-1 shrink-0">
-            <Wand2 className="w-3.5 h-3.5" /> Apply
+            <Wand2 className="w-3.5 h-3.5" />
+            {isTaxReturn
+              ? `Import${taxProperties.length ? ` (${selectedAddresses.length})` : ''}`
+              : 'Apply'}
           </button>
         )}
         {isDup && (
@@ -565,7 +592,44 @@ function DocRow({ doc, catLabel, selected, onToggle, onDelete, onApply }) {
                 </div>
               ))}
           </div>
-          {(doc.extracted_data.properties || []).length > 0 && (
+          {isTaxReturn && taxProperties.length > 0 ? (
+            <div className="mt-2 text-[11px] text-gray-500">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-gray-400">
+                  Properties to import — {selectedAddresses.length} of {taxProperties.filter((p) => p.address).length} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setExcludedAddrs(
+                    excludedAddrs.size === 0
+                      ? new Set(taxProperties.map((p) => p.address).filter(Boolean))
+                      : new Set()
+                  )}
+                  className="text-blue-600 hover:text-blue-800"
+                >
+                  {excludedAddrs.size === 0 ? 'Deselect all' : 'Select all'}
+                </button>
+              </div>
+              <div className="space-y-1">
+                {taxProperties.map((p, i) => (
+                  <label key={i} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      disabled={!p.address}
+                      checked={Boolean(p.address) && !excludedAddrs.has(p.address)}
+                      onChange={() => toggleAddr(p.address)}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="flex-1 truncate text-gray-600">{p.address || 'Unknown address'}</span>
+                    {p.rents_received != null && (
+                      <span className="shrink-0 tabular-nums text-gray-400">{formatCurrency(p.rents_received)}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] text-gray-400">Click <strong>Import</strong> above to save the checked properties into your Schedule E tax figures.</p>
+            </div>
+          ) : (doc.extracted_data.properties || []).length > 0 && (
             <div className="mt-1.5 text-[11px] text-gray-500">
               <span className="block text-gray-400">Properties:</span>
               {doc.extracted_data.properties.map((p, i) => (
