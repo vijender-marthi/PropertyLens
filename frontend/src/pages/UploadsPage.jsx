@@ -122,6 +122,9 @@ const [mode, setMode] = useState('manual')
   const [reprocessing, setReprocessing] = useState(false)
   const [previewDoc, setPreviewDoc] = useState(null)
   const [acceptingPreview, setAcceptingPreview] = useState(false)
+  // Schedule E preview rows the user has UNchecked (by previewRowId). Empty set
+  // = import every property (the default). Reset whenever a new file previews.
+  const [excludedPreviewProps, setExcludedPreviewProps] = useState(() => new Set())
   const [uploadQueue, setUploadQueue] = useState([])
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deletingDocument, setDeletingDocument] = useState(false)
@@ -226,6 +229,7 @@ setMode(nextMode)
       fd.append('category', uploadCategory)
       fd.append('file', nextFile)
       const { data } = await docAPI.previewUpload(fd)
+      setExcludedPreviewProps(new Set())
       setPreviewDoc({
         ...data,
         selectedPropertyId: uploadPropertyId && uploadCategory !== 'tax_return' ? uploadPropertyId : null,
@@ -263,6 +267,13 @@ return
 }
 setAcceptingPreview(true)
     try {
+      const previewProps = previewDoc.extracted_data?.properties || []
+      const selectedAddresses = previewProps.length
+        ? previewProps
+            .filter((p, i) => !excludedPreviewProps.has(p.id || `${p.address || 'property'}-${i}`))
+            .map((p) => p.address)
+            .filter(Boolean)
+        : undefined
       const { data } = await docAPI.acceptUpload({
         pending_upload_id: previewDoc.pending_upload_id,
         original_filename: previewDoc.original_filename,
@@ -270,6 +281,7 @@ setAcceptingPreview(true)
         category: previewDoc.category,
         force,
         replace_document_id: replaceDocumentId,
+        selected_property_addresses: selectedAddresses,
       })
       if (data.tax_import_error) {
         toast.error(`Tax return uploaded, but import failed: ${data.tax_import_error}`, { duration: 8000 })
@@ -523,7 +535,27 @@ const previewFieldColumns = [
 { id: 'field', header: 'Field', accessor: 'field', cellClassName: 'text-slate-500 dark:text-gray-400 capitalize whitespace-nowrap' },
 { id: 'value', header: 'Extracted Value', accessor: 'value', cellClassName: 'text-slate-900 dark:text-gray-100' },
 ]
+const togglePreviewProp = (rowId) => setExcludedPreviewProps((prev) => {
+const next = new Set(prev)
+if (next.has(rowId)) next.delete(rowId)
+else next.add(rowId)
+return next
+})
 const previewPropertyColumns = [
+{
+id: 'select',
+header: '',
+render: (row) => (
+<input
+type="checkbox"
+checked={!excludedPreviewProps.has(row.previewRowId)}
+onChange={() => togglePreviewProp(row.previewRowId)}
+aria-label={`Include ${row.address || 'property'} in import`}
+className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+/>
+),
+cellClassName: 'w-8',
+},
 {
 id: 'property',
 header: 'Property',
@@ -736,9 +768,23 @@ No structured fields extracted. Cancel upload to skip, or save to keep the docum
 
 {previewProperties.length > 0 && (
 <div className="mt-4">
-<p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300 mb-2">
-Per-property Schedule E figures ({previewProperties.length})
+<div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+<p className="text-xs font-bold uppercase tracking-wide text-blue-500 dark:text-blue-300">
+Per-property Schedule E figures — {previewPropertyRows.length - excludedPreviewProps.size} of {previewPropertyRows.length} selected
 </p>
+<button
+type="button"
+onClick={() => setExcludedPreviewProps(
+excludedPreviewProps.size < previewPropertyRows.length
+? new Set(previewPropertyRows.map((r) => r.previewRowId))
+: new Set()
+)}
+className="text-xs font-medium text-slate-500 dark:text-gray-400 hover:text-slate-800 dark:hover:text-gray-200"
+>
+{excludedPreviewProps.size === 0 ? 'Deselect all' : 'Select all'}
+</button>
+</div>
+<p className="mb-2 text-xs text-slate-400 dark:text-gray-500">Only checked properties are imported into your Schedule E figures.</p>
 <DataTable
 columns={previewPropertyColumns}
 rows={previewPropertyRows}
@@ -799,16 +845,26 @@ tableWrapperClassName="overflow-auto max-h-80"
                     {acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : 'Keep both'}
                   </button>
                 </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => handleAcceptPreview()}
-                  disabled={acceptingPreview}
-                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                >
-                  {acceptingPreview ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><CheckCircle2 className="w-4 h-4" /> Save and accept</>}
-                </button>
-              )}
+              ) : (() => {
+                const previewPropCount = previewProperties.length
+                const includedCount = previewPropCount - excludedPreviewProps.size
+                const blocked = previewPropCount > 0 && includedCount === 0
+                return (
+                  <>
+                    {blocked && <span className="mr-auto text-xs text-amber-600 dark:text-amber-400">Select at least one property to import.</span>}
+                    <button
+                      type="button"
+                      onClick={() => handleAcceptPreview()}
+                      disabled={acceptingPreview || blocked}
+                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {acceptingPreview
+                        ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</>
+                        : <><CheckCircle2 className="w-4 h-4" /> Save and accept{previewPropCount > 0 ? ` (${includedCount})` : ''}</>}
+                    </button>
+                  </>
+                )
+              })()}
             </div>
           </div>
         </div>
