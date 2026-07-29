@@ -1410,11 +1410,15 @@ function DocRow({ doc, properties = [], isDemo = false, onDelete, onApply, onRep
 
   const isTaxReturn = doc.doc_category === 'tax_return'
   const taxProperties = isTaxReturn ? (data.properties || []) : []
-  // Candidate properties for the mapping dropdown (rentals first), from the
-  // backend annotation; fall back to the page's property list.
-  const candidates = (data.match_candidates || properties).filter(
-    (c) => String(c.usage_type || 'Rental').toLowerCase() !== 'primary'
-  )
+  // Candidate properties for the mapping dropdown, from the backend annotation
+  // (falls back to the page's property list). Include EVERY property — a home
+  // that's your primary now (e.g. Palermo) may have been a rental in a past
+  // return, so it must be mappable. Rentals first, primary residences last.
+  const candidates = [...(data.match_candidates || properties)].sort((a, b) => {
+    const ap = String(a.usage_type || 'Rental').toLowerCase() === 'primary' ? 1 : 0
+    const bp = String(b.usage_type || 'Rental').toLowerCase() === 'primary' ? 1 : 0
+    return ap - bp
+  })
   // Schedule E addresses the user has UNchecked. Empty = import all (default).
   const [excludedAddrs, setExcludedAddrs] = useState(() => new Set())
   // { address: property_id } chosen in the mapping dropdowns. '' = unassigned.
@@ -1589,9 +1593,11 @@ className="p-1.5 rounded text-slate-300 dark:text-gray-600 hover:text-red-500 da
                         }`}
                       >
                         <option value="">{autoMatched ? 'Leave unassigned' : '⚠ Pick a property…'}</option>
-                        {candidates.map((c) => (
-                          <option key={c.id} value={String(c.id)}>{c.name}{autoMatched && c.id === p.matched_property_id ? ' (matched)' : ''}</option>
-                        ))}
+                        {candidates.map((c) => {
+                          const isPrimary = String(c.usage_type || 'Rental').toLowerCase() === 'primary'
+                          const tag = autoMatched && c.id === p.matched_property_id ? ' (matched)' : (isPrimary ? ' (primary home)' : '')
+                          return <option key={c.id} value={String(c.id)}>{c.name}{tag}</option>
+                        })}
                       </select>
                     </div>
                   )
