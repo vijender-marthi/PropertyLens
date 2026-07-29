@@ -278,6 +278,12 @@ function ScheduleEReconciliation({ properties, year }) {
       .catch(() => toast.error('Could not assign the filed return.'))
   }
 
+  const ignore = (entryId) => {
+    propAPI.scheduleEIgnore(entryId)
+      .then(() => { toast.success('Filed row ignored.'); setReloadKey((k) => k + 1) })
+      .catch(() => toast.error('Could not ignore the filed row.'))
+  }
+
   const anyFiled = rentals.some((p) => (byProp[p.id]?.summary?.linesFiled || 0) > 0)
 
   // If nothing is filed for the selected year, probe recent years once and jump
@@ -342,7 +348,7 @@ function ScheduleEReconciliation({ properties, year }) {
           <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
             <AlertTriangle className="h-4 w-4 text-amber-500" />Filed rows not yet linked to a property
           </h4>
-          <p className="mb-3 mt-0.5 text-xs text-gray-500 dark:text-neutral-400">These Schedule E rows were read from your return but their address didn&apos;t match a property. Assign each one so it shows in that property&apos;s reconciliation.</p>
+          <p className="mb-3 mt-0.5 text-xs text-gray-500 dark:text-neutral-400">These Schedule E rows were read from your return but their address didn&apos;t match a property. <strong>Assign</strong> one to a property to reconcile it, or <strong>Ignore</strong> it to drop a row you don&apos;t track (e.g. a property not in your portfolio).</p>
           <div className="space-y-2">
             {unmatched.map((u) => (
               <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2 dark:border-neutral-800">
@@ -350,11 +356,18 @@ function ScheduleEReconciliation({ properties, year }) {
                   <div className="truncate text-sm font-medium text-gray-800 dark:text-neutral-100">{u.address}</div>
                   <div className="text-xs text-gray-500 dark:text-neutral-400">{u.taxYear} · rents {u.rentsReceived.display} · net {u.netIncome.display}</div>
                 </div>
-                <select defaultValue="" onChange={(e) => assign(u.id, e.target.value)} aria-label={`Assign ${u.address} to a property`}
-                  className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-                  <option value="" disabled>Assign to property…</option>
-                  {rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <div className="flex shrink-0 items-center gap-2">
+                  <select defaultValue="" onChange={(e) => assign(u.id, e.target.value)} aria-label={`Assign ${u.address} to a property`}
+                    className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                    <option value="" disabled>Assign to property…</option>
+                    {rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <button type="button" onClick={() => ignore(u.id)}
+                    title="Ignore this filed row — remove it from Schedule E"
+                    className="rounded-md border border-gray-200 px-2 py-1.5 text-xs font-medium text-gray-500 hover:border-red-300 hover:text-red-600 dark:border-neutral-700 dark:text-neutral-400 dark:hover:border-red-800 dark:hover:text-red-400">
+                    Ignore
+                  </button>
+                </div>
               </div>
             ))}
           </div>

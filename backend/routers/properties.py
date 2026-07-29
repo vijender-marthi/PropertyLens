@@ -9511,6 +9511,28 @@ def assign_schedule_e_entry(
     return {"ok": True, "id": entry.id, "propertyId": int(property_id), "taxYear": entry.tax_year}
 
 
+@router.post("/analysis/schedule-e-ignore")
+def ignore_schedule_e_entry(
+    entry_id: int = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Dismiss an unmatched filed Schedule E row the user doesn't want (e.g. a
+    property that isn't in their portfolio). Only unlinked rows can be ignored —
+    a row already assigned to a property is left alone."""
+    entry = db.query(models.TaxReturnEntry).filter(
+        models.TaxReturnEntry.id == int(entry_id),
+        models.TaxReturnEntry.owner_id == current_user.id,
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Filed Schedule E entry not found")
+    if entry.property_id is not None:
+        raise HTTPException(status_code=400, detail="This row is linked to a property; unassign it before ignoring.")
+    db.delete(entry)
+    db.commit()
+    return {"ok": True, "id": int(entry_id)}
+
+
 @router.get("/{prop_id}/rawdata")
 def get_raw_data(
     prop_id: int,
