@@ -3654,6 +3654,57 @@ function TaxesTab({ propId }) {
           <MetricKPI label="Net Sch E" metric={topStrip.netScheduleE} backendOwned />
         </div>
 
+        {(() => {
+          const hasFiled = (summary.linesFiled ?? 0) > 0
+          const deltas = scheduleLines.filter((l) => l.filed != null && l.status === 'Delta')
+          const yr = selectedYear || scheduleE?.selectedYear
+          if (!hasFiled) {
+            return (
+              <div className="mb-5 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>No filed Schedule E found for {yr}. Import this property&apos;s 1040 return under Documents to compare filed vs. proposed figures here.</span>
+              </div>
+            )
+          }
+          return (
+            <div className="mb-5 rounded-lg border border-gray-100 dark:border-gray-700">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-2.5 dark:border-gray-700">
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Filed 1040 vs. proposed — discrepancies ({yr})</h4>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${deltas.length === 0 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'}`}>
+                  {deltas.length === 0 ? 'Ties to filing' : `${deltas.length} line${deltas.length === 1 ? '' : 's'} differ · net ${summary.netDelta?.display ?? '—'}`}
+                </span>
+              </div>
+              {deltas.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">Your filed 1040 Schedule E matches the PropertyLens-proposed figures for {yr}. Nothing to reconcile.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[520px] border-collapse text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                        <th className="px-4 py-2 font-medium">Line</th>
+                        <th className="px-4 py-2 text-right font-medium">Filed (1040)</th>
+                        <th className="px-4 py-2 text-right font-medium">Proposed (PropertyLens)</th>
+                        <th className="px-4 py-2 text-right font-medium">Difference</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deltas.map((l) => (
+                        <tr key={`${l.lineNumber}-${l.key}`} className="border-t border-gray-100 dark:border-gray-700">
+                          <td className="px-4 py-2 text-gray-900 dark:text-white">{l.lineItem}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{l.filed?.display ?? '—'}</td>
+                          <td className="px-4 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{l.computed?.display ?? '—'}</td>
+                          <td className={`px-4 py-2 text-right font-medium tabular-nums ${(l.delta?.value ?? 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>{l.delta?.display ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="px-4 py-2 text-[11px] text-gray-400 dark:text-gray-500">Difference = Proposed − Filed. Review these before filing or amending.</p>
+            </div>
+          )
+        })()}
+
         {currentYearBreakdown ? (
           <div className="mb-5 rounded-lg border border-gray-100 bg-gray-50/50 p-3 dark:border-gray-700 dark:bg-gray-800/30">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
