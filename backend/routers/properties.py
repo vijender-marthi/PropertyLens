@@ -9250,6 +9250,17 @@ def get_schedule_e_capture(
         available_years.append(selected_year)
         available_years.sort()
 
+    # Was this property owned during the selected tax year? A property bought in
+    # 2024 has no 2023 Schedule E, so the reconciliation can hide it for 2023.
+    _purchase_year = None
+    try:
+        _m = re.search(r'(?:19|20)\d{2}', prop.purchase_date or "")
+        if _m:
+            _purchase_year = int(_m.group(0))
+    except Exception:
+        _purchase_year = None
+    owned_in_selected_year = _purchase_year is None or _purchase_year <= selected_year
+
     computed = _computed_schedule_e_components(prop, selected_year, yearly_by_year.get(selected_year))
     filed_entry = filed_by_year.get(selected_year)
     filed_doc = None
@@ -9378,6 +9389,8 @@ def get_schedule_e_capture(
     return {
         "schemaVersion": "schedule-e-capture-v1",
         "selectedYear": selected_year,
+        "ownedInSelectedYear": owned_in_selected_year,
+        "purchaseYear": _purchase_year,
         "availableYears": available_years,
         "topStrip": {
             "deductibleInterest": _schedule_e_money(computed.get("mortgage_interest")),

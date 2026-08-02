@@ -244,9 +244,22 @@ function ScheduleEReconciliation({ properties, year }) {
   const [expanded, setExpanded] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
   const probedRef = useRef(false)
+  const didMountRef = useRef(false)
   const rentals = useMemo(() => (properties || []).filter((p) => String(p.usage_type || 'Rental').toLowerCase() !== 'primary'), [properties])
   const nowYear = new Date().getFullYear()
   const yearOptions = Array.from({ length: 8 }, (_, i) => nowYear - i)
+
+  // Follow the Tax Center's top year selector. On first mount the probe below
+  // picks the latest filed year; after that, changing the top year drives the
+  // reconciliation directly (no probe override).
+  useEffect(() => {
+    if (!didMountRef.current) { didMountRef.current = true; return }
+    setSelYear(year)
+  }, [year])
+
+  // Only show properties actually owned during the selected tax year — a home
+  // bought in 2024 has no 2023 Schedule E, so it's hidden for 2023.
+  const ownedRentals = rentals.filter((p) => byProp[p.id]?.ownedInSelectedYear !== false)
 
   useEffect(() => {
     let cancelled = false
@@ -376,10 +389,10 @@ function ScheduleEReconciliation({ properties, year }) {
 
       {loading ? (
         <div className="card py-8 text-center text-sm text-gray-500 dark:text-neutral-400">Loading Schedule E…</div>
-      ) : rentals.length === 0 ? (
-        <EmptyState text="No rental properties for Schedule E in this scope." />
+      ) : ownedRentals.length === 0 ? (
+        <EmptyState text={`No rental properties owned in ${selYear} for Schedule E in this scope.`} />
       ) : (
-        rentals.map((p) => {
+        ownedRentals.map((p) => {
           const data = byProp[p.id]
           const net = data?.topStrip?.netScheduleE
           const summary = data?.summary
