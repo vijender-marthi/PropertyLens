@@ -555,7 +555,10 @@ export default function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview')
   const [includePrimary, setIncludePrimary] = useState(true)
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [period, setPeriod] = useState('all') // 'all' or a specific year
   const initializedSelection = useRef(false)
+  const nowYear = new Date().getFullYear()
+  const periodYears = Array.from({ length: nowYear - 2020 + 1 }, (_, i) => nowYear - i)
 
   const filterProperties = data?.filterContext?.availableProperties || []
   const selectedKey = useMemo(() => {
@@ -574,6 +577,7 @@ export default function AnalyticsPage() {
       selected_property_ids: selectedKey,
       selection_explicit: initializedSelection.current,
       include_primary_residence: includePrimary,
+      ...(period !== 'all' ? { start_date: `${period}-01-01`, end_date: `${period}-12-31`, tax_year: Number(period) } : {}),
     }, { signal: controller.signal })
       .then((response) => {
         setData(response.data)
@@ -590,7 +594,7 @@ export default function AnalyticsPage() {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
-  }, [includePrimary, selectedKey])
+  }, [includePrimary, selectedKey, period])
 
   const model = useMemo(() => analyticsModel(data), [data])
 
@@ -623,11 +627,18 @@ export default function AnalyticsPage() {
             <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">Deep insights and performance analytics for your real estate portfolio</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn-secondary inline-flex items-center gap-2 text-sm">
+            <label className="btn-secondary inline-flex items-center gap-2 text-sm">
               <CalendarDays className="h-4 w-4" />
-              Current Period
-              <ChevronDown className="h-4 w-4" />
-            </button>
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                aria-label="Analytics time period"
+                className="cursor-pointer border-0 bg-transparent pr-1 text-sm font-medium text-gray-700 focus:outline-none dark:text-neutral-200"
+              >
+                <option value="all">All time</option>
+                {periodYears.map((y) => <option key={y} value={String(y)}>{y}</option>)}
+              </select>
+            </label>
             <button type="button" onClick={() => window.print()} className="btn-secondary inline-flex items-center gap-2 text-sm">
               <Download className="h-4 w-4" />
               Export Report
