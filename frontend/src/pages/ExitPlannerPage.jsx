@@ -97,7 +97,7 @@ function ExitSummary({ proj }) {
     <div className="grid gap-4 lg:grid-cols-2">
       {/* Sale math */}
       <div className="card-sm">
-        <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Net sale proceeds · {e.year}</h3>
+        <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Net sale proceeds · year {e.year}</h3>
         {line('Sale price', e.salePrice)}
         {line('Selling costs', e.sellingCosts, '-')}
         {line('Pay off remaining loan', e.loanPayoff, '-')}
@@ -269,7 +269,7 @@ export default function ExitPlannerPage() {
           ) : selected ? (
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display}
+                <StatCard icon={TrendingUp} label={`Sale price · year ${selected.exit.year}`} value={selected.exit.salePrice.display}
                   info={`Projected market value in year ${selected.exit.year} — today's value grown at your appreciation rate each year.`} />
                 <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone={toneFor(selected.exit.netProceeds)}
                   info="What you walk away with at closing: sale price − selling costs − remaining loan payoff − depreciation-recapture tax − capital-gains tax." />
