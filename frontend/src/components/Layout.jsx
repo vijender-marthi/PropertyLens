@@ -44,7 +44,11 @@ function StairsDown({ className }) {
 const SCENARIOS_NAV = [
   { to: '/payoff-planner', icon: StairsDown, label: 'Payoff planner' },
   { to: '/exit-planner', icon: DoorOpen, label: 'Exit planner' },
-  { to: '/reports', icon: FileBarChart, label: 'Reports' },
+]
+
+// Dedicated Reports section — more report types will be added here.
+const REPORTS_NAV = [
+  { to: '/reports', icon: FileBarChart, label: 'Portfolio report' },
 ]
 
 const TOOLS_NAV = [
@@ -161,6 +165,12 @@ const isAdmin = ['admin', 'superuser'].includes((user?.role || '').toLowerCase()
                 <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5 mt-3">Scenarios</p>
         <div className="flex flex-col gap-0.5">
           {SCENARIOS_NAV.map(({ to, icon, label }) => (
+            <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
+          ))}
+        </div>
+        <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5 mt-3">Reports</p>
+        <div className="flex flex-col gap-0.5">
+          {REPORTS_NAV.map(({ to, icon, label }) => (
             <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
           ))}
         </div>
