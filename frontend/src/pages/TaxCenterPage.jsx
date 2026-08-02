@@ -556,13 +556,19 @@ export default function TaxCenterPage() {
             <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">Track, organize, and optimize your real estate tax position.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <label className="btn-secondary inline-flex items-center gap-2 text-sm">
+            <label className="btn-secondary relative inline-flex cursor-pointer items-center gap-2 text-sm">
               <CalendarDays className="h-4 w-4" />
               <span>Tax Year</span>
-              <select className="bg-transparent font-medium outline-none" value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))}>
+              <span className="font-medium tabular-nums">{selectedYear}</span>
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+              <select
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                value={selectedYear}
+                onChange={(event) => setSelectedYear(Number(event.target.value))}
+                aria-label="Tax year"
+              >
                 {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
-              <ChevronDown className="h-4 w-4" />
             </label>
             <button type="button" onClick={exportCSV} className="btn-secondary inline-flex items-center gap-2 text-sm">
               <Download className="h-4 w-4" />
