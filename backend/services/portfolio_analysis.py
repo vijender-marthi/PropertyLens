@@ -344,6 +344,10 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
             continue
         schedule = schedules.get(prop.get("id")) or {}
         available_years.update(int(row["year"]) for row in schedule.get("history") or [] if row.get("year") and int(row["year"]) < 9999)
+        # Don't list a property for a year it wasn't owned (e.g. a 2024 purchase
+        # under 2023). The backend flags this; data presence overrides the date.
+        if schedule.get("ownedInSelectedYear") is False:
+            continue
         selected = _selected_schedule_row(schedule, selected_year)
         total_expenses = _metric_value(selected, "totalExpenses")
         interest = _metric_value(selected, "mortgageInterest")
