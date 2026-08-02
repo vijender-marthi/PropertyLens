@@ -494,6 +494,18 @@ function EmptyState({ label }) {
   return <div className="grid h-full min-h-24 place-items-center text-center text-sm text-gray-500">{label}</div>
 }
 
+function SectionEyebrow({ label, hint, accent = 'emerald' }) {
+  const text = accent === 'blue' ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-700 dark:text-emerald-400'
+  const bar = accent === 'blue' ? 'bg-blue-500' : 'bg-emerald-500'
+  return (
+    <div className="mb-2.5 flex items-center gap-2">
+      <span className={`h-4 w-1 rounded-full ${bar}`} aria-hidden="true" />
+      <h2 className={`text-xs font-bold uppercase tracking-wide ${text}`}>{label}</h2>
+      {hint ? <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500">· {hint}</span> : null}
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const today = new Date().toISOString().slice(0, 10)
   const [data, setData] = useState(null)
@@ -567,19 +579,24 @@ export default function DashboardPage() {
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Portfolio metrics">{dashboard.topMetrics.map((config) => <KpiCard key={config.metricKey} config={config} metric={resolveMetric('analytics', config.metricKey)} trendSeries={dashboard.cashFlowTrend.series} />)}</section>
 
-        <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,2.2fr)_minmax(0,0.9fr)]">
-          <div className="space-y-4"><SummaryPanel section={dashboard.assets} resolveMetric={resolveMetric} kind="assets" /><PortfolioHealth data={dashboard.health} /></div>
-          {dashboard.valueBuildup ? (
-            <ValueBuildupWaterfall data={dashboard.valueBuildup} />
-          ) : (
-            <CashFlowWaterfall data={dashboard.cashFlowWaterfall} />
-          )}
-          <div className="space-y-4"><SummaryPanel section={dashboard.liabilities} resolveMetric={resolveMetric} kind="liabilities" /><CapitalStructure data={dashboard.capitalStructure} /></div>
-        </section>
+        <div>
+          <SectionEyebrow label="Wealth & Equity" hint="as of today" accent="emerald" />
+          <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,2.2fr)_minmax(0,0.9fr)]">
+            <div className="space-y-4"><SummaryPanel section={dashboard.assets} resolveMetric={resolveMetric} kind="assets" /><PortfolioHealth data={dashboard.health} /></div>
+            {dashboard.valueBuildup ? (
+              <ValueBuildupWaterfall data={dashboard.valueBuildup} />
+            ) : (
+              <CashFlowWaterfall data={dashboard.cashFlowWaterfall} />
+            )}
+            <div className="space-y-4"><SummaryPanel section={dashboard.liabilities} resolveMetric={resolveMetric} kind="liabilities" /><CapitalStructure data={dashboard.capitalStructure} /></div>
+          </section>
+        </div>
 
-        <BottomStrip items={dashboard.bottomMetrics} resolveMetric={resolveMetric} />
-
-        <section className="grid items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-4"><CashFlowTrend data={dashboard.cashFlowTrend} /><ExpenseBreakdown data={dashboard.expenseBreakdown} /><PropertyPerformance data={dashboard.propertyPerformance} /><AlertsPanel data={dashboard.alerts} /></section>
+        <div className="space-y-4 rounded-2xl bg-slate-50/80 p-3 dark:bg-neutral-900/40 sm:p-4">
+          <SectionEyebrow label="Portfolio Operations" hint="monthly · annual" accent="blue" />
+          <BottomStrip items={dashboard.bottomMetrics} resolveMetric={resolveMetric} />
+          <section className="grid items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-4"><CashFlowTrend data={dashboard.cashFlowTrend} /><ExpenseBreakdown data={dashboard.expenseBreakdown} /><PropertyPerformance data={dashboard.propertyPerformance} /><AlertsPanel data={dashboard.alerts} /></section>
+        </div>
       </div>
       )}
     </PageContainer>
