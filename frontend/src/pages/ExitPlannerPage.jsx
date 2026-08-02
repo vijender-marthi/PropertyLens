@@ -213,6 +213,13 @@ export default function ExitPlannerPage() {
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Project each property forward at your appreciation rate, tally depreciation tax savings by year, and see the net proceeds and final profit after recapture and capital gains.
           </p>
+          {selected ? (
+            <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
+              <DoorOpen className="h-3.5 w-3.5" aria-hidden="true" />
+              Viewing: {selected.name}
+              <span className="font-normal text-blue-500/80 dark:text-blue-400/80">· final profit {selected.exit.finalProfit.display}</span>
+            </div>
+          ) : null}
         </div>
         {portfolio ? (
           (() => {

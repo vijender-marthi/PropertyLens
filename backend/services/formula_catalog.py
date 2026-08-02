@@ -259,7 +259,26 @@ FORMULA_DEFINITIONS: List[Dict[str, Any]] = [
         "loan.monthly_principal_interest", "loans", "monthly-payment", "Monthly Principal and Interest Payment",
         "Scheduled monthly payment for principal and interest, excluding escrow and fees.",
         ["M = P × [r(1+r)^n] ÷ [(1+r)^n − 1]", "r = Annual Interest Rate ÷ 12"],
-        [_input("principal", "P: Principal", "Loan principal."), _input("monthly_rate", "r: Monthly Interest Rate", "Annual interest rate divided by 12.", "percentage"), _input("term_months", "n: Payment Count", "Total scheduled monthly payments.", "integer")],
+        [
+            _input("monthly_payment", "M — Monthly Payment", "The result: fixed principal + interest you owe each month over the loan's life.", "currency"),
+            _input("principal", "P — Loan Principal", "The starting loan amount being amortized (the original balance borrowed).", "currency"),
+            _input("monthly_rate", "r — Monthly Interest Rate", "The annual interest rate divided by 12, as a decimal. Example: 6% ÷ 12 = 0.005.", "percentage"),
+            _input("term_months", "n — Number of Payments", "Total scheduled monthly payments over the full term. Example: a 30-year loan = 30 × 12 = 360.", "integer"),
+        ],
+        detailed_definition=(
+            "Standard fixed-rate amortization. M is the level monthly payment that pays the loan "
+            "(principal P) to zero over n months at monthly rate r. Because the payment is fixed, "
+            "early payments are mostly interest and later ones mostly principal."
+        ),
+        example={
+            "inputs": [
+                {"label": "P — Loan principal", "display": "$400,000"},
+                {"label": "Annual rate", "display": "6% → r = 0.005"},
+                {"label": "n — Payments", "display": "360 (30 yrs)"},
+            ],
+            "computation": "400,000 × [0.005(1.005)^360] ÷ [(1.005)^360 − 1]",
+            "result": "$2,398 / month",
+        },
         source_type="calculated",
         exclusions=["Escrow", "Taxes", "Insurance", "HOA", "Fees"],
         display_format="currency / month",

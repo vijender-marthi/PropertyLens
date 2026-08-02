@@ -1031,16 +1031,55 @@ function rowPreviewUrl(row) {
   return rowSourceDocuments(row).find((document) => document.previewUrl)?.previewUrl
 }
 
+// Internal/derived keys that just repeat other values or are engine plumbing —
+// they shouldn't appear in the human-facing source detail.
+const SOURCE_DETAIL_HIDDEN_KEYS = new Set([
+  'raw_text_preview', 'parse_error', 'parse_warning',
+  'classification_confidence', 'document_type',
+  'transaction_purpose', 'transaction_role',
+])
+// Fields the parser stores under several aliases (raw + *_display + Box#) that
+// all carry the same value — collapse each set to one clean row.
+const SOURCE_DETAIL_ALIASES = [
+  { label: 'Mortgage interest (Box 1)', keys: ['box1_interest_display', 'mortgage_interest_display', 'interest_paid_display', 'box1_interest', 'box_1_interest', 'mortgage_interest', 'interest_paid'] },
+  { label: 'Outstanding principal (Box 2)', keys: ['box2_balance_display', 'outstanding_principal_display', 'current_balance_display', 'box2_balance', 'box_2_balance', 'outstanding_principal', 'current_balance'] },
+]
+
+function humanizeFieldKey(key) {
+  return key.replace(/_display$/i, '').replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase())
+}
+
 function documentFieldRows(document) {
   if (Array.isArray(document.fieldValues) && document.fieldValues.length) return document.fieldValues
   const parsed = document.parsedValues || {}
-  return Object.entries(parsed)
-    .filter(([, value]) => value !== null && value !== undefined && value !== '')
-    .map(([key, value]) => ({
-      key,
-      label: key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase()),
-      display: Array.isArray(value) ? value.join(', ') : String(value),
-    }))
+  const asDisplay = (value) => (value === null || value === undefined || value === '' ? null : (Array.isArray(value) ? value.join(', ') : String(value)))
+  const pick = (keys) => { for (const k of keys) { const v = asDisplay(parsed[k]); if (v != null) return v } return null }
+
+  const rows = []
+  const consumed = new Set()
+  // 1) Collapse known alias groups into a single canonical row.
+  for (const group of SOURCE_DETAIL_ALIASES) {
+    group.keys.forEach((k) => consumed.add(k))
+    const display = pick(group.keys)
+    if (display != null) rows.push({ key: group.label, label: group.label, display })
+  }
+  // 2) Everything else, de-duped by base key (raw vs *_display), preferring the
+  //    formatted *_display value, skipping hidden/consumed keys.
+  const seen = new Map()
+  for (const [key, value] of Object.entries(parsed)) {
+    if (consumed.has(key) || SOURCE_DETAIL_HIDDEN_KEYS.has(key)) continue
+    const display = asDisplay(value)
+    if (display == null) continue
+    const base = key.replace(/_display$/i, '')
+    if (consumed.has(base) || consumed.has(`${base}_display`)) continue
+    const isDisplay = /_display$/i.test(key)
+    const existing = seen.get(base)
+    if (!existing || (isDisplay && !existing.isDisplay)) {
+      seen.set(base, { key: base, label: humanizeFieldKey(base), display, isDisplay })
+    }
+  }
+  for (const { key, label, display } of seen.values()) rows.push({ key, label, display })
+  return rows
 }
 
 function SourceCell({ row, openSourceYear, setOpenSourceYear, uploadingStatement, onReplace, onRemove }) {
