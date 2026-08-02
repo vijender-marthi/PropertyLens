@@ -17,7 +17,6 @@ const MAIN_NAV = [
   { to: '/loans',      icon: Landmark,   label: 'Loans' },
   { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },
   { to: '/tax-center', icon: ReceiptText, label: 'Tax Center' },
-  { to: '/reports',    icon: FileBarChart, label: 'Reports' },
   { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
 ]
 
@@ -45,6 +44,7 @@ function StairsDown({ className }) {
 const SCENARIOS_NAV = [
   { to: '/payoff-planner', icon: StairsDown, label: 'Payoff planner' },
   { to: '/exit-planner', icon: DoorOpen, label: 'Exit planner' },
+  { to: '/reports', icon: FileBarChart, label: 'Reports' },
 ]
 
 const TOOLS_NAV = [
