@@ -4,7 +4,7 @@ import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut, Home, Plus,
   BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark,
-  Sun, Moon, DoorOpen,
+  Sun, Moon, DoorOpen, FileBarChart,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import BrandLogo from './BrandLogo'
@@ -17,6 +17,7 @@ const MAIN_NAV = [
   { to: '/loans',      icon: Landmark,   label: 'Loans' },
   { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },
   { to: '/tax-center', icon: ReceiptText, label: 'Tax Center' },
+  { to: '/reports',    icon: FileBarChart, label: 'Reports' },
   { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
 ]
 

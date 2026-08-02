@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank } from 'lucide-react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info } from 'lucide-react'
 import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
@@ -42,7 +42,22 @@ function NumField({ label, value, onChange, min, max, suffix, step = false }) {
   )
 }
 
-function StatCard({ icon: Icon, label, value, tone = 'default' }) {
+function MetricHint({ text, label }) {
+  if (!text) return null
+  return (
+    <details className="group/hint relative inline-flex">
+      <summary className="inline-flex cursor-pointer list-none rounded text-gray-400 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-gray-200"
+        aria-label={`What is ${label}?`}>
+        <Info className="h-3 w-3" aria-hidden="true" />
+      </summary>
+      <div className="absolute left-0 top-full z-30 mt-1 hidden w-60 rounded-lg border border-gray-200 bg-white p-2.5 text-left text-[11px] font-normal leading-snug text-gray-600 shadow-lg group-open/hint:block dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300" role="tooltip">
+        {text}
+      </div>
+    </details>
+  )
+}
+
+function StatCard({ icon: Icon, label, value, tone = 'default', info }) {
   const toneCls = tone === 'positive' ? 'text-emerald-600 dark:text-emerald-400'
     : tone === 'negative' ? 'text-red-600 dark:text-red-400'
     : 'text-gray-900 dark:text-white'
@@ -50,6 +65,7 @@ function StatCard({ icon: Icon, label, value, tone = 'default' }) {
     <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800/60">
       <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
         {Icon ? <Icon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{label}
+        <MetricHint text={info} label={label} />
       </div>
       <div className={`mt-0.5 text-lg font-semibold tabular-nums ${toneCls}`}>{value}</div>
     </div>
@@ -253,10 +269,14 @@ export default function ExitPlannerPage() {
           ) : selected ? (
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display} />
-                <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone={toneFor(selected.exit.netProceeds)} />
-                <StatCard icon={PiggyBank} label="Depreciation tax saved" value={selected.exit.depreciationTaxSavings.display} tone="positive" />
-                <StatCard icon={DoorOpen} label="Final profit" value={selected.exit.finalProfit.display} tone={toneFor(selected.exit.finalProfit)} />
+                <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display}
+                  info={`Projected market value in ${selected.exit.year} — today's value grown at your appreciation rate each year.`} />
+                <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone={toneFor(selected.exit.netProceeds)}
+                  info="What you walk away with at closing: sale price − selling costs − remaining loan payoff − depreciation-recapture tax − capital-gains tax." />
+                <StatCard icon={PiggyBank} label="Depreciation tax saved" value={selected.exit.depreciationTaxSavings.display} tone="positive"
+                  info="Cumulative income tax deferred via depreciation deductions over the hold period (annual depreciation × your marginal tax rate). Recaptured at sale." />
+                <StatCard icon={DoorOpen} label="Final profit" value={selected.exit.finalProfit.display} tone={toneFor(selected.exit.finalProfit)}
+                  info="Total economic gain if you sell: net proceeds + cumulative cash flow + depreciation tax savings − your original cash invested." />
               </div>
 
               <div className="card">
