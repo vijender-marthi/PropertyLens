@@ -285,6 +285,18 @@ function KeyInsights({ data, onJump }) {
   )
 }
 
+function SectionEyebrow({ label, hint, accent = 'emerald' }) {
+  const text = accent === 'blue' ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-700 dark:text-emerald-400'
+  const bar = accent === 'blue' ? 'bg-blue-500' : 'bg-emerald-500'
+  return (
+    <div className="mb-2.5 flex items-center gap-2">
+      <span className={`h-4 w-1 rounded-full ${bar}`} aria-hidden="true" />
+      <h2 className={`text-xs font-bold uppercase tracking-wide ${text}`}>{label}</h2>
+      {hint ? <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500">· {hint}</span> : null}
+    </div>
+  )
+}
+
 export default function RentalPropertySummary({ metricVault, onJump, waterfall }) {
   const presentation = metricVault?.rentalSummary
   const metrics = metricVault?.metrics || {}
@@ -296,27 +308,33 @@ export default function RentalPropertySummary({ metricVault, onJump, waterfall }
         {(presentation.topMetrics || []).map((config) => <TopMetricCard key={config.metricKey} config={config} metric={metrics[config.metricKey]} supportingMetric={metrics[config.supportingMetricKey]} />)}
       </section>
 
-      <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(15rem,0.9fr)_minmax(32rem,2.2fr)_minmax(15rem,0.9fr)]">
-        <ValueListCard section={presentation.assets} metrics={metrics} tone="asset" onJump={onJump} />
-        <div className="h-full min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="mb-2">
-            <h2 className="text-sm font-bold uppercase text-gray-900">Value Buildup Over Time</h2><p className="mt-1 text-xs text-gray-500">How your property value has grown</p>
+      <div>
+        <SectionEyebrow label="Wealth & Equity" hint="as of today" accent="emerald" />
+        <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(15rem,0.9fr)_minmax(32rem,2.2fr)_minmax(15rem,0.9fr)]">
+          <ValueListCard section={presentation.assets} metrics={metrics} tone="asset" onJump={onJump} />
+          <div className="h-full min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="mb-2">
+              <h2 className="text-sm font-bold uppercase text-gray-900">Value Buildup Over Time</h2><p className="mt-1 text-xs text-gray-500">How your property value has grown</p>
+            </div>
+            {waterfall}
           </div>
-          {waterfall}
-        </div>
-        <ValueListCard section={presentation.liabilities} metrics={metrics} tone="liability" onJump={onJump} />
-      </section>
+          <ValueListCard section={presentation.liabilities} metrics={metrics} tone="liability" onJump={onJump} />
+        </section>
+      </div>
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7" aria-label="Rental operating metrics">
-        {(presentation.operationalMetrics || []).map((config) => <OperationalMetricCard key={config.metricKey} config={config} metric={metrics[config.metricKey]} annualMetric={metrics[config.annualMetricKey]} />)}
-      </section>
+      <div className="space-y-4 rounded-2xl bg-slate-50/80 p-3 dark:bg-neutral-900/40 sm:p-4">
+        <SectionEyebrow label="Rental Operations" hint="monthly · annual" accent="blue" />
+        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7" aria-label="Rental operating metrics">
+          {(presentation.operationalMetrics || []).map((config) => <OperationalMetricCard key={config.metricKey} config={config} metric={metrics[config.metricKey]} annualMetric={metrics[config.annualMetricKey]} />)}
+        </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <CashFlowTrend data={presentation.cashFlowTrend} onJump={onJump} />
-        <ExpenseBreakdown data={presentation.expenseBreakdown} metrics={metrics} onJump={onJump} />
-        <AnnualPnl data={presentation.annualPnl} metrics={metrics} onJump={onJump} />
-        <KeyInsights data={presentation.insights} onJump={onJump} />
-      </section>
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <CashFlowTrend data={presentation.cashFlowTrend} onJump={onJump} />
+          <ExpenseBreakdown data={presentation.expenseBreakdown} metrics={metrics} onJump={onJump} />
+          <AnnualPnl data={presentation.annualPnl} metrics={metrics} onJump={onJump} />
+          <KeyInsights data={presentation.insights} onJump={onJump} />
+        </section>
+      </div>
     </div>
   )
 }

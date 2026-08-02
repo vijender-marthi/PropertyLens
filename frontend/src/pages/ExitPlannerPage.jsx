@@ -110,7 +110,7 @@ function ExitSummary({ proj }) {
       </div>
       {/* Lifetime profit */}
       <div className="card-sm">
-        <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit if sold in {e.year}</h3>
+        <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit if sold in year {e.year}</h3>
         {line('Net sale proceeds', e.netProceeds)}
         {line('Cumulative cash flow', e.cumulativeCashFlow, '+')}
         {line('Depreciation tax savings', e.depreciationTaxSavings, '+')}
@@ -244,7 +244,7 @@ export default function ExitPlannerPage() {
             const txt = pos ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
             return (
               <div className={`shrink-0 rounded-xl border px-4 py-2 text-right ${box}`}>
-                <div className={`text-[11px] ${txt}`}>Portfolio profit · exit all in {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
+                <div className={`text-[11px] ${txt}`}>Portfolio profit · exit all in year {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
                 <div className={`text-xl font-bold tabular-nums ${txt}`}>{portfolio.finalProfit.display}</div>
                 <div className={`text-[11px] ${txt} opacity-80`}>{portfolio.propertyCount} propert{portfolio.propertyCount === 1 ? 'y' : 'ies'}</div>
               </div>
@@ -270,7 +270,7 @@ export default function ExitPlannerPage() {
             <>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatCard icon={TrendingUp} label={`Sale price · ${selected.exit.year}`} value={selected.exit.salePrice.display}
-                  info={`Projected market value in ${selected.exit.year} — today's value grown at your appreciation rate each year.`} />
+                  info={`Projected market value in year ${selected.exit.year} — today's value grown at your appreciation rate each year.`} />
                 <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone={toneFor(selected.exit.netProceeds)}
                   info="What you walk away with at closing: sale price − selling costs − remaining loan payoff − depreciation-recapture tax − capital-gains tax." />
                 <StatCard icon={PiggyBank} label="Depreciation tax saved" value={selected.exit.depreciationTaxSavings.display} tone="positive"
