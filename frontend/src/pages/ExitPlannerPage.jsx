@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info } from 'lucide-react'
-import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Table2, BarChart3 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
 import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
-import { formatChartCurrency } from '../utils/formatters'
+import { formatChartCurrency, formatCurrency } from '../utils/formatters'
 
 // Colour by the sign of a backend money node ({value, display}).
 const toneFor = (node) => ((Number(node?.value) || 0) < 0 ? 'negative' : 'positive')
@@ -214,12 +215,83 @@ function SellYearTable({ title, subtitle, rows, columns }) {
 
 const yearCol = { key: 'year', label: 'Sell in', render: (r) => <span className="whitespace-nowrap font-medium text-gray-900 dark:text-white">Yr {r.yearNumber} · {r.year}</span> }
 
+function ChartCard({ title, subtitle, children }) {
+  return (
+    <div className="card">
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h2>
+      {subtitle ? <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{subtitle}</p> : null}
+      <div className="mt-3 h-64">
+        <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
+
+function ExitCharts({ rows, breakEven }) {
+  const data = rows.map((r) => ({
+    label: `Yr ${r.yearNumber}`,
+    gainLoss: r.gainLoss.value,
+    salePrice: r.salePrice.value,
+    cash: r.netProceeds.value,
+    excluded: r.section121Excluded.value,
+    taxable: r.taxableCapitalGain.value,
+    recapture: r.recaptureAmount.value,
+  }))
+  const tip = (v) => formatCurrency(v)
+  const axis = { tick: chartTypography.smallMutedTick, axisLine: false, tickLine: false }
+  return (
+    <div className="space-y-4">
+      <ChartCard title="Lifetime gain / loss if sold in year N"
+        subtitle={`Green = profit, red = loss.${breakEven ? ` Breaks even in year ${breakEven}.` : ''}`}>
+        <BarChart data={data} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+          <XAxis dataKey="label" {...axis} />
+          <YAxis {...axis} width={52} tickFormatter={formatChartCurrency} />
+          <Tooltip formatter={tip} contentStyle={chartTooltipStyle(false)} />
+          <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
+          <Bar dataKey="gainLoss" name="Gain / loss" radius={[3, 3, 0, 0]}>
+            {data.map((d, i) => <Cell key={i} fill={d.gainLoss < 0 ? chartColors.danger : chartColors.positive} />)}
+          </Bar>
+        </BarChart>
+      </ChartCard>
+
+      <ChartCard title="Sale price vs. cash to your account"
+        subtitle="How much of each year's sale price you actually keep after loan payoff and taxes.">
+        <ComposedChart data={data} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+          <XAxis dataKey="label" {...axis} />
+          <YAxis {...axis} width={52} tickFormatter={formatChartCurrency} />
+          <Tooltip formatter={tip} contentStyle={chartTooltipStyle(false)} />
+          <Legend />
+          <Area type="monotone" dataKey="salePrice" name="Sale price" stroke={chartColors.primary} fill={chartColors.primary} fillOpacity={0.12} strokeWidth={2} />
+          <Bar dataKey="cash" name="Cash to account" fill={chartColors.positive} radius={[3, 3, 0, 0]} barSize={16} />
+        </ComposedChart>
+      </ChartCard>
+
+      <ChartCard title="Capital gain — excluded vs. taxable vs. recapture"
+        subtitle="§121 shelters part of the gain; depreciation recapture is always taxable.">
+        <BarChart data={data} margin={{ left: 0, right: 12, top: 8, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+          <XAxis dataKey="label" {...axis} />
+          <YAxis {...axis} width={52} tickFormatter={formatChartCurrency} />
+          <Tooltip formatter={tip} contentStyle={chartTooltipStyle(false)} />
+          <Legend />
+          <Bar dataKey="excluded" name="§121 excluded" stackId="g" fill={chartColors.positive} />
+          <Bar dataKey="taxable" name="Taxable gain" stackId="g" fill={chartColors.warning || '#f59e0b'} />
+          <Bar dataKey="recapture" name="Deprec. recapture" stackId="g" fill={chartColors.danger} />
+        </BarChart>
+      </ChartCard>
+    </div>
+  )
+}
+
 export default function ExitPlannerPage() {
   const [inputs, setInputs] = useState(DEFAULTS)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
+  const [view, setView] = useState('table') // 'table' | 'chart'
   const debounceRef = useRef(null)
 
   const update = (patch) => setInputs((prev) => ({ ...prev, ...patch }))
@@ -320,8 +392,20 @@ export default function ExitPlannerPage() {
                 <span className="text-xs text-gray-500 dark:text-gray-400">
                   Cash invested {selected.cashInvested.display}{selected.breakEvenYear ? ` · breaks even in year ${selected.breakEvenYear}` : ''}
                 </span>
+                <div className="ml-auto inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-gray-700">
+                  <button type="button" onClick={() => setView('table')}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${view === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}>
+                    <Table2 className="h-3.5 w-3.5" /> Table
+                  </button>
+                  <button type="button" onClick={() => setView('chart')}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${view === 'chart' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}>
+                    <BarChart3 className="h-3.5 w-3.5" /> Charts
+                  </button>
+                </div>
               </div>
 
+              {view === 'chart' ? <ExitCharts rows={selected.sellYears} breakEven={selected.breakEvenYear} /> : (
+              <>
               {/* Section 1: Cash to account */}
               <SellYearTable
                 title="Cash to your account — by sell year"
@@ -368,9 +452,11 @@ export default function ExitPlannerPage() {
                   { key: 'coc', label: 'Cash-on-cash', align: 'right', render: (r) => <span className="tabular-nums text-gray-500 dark:text-gray-400">{r.cashOnCash?.display ?? '—'}</span> },
                 ]}
               />
+              </>
+              )}
 
               <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                Estimates using simplified §121 rules (2-of-5-year test derived from your Rental section, {selected.exit ? '' : ''}$250k single / $500k married-jointly). Depreciation recapture is always taxed at 25%. Not tax advice — confirm with a tax professional.
+                Estimates using simplified §121 rules (2-of-5-year test derived from your Rental section, $250k single / $500k married-jointly). Depreciation recapture is always taxed at 25%. Not tax advice — confirm with a tax professional.
               </p>
             </>
           ) : null}
