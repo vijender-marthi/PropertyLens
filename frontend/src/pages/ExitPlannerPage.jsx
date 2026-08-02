@@ -9,7 +9,7 @@ import { formatChartCurrency } from '../utils/formatters'
 // Colour by the sign of a backend money node ({value, display}).
 const toneFor = (node) => ((Number(node?.value) || 0) < 0 ? 'negative' : 'positive')
 
-const DEFAULTS = { appreciation: 4, holdYears: 10, marginalTax: 24, capitalGains: 15, sellingCosts: 6, includePrimary: true }
+const DEFAULTS = { appreciation: 4, holdYears: 10, capitalGains: 15, sellingCosts: 6, improvements: 0, filingStatus: 'married_joint', includePrimary: true }
 
 function clampNum(v, min, max) {
   const n = Number(v)
@@ -179,6 +179,41 @@ function ProjectionChart({ rows }) {
   )
 }
 
+function moneyCell(node, { signed = false } = {}) {
+  const v = Number(node?.value) || 0
+  const cls = signed
+    ? (v < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')
+    : 'text-gray-900 dark:text-white'
+  return <span className={`tabular-nums ${cls}`}>{node?.display ?? '—'}</span>
+}
+
+function SellYearTable({ title, subtitle, rows, columns }) {
+  return (
+    <div className="card">
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{title}</h2>
+      {subtitle ? <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{subtitle}</p> : null}
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[560px] border-collapse text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+              {columns.map((c) => <th key={c.key} className={`px-2 py-1.5 font-medium ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.yearNumber} className="border-t border-gray-100 dark:border-gray-800">
+                {columns.map((c) => <td key={c.key} className={`px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''}`}>{c.render(r)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+const yearCol = { key: 'year', label: 'Sell in', render: (r) => <span className="whitespace-nowrap font-medium text-gray-900 dark:text-white">Yr {r.yearNumber} · {r.year}</span> }
+
 export default function ExitPlannerPage() {
   const [inputs, setInputs] = useState(DEFAULTS)
   const [data, setData] = useState(null)
@@ -196,10 +231,11 @@ export default function ExitPlannerPage() {
       setLoading(true)
       propAPI.exitPlanner({
         appreciation: clampNum(inputs.appreciation, 0, 30),
-        marginal_tax: clampNum(inputs.marginalTax, 0, 50),
         capital_gains: clampNum(inputs.capitalGains, 0, 40),
         selling_costs: clampNum(inputs.sellingCosts, 0, 15),
-        hold_years: clampNum(inputs.holdYears, 1, 30),
+        hold_years: clampNum(inputs.holdYears, 1, 10),
+        improvements: Math.max(0, Number(inputs.improvements) || 0),
+        filing_status: inputs.filingStatus,
         include_primary_residence: inputs.includePrimary,
       }).then((res) => {
         if (!active) return
@@ -269,35 +305,73 @@ export default function ExitPlannerPage() {
             <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">No rental properties to plan an exit for.</div>
           ) : selected ? (
             <>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <StatCard icon={TrendingUp} label={`Sale price · year ${selected.exit.year}`} value={selected.exit.salePrice.display}
-                  info={`Projected market value in year ${selected.exit.year} — today's value grown at your appreciation rate each year.`} />
-                <StatCard icon={Landmark} label="Net proceeds" value={selected.exit.netProceeds.display} tone={toneFor(selected.exit.netProceeds)}
-                  info="What you walk away with at closing: sale price − selling costs − remaining loan payoff − depreciation-recapture tax − capital-gains tax." />
-                <StatCard icon={PiggyBank} label="Depreciation tax saved" value={selected.exit.depreciationTaxSavings.display} tone="positive"
-                  info="Cumulative income tax deferred via depreciation deductions over the hold period (annual depreciation × your marginal tax rate). Recaptured at sale." />
-                <StatCard icon={DoorOpen} label="Final profit" value={selected.exit.finalProfit.display} tone={toneFor(selected.exit.finalProfit)}
-                  info="Total economic gain if you sell: net proceeds + cumulative cash flow + depreciation tax savings − your original cash invested." />
+              {/* Use classification + §121 status */}
+              <div className="card-sm flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 dark:bg-gray-800 dark:text-gray-200">{selected.useLabel}</span>
+                {selected.sellYears.some((r) => r.section121Eligible) ? (
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    §121 primary-home exclusion applies — up to {selected.exclusionCap.display} tax-free
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                    §121 exclusion unavailable — rental, or outside the 2-of-5-year primary window
+                  </span>
+                )}
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  Cash invested {selected.cashInvested.display}{selected.breakEvenYear ? ` · breaks even in year ${selected.breakEvenYear}` : ''}
+                </span>
               </div>
 
-              <div className="card">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{selected.name} — value, equity &amp; loan over time</h2>
-                  <div className="flex gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: chartColors.primary }} />value</span>
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: chartColors.positive }} />equity</span>
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: chartColors.danger }} />loan</span>
-                  </div>
-                </div>
-                <ProjectionChart rows={selected.rows} />
-              </div>
+              {/* Section 1: Cash to account */}
+              <SellYearTable
+                title="Cash to your account — by sell year"
+                subtitle="Net cash at closing (sale − selling costs − loan payoff − taxes), and your lifetime gain or loss if you sell that year."
+                rows={selected.sellYears}
+                columns={[
+                  yearCol,
+                  { key: 's121', label: '§121', render: (r) => r.section121Eligible ? <span className="text-emerald-600 dark:text-emerald-400">Yes</span> : <span className="text-gray-300 dark:text-gray-600">—</span> },
+                  { key: 'salePrice', label: 'Sale price', align: 'right', render: (r) => moneyCell(r.salePrice) },
+                  { key: 'loanPayoff', label: 'Loan payoff', align: 'right', render: (r) => moneyCell(r.loanPayoff) },
+                  { key: 'netProceeds', label: 'Cash to account', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(r.netProceeds)}</span> },
+                  { key: 'gainLoss', label: 'Gain / loss', align: 'right', render: (r) => moneyCell(r.gainLoss, { signed: true }) },
+                ]}
+              />
 
-              <ExitSummary proj={selected} />
+              {/* Section 2: Taxable capital gain */}
+              <SellYearTable
+                title="Taxable capital gain — by sell year"
+                subtitle="Total gain, minus the §121 exclusion where it applies, plus depreciation recapture (always taxed at 25%)."
+                rows={selected.sellYears}
+                columns={[
+                  yearCol,
+                  { key: 'totalGain', label: 'Total gain', align: 'right', render: (r) => moneyCell(r.totalGain) },
+                  { key: 'recapture', label: 'Deprec. recapture', align: 'right', render: (r) => moneyCell(r.recaptureAmount) },
+                  { key: 's121excl', label: '§121 excluded', align: 'right', render: (r) => moneyCell(r.section121Excluded) },
+                  { key: 'taxable', label: 'Taxable gain', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(r.taxableCapitalGain)}</span> },
+                  { key: 'cgtax', label: 'Cap-gains tax', align: 'right', render: (r) => moneyCell(r.capitalGainsTax) },
+                  { key: 'rectax', label: 'Recapture tax', align: 'right', render: (r) => moneyCell(r.recaptureTax) },
+                ]}
+              />
 
-              <details className="card-sm">
-                <summary className="cursor-pointer text-sm font-semibold text-gray-900 dark:text-white">{selected.name} — year-by-year detail</summary>
-                <div className="mt-3"><YearTable rows={selected.rows} /></div>
-              </details>
+              {/* Section 3: Operating totals through sale */}
+              <SellYearTable
+                title="Operating totals through sale — by sell year"
+                subtitle="Cumulative rental income, mortgage interest, property taxes, expenses and net cash flow you'd have collected by that year."
+                rows={selected.sellYears}
+                columns={[
+                  yearCol,
+                  { key: 'rent', label: 'Rent received', align: 'right', render: (r) => moneyCell(r.cumRentReceived) },
+                  { key: 'interest', label: 'Mortgage int.', align: 'right', render: (r) => moneyCell(r.cumMortgageInterest) },
+                  { key: 'ptax', label: 'Property taxes', align: 'right', render: (r) => moneyCell(r.cumPropertyTaxes) },
+                  { key: 'exp', label: 'Expenses', align: 'right', render: (r) => moneyCell(r.cumExpenses) },
+                  { key: 'cf', label: 'Net cash flow', align: 'right', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
+                  { key: 'coc', label: 'Cash-on-cash', align: 'right', render: (r) => <span className="tabular-nums text-gray-500 dark:text-gray-400">{r.cashOnCash?.display ?? '—'}</span> },
+                ]}
+              />
+
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                Estimates using simplified §121 rules (2-of-5-year test derived from your Rental section, {selected.exit ? '' : ''}$250k single / $500k married-jointly). Depreciation recapture is always taxed at 25%. Not tax advice — confirm with a tax professional.
+              </p>
             </>
           ) : null}
         </div>
@@ -328,12 +402,25 @@ export default function ExitPlannerPage() {
                 <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Assumptions</div>
                 <div className="grid grid-cols-2 gap-3">
                   <NumField label="Appreciation / yr" value={inputs.appreciation} onChange={(v) => update({ appreciation: v })} min={0} max={30} suffix="%" />
-                  <NumField label="Hold" value={inputs.holdYears} onChange={(v) => update({ holdYears: v })} min={1} max={30} suffix="yrs" step />
-                  <NumField label="Marginal tax" value={inputs.marginalTax} onChange={(v) => update({ marginalTax: v })} min={0} max={50} suffix="%" />
+                  <NumField label="Hold (max)" value={inputs.holdYears} onChange={(v) => update({ holdYears: v })} min={1} max={10} suffix="yrs" step />
                   <NumField label="Capital gains" value={inputs.capitalGains} onChange={(v) => update({ capitalGains: v })} min={0} max={40} suffix="%" />
                   <NumField label="Selling costs" value={inputs.sellingCosts} onChange={(v) => update({ sellingCosts: v })} min={0} max={15} suffix="%" />
+                  <NumField label="Remodel / improv. ($)" value={inputs.improvements} onChange={(v) => update({ improvements: v })} min={0} max={5000000} step />
                 </div>
               </div>
+
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">Filing status (§121 exclusion)</span>
+                <select
+                  value={inputs.filingStatus}
+                  onChange={(e) => update({ filingStatus: e.target.value })}
+                  aria-label="Filing status"
+                  className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                >
+                  <option value="married_joint">Married filing jointly — $500k tax-free</option>
+                  <option value="single">Single — $250k tax-free</option>
+                </select>
+              </label>
 
               <label className="flex cursor-pointer items-center gap-2 text-[13px] text-gray-700 dark:text-gray-300">
                 <input
@@ -345,7 +432,7 @@ export default function ExitPlannerPage() {
                 Include primary home
               </label>
 
-              <p className="text-[11px] text-gray-400 dark:text-gray-500">Long-run home appreciation is typically ~3–4%/yr; depreciation recapture is fixed at the IRS 25%. A primary home earns no rental depreciation, so its tax savings show as $0.</p>
+              <p className="text-[11px] text-gray-400 dark:text-gray-500">Primary vs rental and the §121 2-of-5-year eligibility are read from each property's Rental section. Depreciation recapture is always taxed at 25%. Estimates, not tax advice.</p>
             </div>
           </div>
         </aside>
