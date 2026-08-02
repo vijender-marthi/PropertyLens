@@ -233,7 +233,8 @@ export default function ExitPlannerPage() {
             <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
               <DoorOpen className="h-3.5 w-3.5" aria-hidden="true" />
               Viewing: {selected.name}
-              <span className="font-normal text-blue-500/80 dark:text-blue-400/80">· final profit {selected.exit.finalProfit.display}</span>
+              <span className="font-normal text-blue-400/70 dark:text-blue-400/60">· final profit</span>
+              <span className={`font-semibold ${toneFor(selected.exit.finalProfit) === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{selected.exit.finalProfit.display}</span>
             </div>
           ) : null}
         </div>
