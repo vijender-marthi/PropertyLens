@@ -326,6 +326,39 @@ function Waterfall({ row, maxSale }) {
   )
 }
 
+function Breakdown({ row, sellingCostsPct }) {
+  const Line = ({ label, node, op, strong }) => {
+    const v = Number(node?.value) || 0
+    let prefix = '', cls = 'text-gray-900 dark:text-white'
+    if (op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
+    else if (op === '+') {
+      if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' }
+      else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' }
+    }
+    return (
+      <div className="flex justify-between py-1 text-sm">
+        <span className={strong ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300'}>{label}</span>
+        <span className={`tabular-nums ${strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{node?.display ?? '—'}</span>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">
+      <Line label="Sale price" node={row.salePrice} />
+      <Line label={`Selling costs (${Math.round(sellingCostsPct)}%)`} node={row.sellingCosts} op="-" />
+      <Line label="Loan payoff" node={row.loanPayoff} op="-" />
+      <Line label="Depreciation recapture tax (25%)" node={row.recaptureTax} op="-" />
+      <Line label="Capital-gains tax" node={row.capitalGainsTax} op="-" />
+      <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+      <Line label="Cash to your account" node={row.netProceeds} strong />
+      <Line label="Cumulative cash flow" node={row.cumCashFlow} op="+" />
+      <Line label="Cash invested" node={row.cashInvested} op="-" />
+      <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+      <Line label="Lifetime profit" node={row.gainLoss} strong />
+    </div>
+  )
+}
+
 function ProfitTrend({ rows, selected }) {
   const data = rows.map((r) => ({ label: `Yr ${r.yearNumber}`, profit: r.gainLoss.value }))
   const selLabel = `Yr ${selected}`
@@ -470,6 +503,7 @@ export default function ExitPlannerPage() {
                   <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
                 </div>
                 <Waterfall row={row} maxSale={maxSale} />
+                <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} />
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {[
                     { label: 'Rent received', v: row.cumRentReceived.display },
