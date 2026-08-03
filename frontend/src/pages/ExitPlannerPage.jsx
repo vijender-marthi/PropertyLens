@@ -307,7 +307,7 @@ function Waterfall({ row, maxSale, sellingCostsPct }) {
     { l: 'Cash invested', node: row.cashInvested, sub: true, top: cash + flow, bot: cash + flow - invested, col: '#888780' },
     { l: 'Lifetime profit', node: row.gainLoss, top: Math.max(profit, 0), bot: Math.min(profit, 0), col: profit < 0 ? '#E24B4A' : '#639922', head: true },
   ]
-  const max = maxSale || sale || 1
+  const max = sale || maxSale || 1
   return (
     <div className="space-y-1">
       {items.map((it, i) => {
