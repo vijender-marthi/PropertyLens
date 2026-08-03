@@ -285,13 +285,73 @@ function ExitCharts({ rows, breakEven }) {
   )
 }
 
+function Waterfall({ row, maxSale }) {
+  const sale = row.salePrice.value
+  const costs = row.sellingCosts.value
+  const loan = row.loanPayoff.value
+  const tax = row.recaptureTax.value + row.capitalGainsTax.value
+  const cash = row.netProceeds.value
+  const flowInv = row.cumCashFlow.value - row.cashInvested.value
+  const profit = row.gainLoss.value
+  const c1 = sale - costs
+  const c2 = c1 - loan
+  const BLUE = chartColors.primary, RED = chartColors.danger, GREEN = chartColors.positive
+  const bars = [
+    { l: 'Sale', v: sale, sub: false, col: BLUE, top: sale, bot: 0 },
+    { l: 'Costs', v: costs, sub: true, col: RED, top: sale, bot: c1 },
+    { l: 'Loan', v: loan, sub: true, col: RED, top: c1, bot: c2 },
+    { l: 'Taxes', v: tax, sub: true, col: RED, top: c2, bot: cash },
+    { l: 'Cash', v: cash, sub: false, col: BLUE, top: cash, bot: 0 },
+    { l: 'Flow−invested', v: Math.abs(flowInv), sub: flowInv < 0, col: flowInv < 0 ? RED : GREEN, top: Math.max(cash, cash + flowInv), bot: Math.min(cash, cash + flowInv) },
+    { l: 'Profit', v: profit, sub: false, col: profit < 0 ? RED : GREEN, top: Math.max(profit, 0), bot: Math.min(profit, 0) },
+  ]
+  const scale = 168 / (maxSale || sale || 1)
+  const Z = 26
+  const label = (b) => `${b.sub ? '−' : ''}${formatCurrency(b.v)}`
+  return (
+    <div className="grid items-end gap-2" style={{ gridTemplateColumns: `repeat(${bars.length}, minmax(0, 1fr))`, height: 216 }}>
+      {bars.map((b, i) => {
+        const h = Math.max((b.top - b.bot) * scale, 2)
+        const off = b.bot * scale + Z
+        return (
+          <div key={i} className="flex h-full flex-col justify-end text-center">
+            <div className="relative rounded-[3px]" style={{ height: h, marginBottom: off, background: b.col }}>
+              <span className="absolute -top-4 left-[-6px] right-[-6px] whitespace-nowrap text-[10px] text-gray-500 dark:text-gray-400">{label(b)}</span>
+            </div>
+            <div className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">{b.l}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ProfitTrend({ rows, selected }) {
+  const data = rows.map((r) => ({ label: `Yr ${r.yearNumber}`, profit: r.gainLoss.value }))
+  const selLabel = `Yr ${selected}`
+  return (
+    <div className="h-16">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ left: 0, right: 4, top: 6, bottom: 0 }}>
+          <YAxis hide domain={['dataMin', 'dataMax']} />
+          <XAxis dataKey="label" hide />
+          <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
+          <ReferenceLine x={selLabel} stroke={chartColors.primary} strokeDasharray="3 3" />
+          <Tooltip formatter={(v) => formatCurrency(v)} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
+          <Line type="monotone" dataKey="profit" stroke={chartColors.primary} strokeWidth={2} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 export default function ExitPlannerPage() {
   const [inputs, setInputs] = useState(DEFAULTS)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
-  const [view, setView] = useState('table') // 'table' | 'chart'
+  const [sellYear, setSellYear] = useState(null)
   const debounceRef = useRef(null)
 
   const update = (patch) => setInputs((prev) => ({ ...prev, ...patch }))
@@ -326,6 +386,17 @@ export default function ExitPlannerPage() {
   const properties = data?.properties || []
   const selected = useMemo(() => properties.find((p) => p.id === selectedId) || properties[0], [properties, selectedId])
   const portfolio = data?.portfolio
+
+  // Default the sell-year to the break-even year (the decision point), or the
+  // last year; keep the user's choice if still valid for the selected property.
+  useEffect(() => {
+    if (!selected) return
+    const years = selected.sellYears.map((r) => r.yearNumber)
+    setSellYear((cur) => (cur && years.includes(cur) ? cur : (selected.breakEvenYear || years[years.length - 1])))
+  }, [selected])
+
+  const row = selected ? (selected.sellYears.find((r) => r.yearNumber === sellYear) || selected.sellYears[0]) : null
+  const maxSale = selected ? Math.max(...selected.sellYears.map((r) => r.salePrice.value)) : 0
 
   return (
     <PageContainer>
@@ -375,85 +446,90 @@ export default function ExitPlannerPage() {
             <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">Projecting exit scenarios…</div>
           ) : properties.length === 0 ? (
             <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">No rental properties to plan an exit for.</div>
-          ) : selected ? (
+          ) : selected && row ? (
             <>
-              {/* Use classification + §121 status */}
-              <div className="card-sm flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 dark:bg-gray-800 dark:text-gray-200">{selected.useLabel}</span>
-                {selected.sellYears.some((r) => r.section121Eligible) ? (
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                    §121 primary-home exclusion applies — up to {selected.exclusionCap.display} tax-free
-                  </span>
-                ) : (
-                  <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                    §121 exclusion unavailable — rental, or outside the 2-of-5-year primary window
-                  </span>
-                )}
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Cash invested {selected.cashInvested.display}{selected.breakEvenYear ? ` · breaks even in year ${selected.breakEvenYear}` : ''}
-                </span>
-                <div className="ml-auto inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-gray-700">
-                  <button type="button" onClick={() => setView('table')}
-                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${view === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}>
-                    <Table2 className="h-3.5 w-3.5" /> Table
-                  </button>
-                  <button type="button" onClick={() => setView('chart')}
-                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ${view === 'chart' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'}`}>
-                    <BarChart3 className="h-3.5 w-3.5" /> Charts
-                  </button>
+              {/* Verdict strip */}
+              <div className="card-sm flex flex-wrap items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
+                  <DoorOpen className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{selected.name} · {selected.useLabel}</div>
+                  <div className="text-base font-semibold text-gray-900 dark:text-white">If you sell in year {row.yearNumber} · {row.year}</div>
+                </div>
+                {row.section121Eligible
+                  ? <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">§121 shelters up to {selected.exclusionCap.display}</span>
+                  : <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">No §121 this year</span>}
+                <div className="text-right">
+                  <div className="text-[11px] text-gray-500 dark:text-gray-400">Lifetime profit</div>
+                  <div className={`text-xl font-bold tabular-nums ${toneFor(row.gainLoss) === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{row.gainLoss.display}</div>
                 </div>
               </div>
 
-              {view === 'chart' ? <ExitCharts rows={selected.sellYears} breakEven={selected.breakEvenYear} /> : (
-              <>
-              {/* Section 1: Cash to account */}
-              <SellYearTable
-                title="Cash to your account — by sell year"
-                subtitle="Net cash at closing (sale − selling costs − loan payoff − taxes), and your lifetime gain or loss if you sell that year."
-                rows={selected.sellYears}
-                columns={[
-                  yearCol,
-                  { key: 's121', label: '§121', render: (r) => r.section121Eligible ? <span className="text-emerald-600 dark:text-emerald-400">Yes</span> : <span className="text-gray-300 dark:text-gray-600">—</span> },
-                  { key: 'salePrice', label: 'Sale price', align: 'right', render: (r) => moneyCell(r.salePrice) },
-                  { key: 'loanPayoff', label: 'Loan payoff', align: 'right', render: (r) => moneyCell(r.loanPayoff) },
-                  { key: 'netProceeds', label: 'Cash to account', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(r.netProceeds)}</span> },
-                  { key: 'gainLoss', label: 'Gain / loss', align: 'right', render: (r) => moneyCell(r.gainLoss, { signed: true }) },
-                ]}
-              />
+              {/* Waterfall */}
+              <div className="card">
+                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sale price to profit</h2>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
+                </div>
+                <Waterfall row={row} maxSale={maxSale} />
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { label: 'Rent received', v: row.cumRentReceived.display },
+                    { label: 'Mortgage interest', v: row.cumMortgageInterest.display },
+                    { label: 'Property taxes', v: row.cumPropertyTaxes.display },
+                    { label: 'Cash-on-cash', v: row.cashOnCash?.display ?? '—' },
+                  ].map((c) => (
+                    <div key={c.label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">{c.label}</div>
+                      <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{c.v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-              {/* Section 2: Taxable capital gain */}
-              <SellYearTable
-                title="Taxable capital gain — by sell year"
-                subtitle="Total gain, minus the §121 exclusion where it applies, plus depreciation recapture (always taxed at 25%)."
-                rows={selected.sellYears}
-                columns={[
-                  yearCol,
-                  { key: 'totalGain', label: 'Total gain', align: 'right', render: (r) => moneyCell(r.totalGain) },
-                  { key: 'recapture', label: 'Deprec. recapture', align: 'right', render: (r) => moneyCell(r.recaptureAmount) },
-                  { key: 's121excl', label: '§121 excluded', align: 'right', render: (r) => moneyCell(r.section121Excluded) },
-                  { key: 'taxable', label: 'Taxable gain', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(r.taxableCapitalGain)}</span> },
-                  { key: 'cgtax', label: 'Cap-gains tax', align: 'right', render: (r) => moneyCell(r.capitalGainsTax) },
-                  { key: 'rectax', label: 'Recapture tax', align: 'right', render: (r) => moneyCell(r.recaptureTax) },
-                ]}
-              />
+              {/* Profit trend + year buttons */}
+              <div className="card">
+                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit by sell year</h2>
+                  {selected.breakEvenYear ? <span className="text-xs text-gray-500 dark:text-gray-400">breaks even in year {selected.breakEvenYear}</span> : null}
+                </div>
+                <ProfitTrend rows={selected.sellYears} selected={row.yearNumber} />
+                <div className="mt-3">
+                  <div className="mb-1.5 text-[11px] text-gray-500 dark:text-gray-400">Sell in year</div>
+                  <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${selected.sellYears.length}, minmax(0, 1fr))` }}>
+                    {selected.sellYears.map((r) => {
+                      const on = r.yearNumber === row.yearNumber
+                      return (
+                        <button key={r.yearNumber} type="button" onClick={() => setSellYear(r.yearNumber)}
+                          className={`rounded-md border py-1.5 text-xs font-medium transition-colors ${on ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-300'}`}>
+                          Yr {r.yearNumber}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
 
-              {/* Section 3: Operating totals through sale */}
-              <SellYearTable
-                title="Operating totals through sale — by sell year"
-                subtitle="Cumulative rental income, mortgage interest, property taxes, expenses and net cash flow you'd have collected by that year."
-                rows={selected.sellYears}
-                columns={[
-                  yearCol,
-                  { key: 'rent', label: 'Rent received', align: 'right', render: (r) => moneyCell(r.cumRentReceived) },
-                  { key: 'interest', label: 'Mortgage int.', align: 'right', render: (r) => moneyCell(r.cumMortgageInterest) },
-                  { key: 'ptax', label: 'Property taxes', align: 'right', render: (r) => moneyCell(r.cumPropertyTaxes) },
-                  { key: 'exp', label: 'Expenses', align: 'right', render: (r) => moneyCell(r.cumExpenses) },
-                  { key: 'cf', label: 'Net cash flow', align: 'right', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
-                  { key: 'coc', label: 'Cash-on-cash', align: 'right', render: (r) => <span className="tabular-nums text-gray-500 dark:text-gray-400">{r.cashOnCash?.display ?? '—'}</span> },
-                ]}
-              />
-              </>
-              )}
+              {/* Full 10-year table (collapsed) */}
+              <details className="card-sm">
+                <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+                  <Table2 className="h-4 w-4" /> Show all {selected.sellYears.length} years as a table
+                </summary>
+                <div className="mt-3">
+                  <SellYearTable
+                    rows={selected.sellYears}
+                    columns={[
+                      yearCol,
+                      { key: 's121', label: '§121', render: (r) => r.section121Eligible ? <span className="text-emerald-600 dark:text-emerald-400">Yes</span> : <span className="text-gray-300 dark:text-gray-600">—</span> },
+                      { key: 'salePrice', label: 'Sale price', align: 'right', render: (r) => moneyCell(r.salePrice) },
+                      { key: 'taxable', label: 'Taxable gain', align: 'right', render: (r) => moneyCell(r.taxableCapitalGain) },
+                      { key: 'netProceeds', label: 'Cash to account', align: 'right', render: (r) => moneyCell(r.netProceeds) },
+                      { key: 'gainLoss', label: 'Gain / loss', align: 'right', render: (r) => moneyCell(r.gainLoss, { signed: true }) },
+                    ]}
+                  />
+                </div>
+              </details>
 
               <p className="text-[11px] text-gray-400 dark:text-gray-500">
                 Estimates using simplified §121 rules (2-of-5-year test derived from your Rental section, $250k single / $500k married-jointly). Depreciation recapture is always taxed at 25%. Not tax advice — confirm with a tax professional.
