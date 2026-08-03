@@ -401,21 +401,18 @@ export default function ExitPlannerPage() {
   return (
     <PageContainer>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold text-gray-900 dark:text-white">
-            <DoorOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />Exit planner
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
+            <DoorOpen className="h-4 w-4" aria-hidden="true" /> Exit planner
+          </div>
+          <h1 className="mt-1 truncate text-2xl font-bold text-gray-900 dark:text-white">
+            {selected ? selected.name : 'Exit planner'}
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Project each property forward at your appreciation rate, tally depreciation tax savings by year, and see the net proceeds and final profit after recapture and capital gains.
+            {selected
+              ? `${selected.useLabel} · year-by-year sale, taxes and profit with the §121 exclusion.`
+              : 'Project each property forward and see the net proceeds and profit after recapture and capital gains.'}
           </p>
-          {selected ? (
-            <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
-              <DoorOpen className="h-3.5 w-3.5" aria-hidden="true" />
-              Viewing: {selected.name}
-              <span className="font-normal text-blue-400/70 dark:text-blue-400/60">· final profit</span>
-              <span className={`font-semibold ${toneFor(selected.exit.finalProfit) === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{selected.exit.finalProfit.display}</span>
-            </div>
-          ) : null}
         </div>
         {portfolio ? (
           (() => {
