@@ -305,20 +305,18 @@ function Waterfall({ row, maxSale }) {
     { l: 'Flow−invested', v: Math.abs(flowInv), sub: flowInv < 0, col: flowInv < 0 ? RED : GREEN, top: Math.max(cash, cash + flowInv), bot: Math.min(cash, cash + flowInv) },
     { l: 'Profit', v: profit, sub: false, col: profit < 0 ? RED : GREEN, top: Math.max(profit, 0), bot: Math.min(profit, 0) },
   ]
-  const scale = 168 / (maxSale || sale || 1)
-  const Z = 26
-  const label = (b) => `${b.sub ? '−' : ''}${formatCurrency(b.v)}`
+  const scale = 150 / (maxSale || sale || 1)
+  const Z = 12
+  const label = (b) => `${b.sub ? '−' : ''}${formatChartCurrency(b.v)}`
   return (
-    <div className="grid items-end gap-2" style={{ gridTemplateColumns: `repeat(${bars.length}, minmax(0, 1fr))`, height: 216 }}>
+    <div className="grid items-end gap-2" style={{ gridTemplateColumns: `repeat(${bars.length}, minmax(0, 1fr))`, height: 196 }}>
       {bars.map((b, i) => {
         const h = Math.max((b.top - b.bot) * scale, 2)
         const off = b.bot * scale + Z
         return (
-          <div key={i} className="flex h-full flex-col justify-end text-center">
-            <div className="relative rounded-[3px]" style={{ height: h, marginBottom: off, background: b.col }}>
-              <span className="absolute -top-4 left-[-6px] right-[-6px] whitespace-nowrap text-[10px] text-gray-500 dark:text-gray-400">{label(b)}</span>
-            </div>
-            <div className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500">{b.l}</div>
+          <div key={i} className="flex h-full flex-col justify-end text-center" title={`${b.l}: ${label(b)}`}>
+            <div className="rounded-[3px]" style={{ height: h, marginBottom: off, background: b.col }} />
+            <div className="mt-1.5 truncate text-[10px] text-gray-400 dark:text-gray-500">{b.l}</div>
           </div>
         )
       })}
