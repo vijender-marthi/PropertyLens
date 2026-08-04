@@ -12013,6 +12013,24 @@ def _primary_use_windows(prop, is_primary, purchase_d, rental_start_d, rental_en
     return [w for w in windows if w[0]]
 
 
+def _current_monthly_rent(prop, today: date) -> float:
+    """Current monthly rent from the active lease (rental period). The property's
+    ``monthly_rent`` field is often 0 even when a lease exists — the rent lives on
+    the rental period — so read the period covering today, then the highest
+    recorded period rent, then the property field."""
+    periods = getattr(prop, "rental_periods", None) or []
+    t = today.year * 12 + today.month
+    for rp in periods:
+        s = (rp.start_year or 0) * 12 + (rp.start_month or 1)
+        e = ((rp.end_year or 9999) * 12 + (rp.end_month or 12))
+        if s <= t <= e and rp.monthly_rent:
+            return float(rp.monthly_rent)
+    rents = [float(rp.monthly_rent) for rp in periods if rp.monthly_rent]
+    if rents:
+        return max(rents)
+    return float(prop.monthly_rent or 0.0)
+
+
 def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_years, today,
                      filing_status="married_joint", improvements=0.0):
     """Sell-in-year-N (1..hold_years) exit model for one property, with the §121
@@ -12031,6 +12049,16 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
     annual_rent = 0.0 if is_primary else float(metrics.get("effective_rent", 0.0) or 0.0) * 12.0
     annual_prop_tax = float(metrics.get("property_tax_annual", 0.0) or 0.0)
     annual_debt_service = float(metrics.get("annual_debt_service", 0.0) or 0.0)
+
+    # The metrics rent comes from the property's monthly_rent field, which is
+    # often 0 even for an occupied rental (the rent lives on the active lease).
+    # Fall back to the lease so the exit view doesn't show $0 rent — and recompute
+    # cash flow with that rent instead of an inflated loss.
+    if not is_primary and annual_rent <= 0:
+        lease_rent = _current_monthly_rent(prop, today) * 12.0
+        if lease_rent > 0:
+            annual_rent = lease_rent
+            annual_cf = (annual_rent - annual_opex) - annual_debt_service
 
     purchase_d = _parse_iso_date(getattr(prop, "purchase_date", None))
     rental_start_d = _parse_iso_date(getattr(prop, "rental_start_date", None))
