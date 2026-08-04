@@ -285,46 +285,38 @@ function ExitCharts({ rows, breakEven }) {
   )
 }
 
-function Waterfall({ row, maxSale, sellingCostsPct }) {
+function Waterfall({ row, maxSale }) {
   const sale = row.salePrice.value
   const costs = row.sellingCosts.value
   const loan = row.loanPayoff.value
-  const recapture = row.recaptureTax.value
-  const cgtax = row.capitalGainsTax.value
+  const tax = row.recaptureTax.value + row.capitalGainsTax.value
   const cash = row.netProceeds.value
-  const flow = row.cumCashFlow.value
-  const invested = row.cashInvested.value
+  const flowInv = row.cumCashFlow.value - row.cashInvested.value
   const profit = row.gainLoss.value
-  const c1 = sale - costs, c2 = c1 - loan, c3 = c2 - recapture
-  const items = [
-    { l: 'Sale price', node: row.salePrice, top: sale, bot: 0, col: '#378ADD', head: true },
-    { l: `Selling costs (${Math.round(sellingCostsPct)}%)`, node: row.sellingCosts, sub: true, top: sale, bot: c1, col: '#BA7517' },
-    { l: 'Loan payoff', node: row.loanPayoff, sub: true, top: c1, bot: c2, col: '#7F77DD' },
-    { l: 'Depreciation recapture (25%)', node: row.recaptureTax, sub: true, top: c2, bot: c3, col: '#D4537E' },
-    { l: 'Capital-gains tax', node: row.capitalGainsTax, sub: true, top: c3, bot: cash, col: '#E24B4A' },
-    { l: 'Cash to your account', node: row.netProceeds, top: cash, bot: 0, col: '#1D9E75', head: true },
-    { l: 'Cumulative cash flow', node: row.cumCashFlow, add: true, top: Math.max(cash, cash + flow), bot: Math.min(cash, cash + flow), col: flow < 0 ? '#E24B4A' : '#639922' },
-    { l: 'Cash invested', node: row.cashInvested, sub: true, top: cash + flow, bot: cash + flow - invested, col: '#888780' },
-    { l: 'Lifetime profit', node: row.gainLoss, top: Math.max(profit, 0), bot: Math.min(profit, 0), col: profit < 0 ? '#E24B4A' : '#639922', head: true },
+  const c1 = sale - costs, c2 = c1 - loan
+  const bars = [
+    { l: 'Sale', v: sale, col: '#378ADD', top: sale, bot: 0 },
+    { l: 'Costs', v: costs, sub: true, col: '#BA7517', top: sale, bot: c1 },
+    { l: 'Loan', v: loan, sub: true, col: '#7F77DD', top: c1, bot: c2 },
+    { l: 'Taxes', v: tax, sub: true, col: '#E24B4A', top: c2, bot: cash },
+    { l: 'Cash', v: cash, col: '#1D9E75', top: cash, bot: 0 },
+    { l: 'Flow−inv', v: Math.abs(flowInv), sub: flowInv < 0, col: flowInv < 0 ? '#E24B4A' : '#639922', top: Math.max(cash, cash + flowInv), bot: Math.min(cash, cash + flowInv) },
+    { l: 'Profit', v: profit, col: profit < 0 ? '#E24B4A' : '#639922', top: Math.max(profit, 0), bot: Math.min(profit, 0) },
   ]
   const max = sale || maxSale || 1
+  const scale = 150 / max
+  const Z = 22
   return (
-    <div className="space-y-1">
-      {items.map((it, i) => {
-        const left = Math.max(Math.min(it.bot, it.top), 0) / max * 100
-        const width = Math.max(Math.abs(it.top - it.bot) / max * 100, 0.6)
-        const v = Number(it.node?.value) || 0
-        const prefix = it.sub ? '− ' : it.add ? (v < 0 ? '' : '+ ') : ''
-        const valCls = it.sub ? 'text-red-600 dark:text-red-400'
-          : it.add ? (v < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')
-          : 'font-semibold text-gray-900 dark:text-white'
+    <div className="grid items-end gap-2" style={{ gridTemplateColumns: `repeat(${bars.length}, minmax(0, 1fr))`, height: 210 }}>
+      {bars.map((b, i) => {
+        const h = Math.max((b.top - b.bot) * scale, 2)
+        const off = b.bot * scale + Z
         return (
-          <div key={i} className={`flex items-center gap-2 ${it.head ? 'border-t border-gray-100 pt-1.5 dark:border-gray-800' : ''}`}>
-            <div className={`w-36 shrink-0 truncate text-[11px] sm:w-44 ${it.head ? 'font-medium text-gray-800 dark:text-gray-200' : 'text-gray-500 dark:text-gray-400'}`} title={it.l}>{it.l}</div>
-            <div className="relative h-4 flex-1 rounded bg-gray-100/70 dark:bg-gray-800/40">
-              <div className="absolute top-0 h-4 rounded" style={{ left: `${left}%`, width: `${width}%`, background: it.col }} />
+          <div key={i} className="flex h-full flex-col justify-end text-center" title={`${b.l}: ${b.sub ? '−' : ''}${formatChartCurrency(b.v)}`}>
+            <div className="relative rounded-[3px]" style={{ height: h, marginBottom: off, background: b.col }}>
+              <span className="absolute -top-4 left-[-8px] right-[-8px] whitespace-nowrap text-[10px] text-gray-500 dark:text-gray-400">{b.sub ? '−' : ''}{formatChartCurrency(b.v)}</span>
             </div>
-            <div className={`w-24 shrink-0 text-right text-[12px] tabular-nums ${valCls}`}>{prefix}{it.node?.display}</div>
+            <div className="mt-1.5 truncate text-[10px] text-gray-400 dark:text-gray-500">{b.l}</div>
           </div>
         )
       })}
@@ -508,7 +500,8 @@ export default function ExitPlannerPage() {
                   <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sale price to profit</h2>
                   <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
                 </div>
-                <Waterfall row={row} maxSale={maxSale} sellingCostsPct={data.assumptions.sellingCosts} />
+                <Waterfall row={row} maxSale={maxSale} />
+                <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} />
                 <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {[
                     { label: 'Rent received', v: row.cumRentReceived.display },
