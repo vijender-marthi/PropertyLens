@@ -12086,6 +12086,14 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
     def pct(v):
         return None if v is None else {"value": round(v, 2), "display": f"{v:.1f}%"}
 
+    # Operating totals span the FULL ownership: the years already held (since
+    # purchase) plus the future years to the sale. So a home bought in 2021 shows
+    # ~5 years of rent/expenses/taxes already accrued, not just the future slice.
+    years_owned_before = max(0.0, (today - purchase_d).days / 365.25) if purchase_d else 0.0
+    _bal_now = _future_loan_balance(prop, 0, today)
+    _bal_1y = _future_loan_balance(prop, 12, today)
+    annual_interest_est = max(annual_debt_service - max(_bal_now - _bal_1y, 0.0), 0.0)
+
     sell_years = []
     for y in range(1, int(hold_years) + 1):
         day = min(today.day, 28)
@@ -12115,10 +12123,8 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         cap_gains_tax = taxable_cap_gain * cg
         net_proceeds = value - selling_costs - loan - recapture_tax - cap_gains_tax
 
-        cum_cash_flow = annual_cf * y
-        # Cumulative mortgage interest = total P&I paid − principal paid.
-        principal_paid = max(_future_loan_balance(prop, 0, today) - loan, 0.0)
-        cum_interest = max(annual_debt_service * y - principal_paid, 0.0)
+        years_total = years_owned_before + y
+        cum_cash_flow = annual_cf * years_total
         gain_loss = net_proceeds + cum_cash_flow - cash_invested
         cash_on_cash = (annual_cf / cash_invested * 100.0) if cash_invested else None
 
@@ -12141,10 +12147,10 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
             "netProceeds": m(net_proceeds),
             "cashInvested": m(cash_invested),
             "cashOnCash": pct(cash_on_cash),
-            "cumRentReceived": m(annual_rent * y),
-            "cumMortgageInterest": m(cum_interest),
-            "cumPropertyTaxes": m(annual_prop_tax * y),
-            "cumExpenses": m(annual_opex * y),
+            "cumRentReceived": m(annual_rent * years_total),
+            "cumMortgageInterest": m(annual_interest_est * years_total),
+            "cumPropertyTaxes": m(annual_prop_tax * years_total),
+            "cumExpenses": m(annual_opex * years_total),
             "cumCashFlow": m(cum_cash_flow),
             "gainLoss": m(gain_loss),
         })
