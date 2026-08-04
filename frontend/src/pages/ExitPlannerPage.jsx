@@ -10,6 +10,11 @@ import { formatChartCurrency, formatCurrency } from '../utils/formatters'
 // Colour by the sign of a backend money node ({value, display}).
 const toneFor = (node) => ((Number(node?.value) || 0) < 0 ? 'negative' : 'positive')
 
+// Pre-tax view — cash and profit with no capital-gains or recapture tax deducted.
+const preCash = (r) => r.salePrice.value - r.sellingCosts.value - r.loanPayoff.value
+const preProfit = (r) => preCash(r) + r.cumCashFlow.value - r.cashInvested.value
+const asNode = (v) => ({ value: v, display: formatCurrency(v) })
+
 const DEFAULTS = { appreciation: 4, holdYears: 10, capitalGains: 15, sellingCosts: 6, improvements: 0, filingStatus: 'married_joint', includePrimary: true }
 
 function clampNum(v, min, max) {
@@ -289,18 +294,19 @@ function Waterfall({ row, maxSale }) {
   const sale = row.salePrice.value
   const costs = row.sellingCosts.value
   const loan = row.loanPayoff.value
-  const tax = row.recaptureTax.value + row.capitalGainsTax.value
-  const cash = row.netProceeds.value
-  const flowInv = row.cumCashFlow.value - row.cashInvested.value
-  const profit = row.gainLoss.value
+  const cash = preCash(row)
+  const flow = row.cumCashFlow.value
+  const invested = row.cashInvested.value
+  const profit = preProfit(row)
   const c1 = sale - costs, c2 = c1 - loan
+  const afterFlow = cash + flow
   const bars = [
     { l: 'Sale', v: sale, col: '#378ADD', top: sale, bot: 0 },
     { l: 'Costs', v: costs, sub: true, col: '#BA7517', top: sale, bot: c1 },
     { l: 'Loan', v: loan, sub: true, col: '#7F77DD', top: c1, bot: c2 },
-    { l: 'Taxes', v: tax, sub: true, col: '#E24B4A', top: c2, bot: cash },
     { l: 'Cash', v: cash, col: '#1D9E75', top: cash, bot: 0 },
-    { l: 'Flow−inv', v: Math.abs(flowInv), sub: flowInv < 0, col: flowInv < 0 ? '#E24B4A' : '#639922', top: Math.max(cash, cash + flowInv), bot: Math.min(cash, cash + flowInv) },
+    { l: 'Cash flow', v: Math.abs(flow), sub: flow < 0, col: flow < 0 ? '#E24B4A' : '#639922', top: Math.max(cash, afterFlow), bot: Math.min(cash, afterFlow) },
+    { l: 'Invested', v: invested, sub: true, col: '#888780', top: afterFlow, bot: afterFlow - invested },
     { l: 'Profit', v: profit, col: profit < 0 ? '#E24B4A' : '#639922', top: Math.max(profit, 0), bot: Math.min(profit, 0) },
   ]
   const max = sale || maxSale || 1
@@ -325,40 +331,44 @@ function Waterfall({ row, maxSale }) {
 }
 
 function Breakdown({ row, sellingCostsPct }) {
-  const Line = ({ label, node, op, strong }) => {
+  const Line = ({ label, node, op, strong, tone, indent }) => {
     const v = Number(node?.value) || 0
     let prefix = '', cls = 'text-gray-900 dark:text-white'
-    if (op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
+    if (op === '-') { prefix = '− '; cls = tone === 'neutral' ? 'text-gray-500 dark:text-gray-400' : 'text-red-600 dark:text-red-400' }
     else if (op === '+') {
       if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' }
       else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' }
     }
     return (
-      <div className="flex justify-between py-1 text-sm">
-        <span className={strong ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300'}>{label}</span>
+      <div className={`flex justify-between py-1 ${indent ? 'pl-4 text-[13px]' : 'text-sm'}`}>
+        <span className={strong ? 'font-medium text-gray-900 dark:text-white' : indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-600 dark:text-gray-300'}>{label}</span>
         <span className={`tabular-nums ${strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{node?.display ?? '—'}</span>
       </div>
     )
   }
+  const cash = asNode(preCash(row))
+  const profit = asNode(preProfit(row))
   return (
     <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">
       <Line label="Sale price" node={row.salePrice} />
       <Line label={`Selling costs (${Math.round(sellingCostsPct)}%)`} node={row.sellingCosts} op="-" />
       <Line label="Loan payoff" node={row.loanPayoff} op="-" />
-      <Line label="Depreciation recapture tax (25%)" node={row.recaptureTax} op="-" />
-      <Line label="Capital-gains tax" node={row.capitalGainsTax} op="-" />
       <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-      <Line label="Cash to your account" node={row.netProceeds} strong />
+      <Line label="Cash to your account" node={cash} strong />
       <Line label="Cumulative cash flow" node={row.cumCashFlow} op="+" />
-      <Line label="Cash invested" node={row.cashInvested} op="-" />
+      <Line label="Rent received" node={row.cumRentReceived} op="+" indent />
+      <Line label="Operating expenses" node={row.cumExpenses} op="-" indent />
+      <Line label="Mortgage interest" node={row.cumMortgageInterest} op="-" indent />
+      <Line label="Property taxes" node={row.cumPropertyTaxes} op="-" indent />
+      <Line label="Cash invested (your capital)" node={row.cashInvested} op="-" tone="neutral" />
       <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-      <Line label="Lifetime profit" node={row.gainLoss} strong />
+      <Line label="Lifetime profit" node={profit} strong />
     </div>
   )
 }
 
 function ProfitTrend({ rows, selected }) {
-  const data = rows.map((r) => ({ label: `Yr ${r.yearNumber}`, profit: r.gainLoss.value }))
+  const data = rows.map((r) => ({ label: `Yr ${r.yearNumber}`, profit: preProfit(r) }))
   const selLabel = `Yr ${selected}`
   return (
     <div className="h-16">
@@ -428,6 +438,7 @@ export default function ExitPlannerPage() {
 
   const row = selected ? (selected.sellYears.find((r) => r.yearNumber === sellYear) || selected.sellYears[0]) : null
   const maxSale = selected ? Math.max(...selected.sellYears.map((r) => r.salePrice.value)) : 0
+  const breakEvenYear = selected ? (selected.sellYears.find((r) => preProfit(r) >= 0)?.yearNumber ?? null) : null
 
   return (
     <PageContainer>
@@ -441,8 +452,8 @@ export default function ExitPlannerPage() {
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             {selected
-              ? `${selected.useLabel} · year-by-year sale, taxes and profit with the §121 exclusion.`
-              : 'Project each property forward and see the net proceeds and profit after recapture and capital gains.'}
+              ? `${selected.useLabel} · year-by-year sale price, cash flow and pre-tax profit.`
+              : 'Project each property forward and see the cash to your account and profit by sell year.'}
           </p>
         </div>
         {portfolio ? (
@@ -485,43 +496,17 @@ export default function ExitPlannerPage() {
                   <div className="text-xs text-gray-500 dark:text-gray-400">{selected.name} · {selected.useLabel}</div>
                   <div className="text-base font-semibold text-gray-900 dark:text-white">If you sell in year {row.yearNumber} · {row.year}</div>
                 </div>
-                {row.section121Eligible
-                  ? <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">§121 shelters up to {selected.exclusionCap.display}</span>
-                  : <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">No §121 this year</span>}
                 <div className="text-right">
-                  <div className="text-[11px] text-gray-500 dark:text-gray-400">Lifetime profit</div>
-                  <div className={`text-xl font-bold tabular-nums ${toneFor(row.gainLoss) === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{row.gainLoss.display}</div>
+                  <div className="text-[11px] text-gray-500 dark:text-gray-400">Lifetime profit (pre-tax)</div>
+                  <div className={`text-xl font-bold tabular-nums ${preProfit(row) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatCurrency(preProfit(row))}</div>
                 </div>
               </div>
 
-              {/* Waterfall */}
-              <div className="card">
-                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sale price to profit</h2>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
-                </div>
-                <Waterfall row={row} maxSale={maxSale} />
-                <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} />
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {[
-                    { label: 'Rent received', v: row.cumRentReceived.display },
-                    { label: 'Mortgage interest', v: row.cumMortgageInterest.display },
-                    { label: 'Property taxes', v: row.cumPropertyTaxes.display },
-                    { label: 'Cash-on-cash', v: row.cashOnCash?.display ?? '—' },
-                  ].map((c) => (
-                    <div key={c.label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
-                      <div className="text-[11px] text-gray-500 dark:text-gray-400">{c.label}</div>
-                      <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{c.v}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Profit trend + year buttons */}
+              {/* Profit trend + year buttons — the control, up top */}
               <div className="card">
                 <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
                   <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit by sell year</h2>
-                  {selected.breakEvenYear ? <span className="text-xs text-gray-500 dark:text-gray-400">breaks even in year {selected.breakEvenYear}</span> : null}
+                  {breakEvenYear ? <span className="text-xs text-gray-500 dark:text-gray-400">breaks even in year {breakEvenYear}</span> : null}
                 </div>
                 <ProfitTrend rows={selected.sellYears} selected={row.yearNumber} />
                 <div className="mt-3">
@@ -540,28 +525,31 @@ export default function ExitPlannerPage() {
                 </div>
               </div>
 
-              {/* Full 10-year table (collapsed) */}
-              <details className="card-sm">
-                <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                  <Table2 className="h-4 w-4" /> Show all {selected.sellYears.length} years as a table
-                </summary>
-                <div className="mt-3">
-                  <SellYearTable
-                    rows={selected.sellYears}
-                    columns={[
-                      yearCol,
-                      { key: 's121', label: '§121', render: (r) => r.section121Eligible ? <span className="text-emerald-600 dark:text-emerald-400">Yes</span> : <span className="text-gray-300 dark:text-gray-600">—</span> },
-                      { key: 'salePrice', label: 'Sale price', align: 'right', render: (r) => moneyCell(r.salePrice) },
-                      { key: 'taxable', label: 'Taxable gain', align: 'right', render: (r) => moneyCell(r.taxableCapitalGain) },
-                      { key: 'netProceeds', label: 'Cash to account', align: 'right', render: (r) => moneyCell(r.netProceeds) },
-                      { key: 'gainLoss', label: 'Gain / loss', align: 'right', render: (r) => moneyCell(r.gainLoss, { signed: true }) },
-                    ]}
-                  />
+              {/* Waterfall — detail for the picked year */}
+              <div className="card">
+                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sale price to profit</h2>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
                 </div>
-              </details>
+                <Waterfall row={row} maxSale={maxSale} />
+                <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} />
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    { label: 'Rent received', v: row.cumRentReceived.display },
+                    { label: 'Mortgage interest', v: row.cumMortgageInterest.display },
+                    { label: 'Operating expenses', v: row.cumExpenses.display },
+                    { label: 'Cash-on-cash', v: row.cashOnCash?.display ?? '—' },
+                  ].map((c) => (
+                    <div key={c.label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">{c.label}</div>
+                      <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{c.v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                Estimates using simplified §121 rules (2-of-5-year test derived from your Rental section, $250k single / $500k married-jointly). Depreciation recapture is always taxed at 25%. Not tax advice — confirm with a tax professional.
+                Pre-tax view — sale proceeds and profit before capital-gains or depreciation-recapture tax. Estimates, not advice.
               </p>
             </>
           ) : null}
