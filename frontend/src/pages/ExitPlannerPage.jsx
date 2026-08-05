@@ -348,18 +348,27 @@ function Breakdown({ row, sellingCostsPct }) {
       </div>
     )
   }
-  const Block = ({ n, title, children }) => (
-    <div className="rounded-lg border border-gray-100 p-3 dark:border-gray-800">
-      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-blue-100 text-[10px] text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">{n}</span>
-        {title}
+  const ACCENTS = {
+    blue: { border: 'border-blue-200 dark:border-blue-900/50', head: 'bg-blue-50 dark:bg-blue-950/30', chip: 'bg-blue-600 text-white', title: 'text-blue-700 dark:text-blue-300' },
+    amber: { border: 'border-amber-200 dark:border-amber-900/50', head: 'bg-amber-50 dark:bg-amber-950/30', chip: 'bg-amber-500 text-white', title: 'text-amber-700 dark:text-amber-300' },
+    emerald: { border: 'border-emerald-200 dark:border-emerald-900/50', head: 'bg-emerald-50 dark:bg-emerald-950/30', chip: 'bg-emerald-600 text-white', title: 'text-emerald-700 dark:text-emerald-300' },
+  }
+  const Block = ({ n, title, subtitle, accent, children }) => {
+    const a = ACCENTS[accent]
+    return (
+      <div className={`overflow-hidden rounded-xl border ${a.border}`}>
+        <div className={`flex flex-wrap items-center gap-x-2 px-3 py-2 ${a.head}`}>
+          <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold ${a.chip}`}>{n}</span>
+          <span className={`text-[11px] font-semibold uppercase tracking-wide ${a.title}`}>{title}</span>
+          <span className="text-[11px] text-gray-500 dark:text-gray-400">· {subtitle}</span>
+        </div>
+        <div className="px-3 py-2">{children}</div>
       </div>
-      {children}
-    </div>
-  )
+    )
+  }
   return (
-    <div className="mt-4 space-y-2">
-      <Block n="1" title="Cash at closing">
+    <div className="mt-4 space-y-2.5">
+      <Block n="1" accent="blue" title="Cash at closing" subtitle="what you walk away with at the sale">
         <Line icon={TrendingUp} label="Sale price" node={row.salePrice} strong info="Projected market value in the sale year — today's value grown at your appreciation rate each year." />
         <Line icon={Receipt} label={`Selling costs (${Math.round(sellingCostsPct)}%)`} node={row.sellingCosts} op="-" info={`Agent commissions, closing costs and fees — about ${Math.round(sellingCostsPct)}% of the sale price.`} />
         <Line icon={Landmark} label="Loan payoff" node={row.loanPayoff} op="-" info="The remaining mortgage balance you pay off at closing." />
@@ -367,14 +376,14 @@ function Breakdown({ row, sellingCostsPct }) {
         <Line icon={Wallet} label="Cash to your account" node={cash} strong info="Sale price − selling costs − loan payoff." />
       </Block>
 
-      <Block n="2" title="Cash flow while you owned it">
+      <Block n="2" accent="amber" title="Cash flow while you owned it" subtitle="rent minus costs over the years">
         <Line icon={Repeat} label="Cumulative cash flow" node={row.cumCashFlow} op="+" info="Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this." />
         <Line icon={Home} label="Rent received" node={row.cumRentReceived} op="+" indent info="Total rent collected over the ownership period." />
         <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} op="-" indent note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, management, maintenance and property taxes over ownership." />
         <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over the ownership period." />
       </Block>
 
-      <Block n="3" title="Your return">
+      <Block n="3" accent="emerald" title="Your return" subtitle="profit after the capital you put in">
         <Line icon={Coins} label="Cash invested" node={row.cashInvested} op="-" info="Your original down payment + closing costs (plus any improvements) — the capital you put in." />
         <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
         <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info="Cash to your account + cumulative cash flow − cash invested. Pre-tax." />
