@@ -202,7 +202,7 @@ function SellYearTable({ title, subtitle, rows, columns }) {
         <table className="w-full min-w-[560px] border-collapse text-sm">
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
-              {columns.map((c) => <th key={c.key} className={`px-2 py-1.5 font-medium ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>)}
+              {columns.map((c) => <th key={c.key} className={`px-2 py-1.5 font-medium ${c.align === 'right' ? 'text-right' : ''} ${c.headClass || ''}`}>{c.label}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -663,13 +663,13 @@ export default function ExitPlannerPage() {
                     rows={selected.sellYears}
                     columns={[
                       yearCol,
-                      { key: 'salePrice', label: 'Sale price', align: 'right', render: (r) => moneyCell(r.salePrice) },
-                      { key: 'sellingCosts', label: 'Selling costs', align: 'right', render: (r) => moneyCell(r.sellingCosts) },
-                      { key: 'loanPayoff', label: 'Loan payoff', align: 'right', render: (r) => moneyCell(r.loanPayoff) },
-                      { key: 'cash', label: 'Cash to account', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(asNode(preCash(r)))}</span> },
-                      { key: 'flow', label: 'Cash flow', align: 'right', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
-                      { key: 'invested', label: 'Invested', align: 'right', render: (r) => moneyCell(r.cashInvested) },
-                      { key: 'profit', label: 'Profit', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(asNode(preProfit(r)), { signed: true })}</span> },
+                      { key: 'salePrice', label: 'Sale price', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => moneyCell(r.salePrice) },
+                      { key: 'sellingCosts', label: 'Selling costs', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => moneyCell(r.sellingCosts) },
+                      { key: 'loanPayoff', label: 'Loan payoff', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => moneyCell(r.loanPayoff) },
+                      { key: 'cash', label: 'Cash to account', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => <span className="font-semibold">{moneyCell(asNode(preCash(r)))}</span> },
+                      { key: 'flow', label: 'Cash flow', align: 'right', headClass: 'text-amber-600 dark:text-amber-300', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
+                      { key: 'invested', label: 'Invested', align: 'right', headClass: 'text-emerald-600 dark:text-emerald-300', render: (r) => moneyCell(r.cashInvested) },
+                      { key: 'profit', label: 'Profit', align: 'right', headClass: 'text-emerald-600 dark:text-emerald-300', render: (r) => <span className="font-semibold">{moneyCell(asNode(preProfit(r)), { signed: true })}</span> },
                     ]}
                   />
                 </div>
