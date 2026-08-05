@@ -15,7 +15,7 @@ const preCash = (r) => r.salePrice.value - r.sellingCosts.value - r.loanPayoff.v
 const preProfit = (r) => preCash(r) + r.cumCashFlow.value - r.cashInvested.value
 const asNode = (v) => ({ value: v, display: formatCurrency(v) })
 
-const DEFAULTS = { appreciation: 4, holdYears: 10, capitalGains: 15, sellingCosts: 6, improvements: 0, filingStatus: 'married_joint', includePrimary: true }
+const DEFAULTS = { appreciation: 4, holdYears: 10, capitalGains: 15, sellingCosts: 6, improvements: 0, rentGrowth: 3, filingStatus: 'married_joint', includePrimary: true }
 
 function clampNum(v, min, max) {
   const n = Number(v)
@@ -411,6 +411,7 @@ export default function ExitPlannerPage() {
         selling_costs: clampNum(inputs.sellingCosts, 0, 15),
         hold_years: clampNum(inputs.holdYears, 1, 10),
         improvements: Math.max(0, Number(inputs.improvements) || 0),
+        rent_growth: clampNum(inputs.rentGrowth, 0, 15),
         filing_status: inputs.filingStatus,
         include_primary_residence: inputs.includePrimary,
       }).then((res) => {
@@ -609,6 +610,7 @@ export default function ExitPlannerPage() {
                   <NumField label="Hold (max)" value={inputs.holdYears} onChange={(v) => update({ holdYears: v })} min={1} max={10} suffix="yrs" step />
                   <NumField label="Capital gains" value={inputs.capitalGains} onChange={(v) => update({ capitalGains: v })} min={0} max={40} suffix="%" />
                   <NumField label="Selling costs" value={inputs.sellingCosts} onChange={(v) => update({ sellingCosts: v })} min={0} max={15} suffix="%" />
+                  <NumField label="Rent growth / yr" value={inputs.rentGrowth} onChange={(v) => update({ rentGrowth: v })} min={0} max={15} suffix="%" />
                   <NumField label="Remodel / improv. ($)" value={inputs.improvements} onChange={(v) => update({ improvements: v })} min={0} max={5000000} step />
                 </div>
               </div>

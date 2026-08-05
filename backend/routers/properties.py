@@ -12032,7 +12032,8 @@ def _current_monthly_rent(prop, today: date) -> float:
 
 
 def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_years, today,
-                     filing_status="married_joint", improvements=0.0):
+                     filing_status="married_joint", improvements=0.0, rent_growth=3.0,
+                     tax_by_year=None):
     """Sell-in-year-N (1..hold_years) exit model for one property, with the §121
     primary-residence exclusion derived from the Rental section. Depreciation
     recapture is always taxed at the IRS 25%; the exclusion only shelters the
@@ -12086,13 +12087,58 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
     def pct(v):
         return None if v is None else {"value": round(v, 2), "display": f"{v:.1f}%"}
 
-    # Operating totals span the FULL ownership: the years already held (since
-    # purchase) plus the future years to the sale. So a home bought in 2021 shows
-    # ~5 years of rent/expenses/taxes already accrued, not just the future slice.
-    years_owned_before = max(0.0, (today - purchase_d).days / 365.25) if purchase_d else 0.0
+    # Per-year operating history over the FULL ownership (purchase → sale). Past
+    # years use actual filed Schedule E where available; other years use the
+    # current run-rate, and future years grow rent (and expenses) at the given
+    # rate. Cumulative totals per sell year are prefix sums of this series.
     _bal_now = _future_loan_balance(prop, 0, today)
     _bal_1y = _future_loan_balance(prop, 12, today)
     annual_interest_est = max(annual_debt_service - max(_bal_now - _bal_1y, 0.0), 0.0)
+    eff_rate = (annual_interest_est / _bal_now) if _bal_now else 0.0
+    rg = 1.0 + float(rent_growth) / 100.0
+    eg = 1.0 + 2.5 / 100.0  # expenses/taxes drift ~2.5%/yr in the projection
+    tax_by_year = tax_by_year or {}
+    purchase_year = purchase_d.year if purchase_d else today.year
+    sale_year_max = today.year + int(hold_years)
+
+    year_ops = {}
+    for yr in range(purchase_year, sale_year_max + 1):
+        entry = tax_by_year.get(yr)
+        if entry is not None and not is_primary:
+            rent_y = float(entry.rents_received or 0.0)
+            interest_y = float(entry.mortgage_interest or 0.0)
+            tax_y = float(entry.property_taxes or 0.0)
+            dep_y = float(entry.depreciation or 0.0)
+            opex_y = max(float(entry.total_expenses or 0.0) - interest_y - dep_y, 0.0)
+            payment_y = annual_debt_service
+        elif is_primary:
+            rent_y = 0.0
+            opex_y = annual_opex * (eg ** max(yr - today.year, 0))
+            tax_y = annual_prop_tax * (eg ** max(yr - today.year, 0))
+            interest_y = 0.0
+            payment_y = 0.0
+        elif yr <= today.year:
+            rent_y, opex_y, tax_y = annual_rent, annual_opex, annual_prop_tax
+            interest_y, payment_y = annual_interest_est, annual_debt_service
+        else:
+            n = yr - today.year
+            rent_y = annual_rent * (rg ** n)
+            opex_y = annual_opex * (eg ** n)
+            tax_y = annual_prop_tax * (eg ** n)
+            interest_y = _future_loan_balance(prop, n * 12, today) * eff_rate
+            payment_y = annual_debt_service
+        year_ops[yr] = {
+            "rent": rent_y, "opex": opex_y, "tax": tax_y,
+            "interest": interest_y, "payment": payment_y,
+            "cf": (0.0 if is_primary else rent_y - opex_y - payment_y),
+        }
+
+    cum_by_year = {}
+    running = {"rent": 0.0, "opex": 0.0, "tax": 0.0, "interest": 0.0, "payment": 0.0, "cf": 0.0}
+    for yr in range(purchase_year, sale_year_max + 1):
+        for k in running:
+            running[k] += year_ops[yr][k]
+        cum_by_year[yr] = dict(running)
 
     sell_years = []
     for y in range(1, int(hold_years) + 1):
@@ -12123,10 +12169,10 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         cap_gains_tax = taxable_cap_gain * cg
         net_proceeds = value - selling_costs - loan - recapture_tax - cap_gains_tax
 
-        years_total = years_owned_before + y
-        cum_cash_flow = annual_cf * years_total
+        cum = cum_by_year.get(sale_date.year, cum_by_year[sale_year_max])
+        cum_cash_flow = cum["cf"]
         gain_loss = net_proceeds + cum_cash_flow - cash_invested
-        cash_on_cash = (annual_cf / cash_invested * 100.0) if cash_invested else None
+        cash_on_cash = (year_ops[today.year]["cf"] / cash_invested * 100.0) if (cash_invested and today.year in year_ops) else None
 
         sell_years.append({
             "yearNumber": y,
@@ -12147,11 +12193,11 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
             "netProceeds": m(net_proceeds),
             "cashInvested": m(cash_invested),
             "cashOnCash": pct(cash_on_cash),
-            "cumRentReceived": m(annual_rent * years_total),
-            "cumMortgagePayment": m(annual_debt_service * years_total),
-            "cumMortgageInterest": m(annual_interest_est * years_total),
-            "cumPropertyTaxes": m(annual_prop_tax * years_total),
-            "cumExpenses": m(annual_opex * years_total),
+            "cumRentReceived": m(cum["rent"]),
+            "cumMortgagePayment": m(cum["payment"]),
+            "cumMortgageInterest": m(cum["interest"]),
+            "cumPropertyTaxes": m(cum["tax"]),
+            "cumExpenses": m(cum["opex"]),
             "cumCashFlow": m(cum_cash_flow),
             "gainLoss": m(gain_loss),
         })
@@ -12197,6 +12243,7 @@ def exit_planner(
     hold_years: int = 10,
     filing_status: str = "married_joint",
     improvements: float = 0.0,
+    rent_growth: float = 3.0,
     include_primary_residence: bool = True,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
@@ -12221,11 +12268,21 @@ def exit_planner(
     if not include_primary_residence:
         props = [p for p in props if str(p.usage_type or "Rental").lower() != "primary"]
 
+    # Actual per-year operating history from filed Schedule E, keyed by property.
+    tax_history: Dict[int, Dict[int, models.TaxReturnEntry]] = {}
+    if props:
+        for e in db.query(models.TaxReturnEntry).filter(
+            models.TaxReturnEntry.property_id.in_([p.id for p in props])
+        ).all():
+            if e.property_id and e.tax_year:
+                tax_history.setdefault(e.property_id, {})[int(e.tax_year)] = e
+
     projections = [
         _exit_projection(
             p, appreciation=appreciation, cap_gains=capital_gains,
             selling_costs_pct=selling_costs, hold_years=hold_years, today=today,
             filing_status=filing_status, improvements=improvements,
+            rent_growth=rent_growth, tax_by_year=tax_history.get(p.id, {}),
         )
         for p in props
     ]
