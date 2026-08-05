@@ -389,6 +389,80 @@ function ProfitTrend({ rows, selected }) {
   )
 }
 
+function PortfolioSummary({ properties, onPick }) {
+  const rows = properties.map((p) => {
+    const y1 = p.sellYears[0]
+    let best = y1
+    for (const r of p.sellYears) if (preProfit(r) > preProfit(best)) best = r
+    return { id: p.id, name: p.name, now: preProfit(y1), saleNow: y1.salePrice.value, invested: y1.cashInvested.value, bestYr: best.yearNumber, bestCal: best.year, bestProfit: preProfit(best) }
+  }).sort((a, b) => b.now - a.now)
+  const totalNow = rows.reduce((s, r) => s + r.now, 0)
+  const totalSale = rows.reduce((s, r) => s + r.saleNow, 0)
+  const totalInvested = rows.reduce((s, r) => s + r.invested, 0)
+  const inBlack = rows.filter((r) => r.now >= 0).length
+  const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.now)))
+  const Kpi = ({ label, value, tone }) => (
+    <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800/60">
+      <div className="text-[11px] text-gray-500 dark:text-gray-400">{label}</div>
+      <div className={`text-xl font-bold tabular-nums ${tone === 'neg' ? 'text-red-600 dark:text-red-400' : tone === 'pos' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>{value}</div>
+    </div>
+  )
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Kpi label="Lifetime profit · sell all now" value={formatCurrency(totalNow)} tone={totalNow < 0 ? 'neg' : 'pos'} />
+        <Kpi label="Total sale value" value={formatCurrency(totalSale)} />
+        <Kpi label="Capital invested" value={formatCurrency(totalInvested)} />
+        <Kpi label="Profitable" value={`${inBlack} of ${rows.length}`} />
+      </div>
+
+      <div className="card">
+        <h2 className="mb-1 text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit by property · if sold today</h2>
+        <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">Pre-tax. Click a property to open its plan.</p>
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <button key={r.id} type="button" onClick={() => onPick(r.id)} className="flex w-full items-center gap-3 text-left">
+              <span className="w-24 shrink-0 truncate text-[13px] text-gray-600 dark:text-gray-300">{r.name}</span>
+              <span className="relative h-4 flex-1 rounded bg-gray-100/70 dark:bg-gray-800/40">
+                <span className="absolute top-0 h-4 rounded" style={{ left: 0, width: `${Math.abs(r.now) / maxAbs * 100}%`, background: r.now < 0 ? '#E24B4A' : '#1D9E75' }} />
+              </span>
+              <span className={`w-20 shrink-0 text-right text-[13px] tabular-nums ${r.now < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatChartCurrency(r.now)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Best time to sell</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[440px] text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <th className="px-2 py-1.5 font-medium">Property</th>
+                <th className="px-2 py-1.5 font-medium">Best year</th>
+                <th className="px-2 py-1.5 text-right font-medium">Profit then</th>
+                <th className="px-2 py-1.5 text-right font-medium">Vs. now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-gray-100 dark:border-gray-800">
+                  <td className="px-2 py-1.5 text-gray-900 dark:text-white">{r.name}</td>
+                  <td className="px-2 py-1.5 text-gray-500 dark:text-gray-400">{r.bestCal} · yr {r.bestYr}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.bestProfit)}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums ${r.bestProfit - r.now < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(r.bestProfit - r.now >= 0 ? '+' : '')}{formatChartCurrency(r.bestProfit - r.now)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-gray-400 dark:text-gray-500">Pre-tax lifetime profit if sold in year 1 (today) vs. the best sell year for each property. Estimates, not advice.</p>
+    </>
+  )
+}
+
 export default function ExitPlannerPage() {
   const [inputs, setInputs] = useState(DEFAULTS)
   const [data, setData] = useState(null)
@@ -429,7 +503,8 @@ export default function ExitPlannerPage() {
   }, [inputs])
 
   const properties = data?.properties || []
-  const selected = useMemo(() => properties.find((p) => p.id === selectedId) || properties[0], [properties, selectedId])
+  const isPortfolio = selectedId === 'all'
+  const selected = useMemo(() => (isPortfolio ? null : (properties.find((p) => p.id === selectedId) || properties[0])), [properties, selectedId, isPortfolio])
   const portfolio = data?.portfolio
 
   // Default the sell-year to the break-even year (the decision point), or the
@@ -452,12 +527,14 @@ export default function ExitPlannerPage() {
             <DoorOpen className="h-4 w-4" aria-hidden="true" /> Exit planner
           </div>
           <h1 className="mt-1 truncate text-2xl font-bold text-gray-900 dark:text-white">
-            {selected ? selected.name : 'Exit planner'}
+            {isPortfolio ? 'Portfolio' : (selected ? selected.name : 'Exit planner')}
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {selected
-              ? `${selected.useLabel} · year-by-year sale price, cash flow and pre-tax profit.`
-              : 'Project each property forward and see the cash to your account and profit by sell year.'}
+            {isPortfolio
+              ? 'Lifetime sell profit across every property, and the best year to sell each.'
+              : selected
+                ? `${selected.useLabel} · year-by-year sale price, cash flow and pre-tax profit.`
+                : 'Project each property forward and see the cash to your account and profit by sell year.'}
           </p>
         </div>
         {portfolio ? (
@@ -489,6 +566,8 @@ export default function ExitPlannerPage() {
             <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">Projecting exit scenarios…</div>
           ) : properties.length === 0 ? (
             <div className="card py-10 text-center text-sm text-gray-500 dark:text-gray-400">No rental properties to plan an exit for.</div>
+          ) : isPortfolio ? (
+            <PortfolioSummary properties={properties} onPick={setSelectedId} />
           ) : selected && row ? (
             <>
               {/* Verdict strip */}
@@ -590,13 +669,14 @@ export default function ExitPlannerPage() {
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-400">Property</span>
                 <select
-                  value={selected?.id ?? ''}
-                  onChange={(e) => setSelectedId(Number(e.target.value))}
+                  value={isPortfolio ? 'all' : (selected?.id ?? '')}
+                  onChange={(e) => { const v = e.target.value; setSelectedId(v === 'all' ? 'all' : Number(v)) }}
                   disabled={properties.length === 0}
                   aria-label="Property"
                   className="w-full rounded-md border border-gray-200 bg-white px-2 py-2 text-[13px] text-gray-900 focus:border-blue-400 focus:outline-none disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
                 >
                   {properties.length === 0 ? <option value="">No rentals</option> : null}
+                  <option value="all">All properties · portfolio</option>
                   {properties.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} · {p.exit.finalProfit.display}</option>
                   ))}
