@@ -12148,6 +12148,7 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
             "cashInvested": m(cash_invested),
             "cashOnCash": pct(cash_on_cash),
             "cumRentReceived": m(annual_rent * years_total),
+            "cumMortgagePayment": m(annual_debt_service * years_total),
             "cumMortgageInterest": m(annual_interest_est * years_total),
             "cumPropertyTaxes": m(annual_prop_tax * years_total),
             "cumExpenses": m(annual_opex * years_total),

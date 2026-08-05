@@ -339,11 +339,10 @@ function Breakdown({ row, sellingCostsPct }) {
     { icon: Landmark, label: 'Loan payoff', node: row.loanPayoff, op: '-', info: 'The remaining mortgage balance you pay off at closing.' },
     { divider: true },
     { icon: Wallet, label: 'Cash to your account', node: cash, strong: true, info: 'What you receive at closing: sale price − selling costs − loan payoff.' },
-    { icon: Repeat, label: 'Cumulative cash flow', node: row.cumCashFlow, op: '+', info: 'Net rental cash you have collected over the full ownership (rent − operating expenses − mortgage payment).' },
+    { icon: Repeat, label: 'Cumulative cash flow', node: row.cumCashFlow, op: '+', info: 'Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this.' },
     { icon: Home, label: 'Rent received', node: row.cumRentReceived, op: '+', indent: true, info: 'Total rent collected over the ownership period.' },
-    { icon: Wrench, label: 'Operating expenses', node: row.cumExpenses, op: '-', indent: true, info: 'Insurance, HOA, management, maintenance and other operating costs over ownership.' },
-    { icon: Percent, label: 'Mortgage interest', node: row.cumMortgageInterest, op: '-', indent: true, info: 'Estimated total mortgage interest paid over the ownership period.' },
-    { icon: FileText, label: 'Property taxes', node: row.cumPropertyTaxes, op: '-', indent: true, info: 'Total property tax paid over the ownership period.' },
+    { icon: Wrench, label: 'Operating expenses', node: row.cumExpenses, op: '-', indent: true, note: `incl. property taxes ${row.cumPropertyTaxes.display}`, info: 'Insurance, HOA, management, maintenance and property taxes over ownership.' },
+    { icon: Landmark, label: 'Mortgage payments', node: row.cumMortgagePayment, op: '-', indent: true, note: `incl. interest ${row.cumMortgageInterest.display}`, info: 'Total principal + interest paid over the ownership period.' },
     { icon: Coins, label: 'Cash invested', node: row.cashInvested, op: '-', info: 'Your original down payment + closing costs (plus any improvements) — the capital you put in.' },
     { divider: true },
     { icon: DoorOpen, label: 'Lifetime profit', node: profit, strong: true, info: 'Cash to your account + cumulative cash flow − cash invested. Pre-tax.' },
@@ -361,6 +360,7 @@ function Breakdown({ row, sellingCostsPct }) {
           <div key={i} className={`flex items-center gap-2 py-1 ${it.indent ? 'pl-5 text-[13px]' : 'text-sm'}`}>
             <Icon className={`${it.indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
             <span className={it.strong ? 'font-medium text-blue-700 dark:text-blue-300' : it.indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{it.label}</span>
+            {it.note ? <span className="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:inline">· {it.note}</span> : null}
             <MetricHint text={it.info} label={it.label} />
             <span className={`ml-auto tabular-nums ${it.strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{it.node?.display ?? '—'}</span>
           </div>
