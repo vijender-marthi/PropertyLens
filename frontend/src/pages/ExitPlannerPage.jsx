@@ -458,39 +458,32 @@ function PortfolioSummary({ properties, onPick }) {
       </div>
 
       <div className="card">
-        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">When to sell — profit if you sell in each year</h2>
-        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Each line is a property's lifetime profit at every sell year. The dot marks its most profitable year.</p>
-        <div className="mt-3 space-y-1.5">
-          {properties.map((p) => {
-            const vals = p.sellYears.map((r) => preProfit(r))
-            const lo = Math.min(...vals, 0), hi = Math.max(...vals, 0), rng = (hi - lo) || 1
-            const pts = vals.map((v, i) => [vals.length > 1 ? (i / (vals.length - 1)) * 100 : 0, 30 - ((v - lo) / rng) * 26 - 2])
-            const bestIdx = vals.indexOf(Math.max(...vals))
-            const best = p.sellYears[bestIdx]
-            const zeroY = 30 - ((0 - lo) / rng) * 26 - 2
-            const up = vals[bestIdx] >= 0
-            return (
-              <div key={p.id} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 truncate text-[13px] text-gray-700 dark:text-gray-300">{p.name}</span>
-                <svg viewBox="0 0 100 32" preserveAspectRatio="none" className="h-8 flex-1" aria-hidden="true">
-                  <line x1="0" y1={zeroY} x2="100" y2={zeroY} stroke={chartColors.mutedAxis} strokeWidth="0.5" strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
-                  <polyline points={pts.map((q) => q.join(',')).join(' ')} fill="none" stroke={chartColors.primary} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                  <circle cx={pts[bestIdx][0]} cy={pts[bestIdx][1]} r="3" fill={up ? '#1D9E75' : '#E24B4A'} />
-                </svg>
-                <span className="w-32 shrink-0 text-right text-[12px] text-gray-500 dark:text-gray-400">
-                  <span className={`font-semibold tabular-nums ${up ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatChartCurrency(vals[bestIdx])}</span> in {best.year}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-        <div className="mt-2 flex justify-between pl-24 pr-32 text-[10px] text-gray-400 dark:text-gray-500">
-          <span>{properties[0]?.sellYears[0]?.year}</span>
-          <span>{properties[0]?.sellYears[properties[0].sellYears.length - 1]?.year}</span>
+        <h2 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Best time to sell</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[440px] text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <th className="px-2 py-1.5 font-medium">Property</th>
+                <th className="px-2 py-1.5 font-medium">Best year</th>
+                <th className="px-2 py-1.5 text-right font-medium">Profit then</th>
+                <th className="px-2 py-1.5 text-right font-medium">Vs. now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-gray-100 dark:border-gray-800">
+                  <td className="px-2 py-1.5 text-gray-900 dark:text-white">{r.name}</td>
+                  <td className="px-2 py-1.5 text-gray-500 dark:text-gray-400">{r.bestCal} · yr {r.bestYr}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.bestProfit)}</td>
+                  <td className={`px-2 py-1.5 text-right tabular-nums ${r.bestProfit - r.now < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{(r.bestProfit - r.now >= 0 ? '+' : '')}{formatChartCurrency(r.bestProfit - r.now)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <p className="text-[11px] text-gray-400 dark:text-gray-500">Pre-tax lifetime profit — sale proceeds plus rental cash flow minus the capital you invested. Most properties keep climbing because appreciation outpaces the cash-flow drag. Estimates, not advice.</p>
+      <p className="text-[11px] text-gray-400 dark:text-gray-500">Pre-tax lifetime profit if sold in year 1 (today) vs. the best sell year for each property. Estimates, not advice.</p>
     </>
   )
 }
