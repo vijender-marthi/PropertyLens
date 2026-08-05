@@ -290,7 +290,7 @@ function ExitCharts({ rows, breakEven }) {
   )
 }
 
-function Waterfall({ row, maxSale }) {
+function Waterfall({ row }) {
   const sale = row.salePrice.value
   const costs = row.sellingCosts.value
   const loan = row.loanPayoff.value
@@ -298,35 +298,38 @@ function Waterfall({ row, maxSale }) {
   const flow = row.cumCashFlow.value
   const invested = row.cashInvested.value
   const profit = preProfit(row)
-  const c1 = sale - costs, c2 = c1 - loan
-  const afterFlow = cash + flow
+  const c1 = sale - costs, c2 = c1 - loan, af = cash + flow
   const bars = [
-    { l: 'Sale', v: sale, col: '#378ADD', top: sale, bot: 0 },
-    { l: 'Costs', v: costs, sub: true, col: '#BA7517', top: sale, bot: c1 },
-    { l: 'Loan', v: loan, sub: true, col: '#7F77DD', top: c1, bot: c2 },
-    { l: 'Cash', v: cash, col: '#1D9E75', top: cash, bot: 0 },
-    { l: 'Cash flow', v: Math.abs(flow), sub: flow < 0, col: flow < 0 ? '#E24B4A' : '#639922', top: Math.max(cash, afterFlow), bot: Math.min(cash, afterFlow) },
-    { l: 'Invested', v: invested, sub: true, col: '#888780', top: afterFlow, bot: afterFlow - invested },
-    { l: 'Profit', v: profit, col: profit < 0 ? '#E24B4A' : '#639922', top: Math.max(profit, 0), bot: Math.min(profit, 0) },
+    { l: 'Sale', v: sale, col: '#378ADD', bot: 0, top: sale, end: sale },
+    { l: 'Costs', v: costs, sub: true, col: '#BA7517', bot: c1, top: sale, end: c1 },
+    { l: 'Loan', v: loan, sub: true, col: '#7F77DD', bot: c2, top: c1, end: c2 },
+    { l: 'Cash', v: cash, col: '#1D9E75', bot: 0, top: cash, end: cash },
+    { l: 'Cash flow', v: Math.abs(flow), sub: flow < 0, col: flow < 0 ? '#E24B4A' : '#639922', bot: Math.min(cash, af), top: Math.max(cash, af), end: af },
+    { l: 'Invested', v: invested, sub: true, col: '#888780', bot: af - invested, top: af, end: af - invested },
+    { l: 'Profit', v: profit, col: profit < 0 ? '#E24B4A' : '#639922', bot: Math.min(profit, 0), top: Math.max(profit, 0), end: profit },
   ]
-  const max = sale || maxSale || 1
-  const scale = 150 / max
-  const Z = 22
+  const W = 700, H = 210, topPad = 24, botPad = 30, n = bars.length
+  const colW = W / n, bw = colW * 0.6
+  const maxLvl = Math.max(...bars.map((b) => b.top))
+  const minLvl = Math.min(0, ...bars.map((b) => b.bot))
+  const span = (maxLvl - minLvl) || 1
+  const scale = (H - topPad - botPad) / span
+  const y = (lvl) => (H - botPad) - (lvl - minLvl) * scale
   return (
-    <div className="grid items-end gap-2" style={{ gridTemplateColumns: `repeat(${bars.length}, minmax(0, 1fr))`, height: 210 }}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-gray-400 dark:text-gray-500" style={{ height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
       {bars.map((b, i) => {
-        const h = Math.max((b.top - b.bot) * scale, 2)
-        const off = b.bot * scale + Z
+        const x = i * colW + (colW - bw) / 2
+        const yTop = y(b.top), h = Math.max((b.top - b.bot) * scale, 2)
         return (
-          <div key={i} className="flex h-full flex-col justify-end text-center" title={`${b.l}: ${b.sub ? '−' : ''}${formatChartCurrency(b.v)}`}>
-            <div className="relative rounded-[3px]" style={{ height: h, marginBottom: off, background: b.col }}>
-              <span className="absolute -top-4 left-[-8px] right-[-8px] whitespace-nowrap text-[10px] text-gray-500 dark:text-gray-400">{b.sub ? '−' : ''}{formatChartCurrency(b.v)}</span>
-            </div>
-            <div className="mt-1.5 truncate text-[10px] text-gray-400 dark:text-gray-500">{b.l}</div>
-          </div>
+          <g key={i}>
+            {i < n - 1 ? <line x1={x + bw} y1={y(b.end)} x2={(i + 1) * colW + (colW - bw) / 2} y2={y(b.end)} stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" /> : null}
+            <rect x={x} y={yTop} width={bw} height={h} rx="2.5" fill={b.col} />
+            <text x={x + bw / 2} y={yTop - 6} textAnchor="middle" fontSize="11" fill="currentColor">{b.sub ? '−' : ''}{formatChartCurrency(b.v)}</text>
+            <text x={x + bw / 2} y={H - 10} textAnchor="middle" fontSize="11" fill="currentColor">{b.l}</text>
+          </g>
         )
       })}
-    </div>
+    </svg>
   )
 }
 
