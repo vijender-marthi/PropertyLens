@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/coach", tags=["ai-coach"])
 DEFAULT_MODELS = {
     "claude": "claude-3-5-sonnet-latest",
     "openai": "gpt-4o-mini",
-    "gemini": "gemini-1.5-flash",
+    "gemini": "gemini-2.5-flash",
 }
 HISTORY_LIMIT = 40
 
