@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info } from 'lucide-react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag } from 'lucide-react'
 import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Table2, BarChart3 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
@@ -331,38 +331,41 @@ function Waterfall({ row, maxSale }) {
 }
 
 function Breakdown({ row, sellingCostsPct }) {
-  const Line = ({ label, node, op, strong, tone, indent }) => {
-    const v = Number(node?.value) || 0
-    let prefix = '', cls = 'text-gray-900 dark:text-white'
-    if (op === '-') { prefix = '− '; cls = tone === 'neutral' ? 'text-gray-500 dark:text-gray-400' : 'text-red-600 dark:text-red-400' }
-    else if (op === '+') {
-      if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' }
-      else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' }
-    }
-    return (
-      <div className={`flex justify-between py-1 ${indent ? 'pl-4 text-[13px]' : 'text-sm'}`}>
-        <span className={strong ? 'font-medium text-gray-900 dark:text-white' : indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-600 dark:text-gray-300'}>{label}</span>
-        <span className={`tabular-nums ${strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{node?.display ?? '—'}</span>
-      </div>
-    )
-  }
   const cash = asNode(preCash(row))
   const profit = asNode(preProfit(row))
+  const items = [
+    { icon: TrendingUp, label: 'Sale price', node: row.salePrice, strong: true, info: "Projected market value in the sale year — today's value grown at your appreciation rate each year." },
+    { icon: Receipt, label: `Selling costs (${Math.round(sellingCostsPct)}%)`, node: row.sellingCosts, op: '-', info: `Agent commissions, closing costs and fees at sale — about ${Math.round(sellingCostsPct)}% of the sale price.` },
+    { icon: Landmark, label: 'Loan payoff', node: row.loanPayoff, op: '-', info: 'The remaining mortgage balance you pay off at closing.' },
+    { divider: true },
+    { icon: Wallet, label: 'Cash to your account', node: cash, strong: true, info: 'What you receive at closing: sale price − selling costs − loan payoff.' },
+    { icon: Repeat, label: 'Cumulative cash flow', node: row.cumCashFlow, op: '+', info: 'Net rental cash you have collected over the full ownership (rent − operating expenses − mortgage payment).' },
+    { icon: Home, label: 'Rent received', node: row.cumRentReceived, op: '+', indent: true, info: 'Total rent collected over the ownership period.' },
+    { icon: Wrench, label: 'Operating expenses', node: row.cumExpenses, op: '-', indent: true, info: 'Insurance, HOA, management, maintenance and other operating costs over ownership.' },
+    { icon: Percent, label: 'Mortgage interest', node: row.cumMortgageInterest, op: '-', indent: true, info: 'Estimated total mortgage interest paid over the ownership period.' },
+    { icon: FileText, label: 'Property taxes', node: row.cumPropertyTaxes, op: '-', indent: true, info: 'Total property tax paid over the ownership period.' },
+    { icon: Coins, label: 'Cash invested', node: row.cashInvested, op: '-', info: 'Your original down payment + closing costs (plus any improvements) — the capital you put in.' },
+    { divider: true },
+    { icon: DoorOpen, label: 'Lifetime profit', node: profit, strong: true, info: 'Cash to your account + cumulative cash flow − cash invested. Pre-tax.' },
+  ]
   return (
     <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">
-      <Line label="Sale price" node={row.salePrice} />
-      <Line label={`Selling costs (${Math.round(sellingCostsPct)}%)`} node={row.sellingCosts} op="-" />
-      <Line label="Loan payoff" node={row.loanPayoff} op="-" />
-      <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-      <Line label="Cash to your account" node={cash} strong />
-      <Line label="Cumulative cash flow" node={row.cumCashFlow} op="+" />
-      <Line label="Rent received" node={row.cumRentReceived} op="+" indent />
-      <Line label="Operating expenses" node={row.cumExpenses} op="-" indent />
-      <Line label="Mortgage interest" node={row.cumMortgageInterest} op="-" indent />
-      <Line label="Property taxes" node={row.cumPropertyTaxes} op="-" indent />
-      <Line label="Cash invested (your capital)" node={row.cashInvested} op="-" tone="neutral" />
-      <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-      <Line label="Lifetime profit" node={profit} strong />
+      {items.map((it, i) => {
+        if (it.divider) return <div key={i} className="my-1 border-t border-gray-100 dark:border-gray-800" />
+        const v = Number(it.node?.value) || 0
+        let prefix = '', cls = 'text-gray-900 dark:text-white'
+        if (it.op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
+        else if (it.op === '+') { if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' } else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' } }
+        const Icon = it.icon
+        return (
+          <div key={i} className={`flex items-center gap-2 py-1 ${it.indent ? 'pl-5 text-[13px]' : 'text-sm'}`}>
+            <Icon className={`${it.indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
+            <span className={it.strong ? 'font-medium text-blue-700 dark:text-blue-300' : it.indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{it.label}</span>
+            <MetricHint text={it.info} label={it.label} />
+            <span className={`ml-auto tabular-nums ${it.strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{it.node?.display ?? '—'}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -547,6 +550,28 @@ export default function ExitPlannerPage() {
                   ))}
                 </div>
               </div>
+
+              {/* Year-by-year table — all sell years */}
+              <details className="card-sm" open>
+                <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+                  <Table2 className="h-4 w-4" /> Profit if you sell in each year
+                </summary>
+                <div className="mt-3">
+                  <SellYearTable
+                    rows={selected.sellYears}
+                    columns={[
+                      yearCol,
+                      { key: 'salePrice', label: 'Sale price', align: 'right', render: (r) => moneyCell(r.salePrice) },
+                      { key: 'sellingCosts', label: 'Selling costs', align: 'right', render: (r) => moneyCell(r.sellingCosts) },
+                      { key: 'loanPayoff', label: 'Loan payoff', align: 'right', render: (r) => moneyCell(r.loanPayoff) },
+                      { key: 'cash', label: 'Cash to account', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(asNode(preCash(r)))}</span> },
+                      { key: 'flow', label: 'Cash flow', align: 'right', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
+                      { key: 'invested', label: 'Invested', align: 'right', render: (r) => moneyCell(r.cashInvested) },
+                      { key: 'profit', label: 'Profit', align: 'right', render: (r) => <span className="font-semibold">{moneyCell(asNode(preProfit(r)), { signed: true })}</span> },
+                    ]}
+                  />
+                </div>
+              </details>
 
               <p className="text-[11px] text-gray-400 dark:text-gray-500">
                 Pre-tax view — sale proceeds and profit before capital-gains or depreciation-recapture tax. Estimates, not advice.
