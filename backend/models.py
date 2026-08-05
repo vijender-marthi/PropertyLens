@@ -31,6 +31,12 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role = Column(String, default="demo")  # demo | premium | admin | superuser
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # AI Coach settings (user-supplied API keys; provider chosen in Settings)
+    ai_provider = Column(String, default="claude")  # claude | openai | gemini
+    ai_model = Column(String)
+    ai_key_anthropic = Column(String)
+    ai_key_openai = Column(String)
+    ai_key_google = Column(String)
 
     properties = relationship("Property", back_populates="owner")
     shares_given = relationship(
@@ -824,3 +830,13 @@ class PayoffScenario(Base):
     results = Column(Text)                   # JSON: headline snapshot {debtFree, timeSaved, interestSaved, peakMonthly, ...}
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CoachMessage(Base):
+    __tablename__ = "coach_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    role = Column(String, nullable=False)  # user | assistant
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

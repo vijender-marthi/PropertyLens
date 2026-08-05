@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
-import { authAPI, sharingAPI } from '../services/api'
+import { authAPI, sharingAPI, coachAPI } from '../services/api'
 import toast from 'react-hot-toast'
-import { User, Key, Info, Share2, X, UserCheck, UserPlus, ArrowRight, ArrowLeft, Home, Palette, Check } from 'lucide-react'
+import { User, Key, Info, Share2, X, UserCheck, UserPlus, ArrowRight, ArrowLeft, Home, Palette, Check, Sparkles } from 'lucide-react'
 import { APP_VERSION } from '../version'
 import { useTheme } from '../hooks/useTheme'
 
@@ -66,6 +66,126 @@ function AppearanceSection() {
   )
 }
 
+const PROVIDERS = [
+  { id: 'claude', name: 'Claude (Anthropic)', keyHint: 'sk-ant-…', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  { id: 'openai', name: 'OpenAI', keyHint: 'sk-…', keyUrl: 'https://platform.openai.com/api-keys' },
+  { id: 'gemini', name: 'Google Gemini', keyHint: 'AIza…', keyUrl: 'https://aistudio.google.com/app/apikey' },
+]
+
+function AICoachSection() {
+  const [provider, setProvider] = useState('claude')
+  const [model, setModel] = useState('')
+  const [defaultModels, setDefaultModels] = useState({})
+  const [keySet, setKeySet] = useState({})
+  const [apiKey, setApiKey] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    coachAPI.getSettings()
+      .then((r) => {
+        setProvider(r.data.provider || 'claude')
+        setModel(r.data.model || '')
+        setDefaultModels(r.data.defaultModels || {})
+        setKeySet(r.data.keySet || {})
+      })
+      .catch(() => {})
+  }, [])
+
+  const active = PROVIDERS.find((p) => p.id === provider) || PROVIDERS[0]
+
+  const save = async (e) => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const payload = { provider, model: model.trim() }
+      if (apiKey.trim()) payload.api_key = apiKey.trim()
+      const r = await coachAPI.saveSettings(payload)
+      setKeySet(r.data.keySet || {})
+      setModel(r.data.model || '')
+      setApiKey('')
+      toast.success('AI Coach settings saved')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Could not save settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="flex items-center gap-2 mb-4">
+        <Sparkles className="w-4 h-4 text-blue-500" />
+        <h2 className="font-semibold text-gray-900 dark:text-white">AI Coach</h2>
+      </div>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+        Choose an AI provider and paste your own API key. When you chat with the coach, a summary of your
+        portfolio is sent to the provider you select so it can answer with your actual numbers. Keys are
+        stored on your account and never shown back to the browser.
+      </p>
+
+      <form onSubmit={save} className="space-y-4">
+        <div>
+          <label className="label">Provider</label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {PROVIDERS.map((p) => {
+              const selected = provider === p.id
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => { setProvider(p.id); setApiKey('') }}
+                  aria-pressed={selected}
+                  className={`flex items-center justify-between rounded-xl border p-3 text-left transition ${
+                    selected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                  }`}
+                >
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{p.name}</span>
+                  {keySet[p.id] ? <Check className="h-4 w-4 text-green-500" title="Key set" /> : null}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div>
+          <label className="label">
+            {active.name} API key {keySet[provider] ? <span className="text-green-600 dark:text-green-400">· key on file</span> : <span className="text-amber-600 dark:text-amber-400">· not set</span>}
+          </label>
+          <input
+            type="password"
+            className="input"
+            placeholder={keySet[provider] ? 'Enter a new key to replace the saved one' : active.keyHint}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            autoComplete="off"
+          />
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            Get a key from <a href={active.keyUrl} target="_blank" rel="noreferrer" className="underline">{active.name}</a>. Leave blank to keep the existing key.
+          </p>
+        </div>
+
+        <div>
+          <label className="label">Model <span className="text-gray-400">(optional)</span></label>
+          <input
+            type="text"
+            className="input"
+            placeholder={defaultModels[provider] || ''}
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          />
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            Defaults to <code className="font-mono">{defaultModels[provider] || '—'}</code> if left blank.
+          </p>
+        </div>
+
+        <button type="submit" className="btn-primary" disabled={saving}>
+          {saving ? 'Saving…' : 'Save AI Coach settings'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const { user } = useAuth()
   const [profile, setProfile] = useState({ name: user?.name || '', email: user?.email || '' })
@@ -102,6 +222,9 @@ export default function SettingsPage() {
           <button type="submit" className="btn-primary">Save Profile</button>
         </form>
       </div>
+
+      {/* AI Coach */}
+      <AICoachSection />
 
       {/* Shared Access */}
       <SharedAccessSection currentUser={user} />

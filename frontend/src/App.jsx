@@ -20,6 +20,7 @@ import LoansPage from './pages/LoansPage'
 import PayoffPlannerPage from './pages/PayoffPlannerPage'
 import ExitPlannerPage from './pages/ExitPlannerPage'
 import IncomeExpensesPage from './pages/IncomeExpensesPage'
+import AICoachPage from './pages/AICoachPage'
 import AdminPage from './pages/AdminPage'
 
 function PrivateRoute({ children }) {
@@ -61,6 +62,7 @@ function AppRoutes() {
                 <Route path="/exit-planner" element={<ExitPlannerPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/tax-center" element={<TaxCenterPage />} />
+                <Route path="/ai-coach" element={<AICoachPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/reports" element={<ReportsPage />} />

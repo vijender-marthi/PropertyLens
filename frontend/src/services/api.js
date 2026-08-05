@@ -198,4 +198,12 @@ export const helpAPI = {
   formulas: (params = {}) => api.get('/help/formulas', { params }),
 }
 
+export const coachAPI = {
+  getSettings: () => api.get('/coach/settings'),
+  saveSettings: (data) => api.post('/coach/settings', data),
+  history: () => api.get('/coach/history'),
+  clearHistory: () => api.delete('/coach/history'),
+  chat: (message) => api.post('/coach/chat', { message }),
+}
+
 export default api

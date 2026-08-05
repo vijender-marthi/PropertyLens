@@ -7,7 +7,7 @@ from sqlalchemy import text
 import uuid
 import models
 from database import engine
-from routers import auth, properties, documents, sharing, help as help_router, scenarios
+from routers import auth, properties, documents, sharing, help as help_router, scenarios, coach
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
@@ -65,6 +65,11 @@ def _canonical_property_type(value: str | None) -> str:
 MIGRATIONS = {
     "users": {
         "role": "VARCHAR DEFAULT 'demo'",
+        "ai_provider": "VARCHAR DEFAULT 'claude'",
+        "ai_model": "VARCHAR",
+        "ai_key_anthropic": "VARCHAR",
+        "ai_key_openai": "VARCHAR",
+        "ai_key_google": "VARCHAR",
     },
     "properties": {
 	"property_uid": "VARCHAR",
@@ -562,6 +567,16 @@ TABLE_MIGRATIONS = [
         FOREIGN KEY(owner_id) REFERENCES users (id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS coach_messages (
+        id INTEGER PRIMARY KEY,
+        owner_id INTEGER NOT NULL,
+        role VARCHAR NOT NULL,
+        content TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(owner_id) REFERENCES users (id)
+    )
+    """,
 ]
 with engine.connect() as conn:
     for ddl in TABLE_MIGRATIONS:
@@ -728,6 +743,7 @@ app.include_router(documents.property_tax_router)
 app.include_router(sharing.router)
 app.include_router(help_router.router)
 app.include_router(scenarios.router)
+app.include_router(coach.router)
 
 
 @app.get("/api/health")

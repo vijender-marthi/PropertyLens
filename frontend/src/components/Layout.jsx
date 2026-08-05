@@ -4,10 +4,11 @@ import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut, Home, Plus,
   BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark,
-  Sun, Moon, DoorOpen, FileBarChart,
+  Sun, Moon, DoorOpen, FileBarChart, Sparkles, MessageCircle,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import BrandLogo from './BrandLogo'
+import CoachChat from './CoachChat'
 import { propAPI } from '../services/api'
 
 const MAIN_NAV = [
@@ -52,6 +53,7 @@ const REPORTS_NAV = [
 ]
 
 const TOOLS_NAV = [
+  { to: '/ai-coach', icon: Sparkles,   label: 'AI Coach' },
   { to: '/help',     icon: HelpCircle, label: 'Help' },
   { to: '/settings', icon: Settings,   label: 'Settings' },
 ]
@@ -236,6 +238,40 @@ const isAdmin = ['admin', 'superuser'].includes((user?.role || '').toLowerCase()
   )
 }
 
+function FloatingCoach() {
+  const [open, setOpen] = useState(false)
+  const location = useLocation()
+
+  // The full-page coach already provides chat; don't double up there.
+  if (location.pathname === '/ai-coach') return null
+
+  return (
+    <>
+      {open ? (
+        <div className="fixed bottom-20 right-4 z-50 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex items-center justify-between border-b border-gray-100 bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-2.5 dark:border-gray-800">
+            <span className="flex items-center gap-2 text-sm font-semibold text-white">
+              <Sparkles className="h-4 w-4" /> AI Coach
+            </span>
+            <button onClick={() => setOpen(false)} className="rounded p-1 text-white/80 hover:bg-white/20 hover:text-white" aria-label="Close AI Coach">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <CoachChat compact />
+        </div>
+      ) : null}
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+        aria-label={open ? 'Close AI Coach' : 'Open AI Coach'}
+        title="AI Coach"
+      >
+        {open ? <X className="h-5 w-5" /> : <MessageCircle className="h-5 w-5" />}
+      </button>
+    </>
+  )
+}
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth()
   const { dark, toggle } = useTheme()
@@ -288,6 +324,9 @@ export default function Layout({ children }) {
           {children}
         </main>
       </div>
+
+      {/* Floating AI Coach bubble (all pages except the dedicated coach page) */}
+      <FloatingCoach />
     </div>
   )
 }
