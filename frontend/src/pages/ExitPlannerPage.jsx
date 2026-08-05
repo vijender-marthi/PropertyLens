@@ -333,39 +333,52 @@ function Waterfall({ row, maxSale }) {
 function Breakdown({ row, sellingCostsPct }) {
   const cash = asNode(preCash(row))
   const profit = asNode(preProfit(row))
-  const items = [
-    { icon: TrendingUp, label: 'Sale price', node: row.salePrice, strong: true, info: "Projected market value in the sale year — today's value grown at your appreciation rate each year." },
-    { icon: Receipt, label: `Selling costs (${Math.round(sellingCostsPct)}%)`, node: row.sellingCosts, op: '-', info: `Agent commissions, closing costs and fees at sale — about ${Math.round(sellingCostsPct)}% of the sale price.` },
-    { icon: Landmark, label: 'Loan payoff', node: row.loanPayoff, op: '-', info: 'The remaining mortgage balance you pay off at closing.' },
-    { divider: true },
-    { icon: Wallet, label: 'Cash to your account', node: cash, strong: true, info: 'What you receive at closing: sale price − selling costs − loan payoff.' },
-    { icon: Repeat, label: 'Cumulative cash flow', node: row.cumCashFlow, op: '+', info: 'Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this.' },
-    { icon: Home, label: 'Rent received', node: row.cumRentReceived, op: '+', indent: true, info: 'Total rent collected over the ownership period.' },
-    { icon: Wrench, label: 'Operating expenses', node: row.cumExpenses, op: '-', indent: true, note: `incl. property taxes ${row.cumPropertyTaxes.display}`, info: 'Insurance, HOA, management, maintenance and property taxes over ownership.' },
-    { icon: Landmark, label: 'Mortgage payments', node: row.cumMortgagePayment, op: '-', indent: true, note: `incl. interest ${row.cumMortgageInterest.display}`, info: 'Total principal + interest paid over the ownership period.' },
-    { icon: Coins, label: 'Cash invested', node: row.cashInvested, op: '-', info: 'Your original down payment + closing costs (plus any improvements) — the capital you put in.' },
-    { divider: true },
-    { icon: DoorOpen, label: 'Lifetime profit', node: profit, strong: true, info: 'Cash to your account + cumulative cash flow − cash invested. Pre-tax.' },
-  ]
+  const Line = ({ icon: Icon, label, node, op, strong, indent, note, info }) => {
+    const v = Number(node?.value) || 0
+    let prefix = '', cls = 'text-gray-900 dark:text-white'
+    if (op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
+    else if (op === '+') { if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' } else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' } }
+    return (
+      <div className={`flex items-center gap-2 py-1 ${indent ? 'pl-5 text-[13px]' : 'text-sm'}`}>
+        <Icon className={`${indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
+        <span className={strong ? 'font-medium text-blue-700 dark:text-blue-300' : indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{label}</span>
+        {note ? <span className="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:inline">· {note}</span> : null}
+        <MetricHint text={info} label={label} />
+        <span className={`ml-auto tabular-nums ${strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{node?.display ?? '—'}</span>
+      </div>
+    )
+  }
+  const Block = ({ n, title, children }) => (
+    <div className="rounded-lg border border-gray-100 p-3 dark:border-gray-800">
+      <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-blue-100 text-[10px] text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">{n}</span>
+        {title}
+      </div>
+      {children}
+    </div>
+  )
   return (
-    <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">
-      {items.map((it, i) => {
-        if (it.divider) return <div key={i} className="my-1 border-t border-gray-100 dark:border-gray-800" />
-        const v = Number(it.node?.value) || 0
-        let prefix = '', cls = 'text-gray-900 dark:text-white'
-        if (it.op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
-        else if (it.op === '+') { if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' } else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' } }
-        const Icon = it.icon
-        return (
-          <div key={i} className={`flex items-center gap-2 py-1 ${it.indent ? 'pl-5 text-[13px]' : 'text-sm'}`}>
-            <Icon className={`${it.indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
-            <span className={it.strong ? 'font-medium text-blue-700 dark:text-blue-300' : it.indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{it.label}</span>
-            {it.note ? <span className="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:inline">· {it.note}</span> : null}
-            <MetricHint text={it.info} label={it.label} />
-            <span className={`ml-auto tabular-nums ${it.strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{it.node?.display ?? '—'}</span>
-          </div>
-        )
-      })}
+    <div className="mt-4 space-y-2">
+      <Block n="1" title="Cash at closing">
+        <Line icon={TrendingUp} label="Sale price" node={row.salePrice} strong info="Projected market value in the sale year — today's value grown at your appreciation rate each year." />
+        <Line icon={Receipt} label={`Selling costs (${Math.round(sellingCostsPct)}%)`} node={row.sellingCosts} op="-" info={`Agent commissions, closing costs and fees — about ${Math.round(sellingCostsPct)}% of the sale price.`} />
+        <Line icon={Landmark} label="Loan payoff" node={row.loanPayoff} op="-" info="The remaining mortgage balance you pay off at closing." />
+        <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+        <Line icon={Wallet} label="Cash to your account" node={cash} strong info="Sale price − selling costs − loan payoff." />
+      </Block>
+
+      <Block n="2" title="Cash flow while you owned it">
+        <Line icon={Repeat} label="Cumulative cash flow" node={row.cumCashFlow} op="+" info="Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this." />
+        <Line icon={Home} label="Rent received" node={row.cumRentReceived} op="+" indent info="Total rent collected over the ownership period." />
+        <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} op="-" indent note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, management, maintenance and property taxes over ownership." />
+        <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over the ownership period." />
+      </Block>
+
+      <Block n="3" title="Your return">
+        <Line icon={Coins} label="Cash invested" node={row.cashInvested} op="-" info="Your original down payment + closing costs (plus any improvements) — the capital you put in." />
+        <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+        <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info="Cash to your account + cumulative cash flow − cash invested. Pre-tax." />
+      </Block>
     </div>
   )
 }
