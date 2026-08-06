@@ -4675,9 +4675,16 @@ def _delete_document_and_dependents(db: Session, doc: models.Document):
             os.remove(UPLOAD_DIR / doc.markdown_file)
         except FileNotFoundError:
             pass
+    # Keep filed Schedule E figures when the source document goes away — detach
+    # them (document_id → NULL) instead of deleting, exactly like loans below.
+    # Replacing/re-uploading a tax return deletes the old document; hard-deleting
+    # its entries here wiped the Tax Center's filed column, and a re-import that
+    # didn't re-match left it empty. Detaching lets a re-import re-link/update the
+    # same row (dedup is on owner/year/kind/property), and preserves the filed
+    # data even on a plain delete (the user can still remove it in the Tax Center).
     db.query(models.TaxReturnEntry).filter(
         models.TaxReturnEntry.document_id == doc.id
-    ).delete()
+    ).update({models.TaxReturnEntry.document_id: None}, synchronize_session=False)
     property_record = doc.property
     db.query(models.EscrowActivity).filter(
         models.EscrowActivity.document_id == doc.id

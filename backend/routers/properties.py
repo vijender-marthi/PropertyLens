@@ -5192,6 +5192,7 @@ def _loan_document_inventory(loan: models.Loan, prop: models.Property) -> Dict[i
         by_year.setdefault(year, []).append({
             "documentId": doc.id,
             "filename": _doc_display_name(doc),
+            "originalFilename": getattr(doc, "original_filename", None) or getattr(doc, "filename", None),
             "docType": category,
             "docTypeLabel": doc_type_label,
             "sourceBadge": source_badge,
@@ -12112,11 +12113,19 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
             opex_y = max(float(entry.total_expenses or 0.0) - interest_y - dep_y, 0.0)
             payment_y = annual_debt_service
         elif is_primary:
+            n = max(yr - today.year, 0)
             rent_y = 0.0
-            opex_y = annual_opex * (eg ** max(yr - today.year, 0))
-            tax_y = annual_prop_tax * (eg ** max(yr - today.year, 0))
-            interest_y = 0.0
-            payment_y = 0.0
+            opex_y = annual_opex * (eg ** n)
+            tax_y = annual_prop_tax * (eg ** n)
+            # Mortgage on a primary residence is shown for REFERENCE only. It must
+            # not feed cash flow / profit (you'd pay to live somewhere regardless),
+            # so cf stays 0 below — but surface the payment + interest so the plan
+            # doesn't read $0 for a home that clearly has a loan.
+            payment_y = annual_debt_service
+            interest_y = (
+                annual_interest_est if yr <= today.year
+                else _future_loan_balance(prop, n * 12, today) * eff_rate
+            )
         elif yr <= today.year:
             rent_y, opex_y, tax_y = annual_rent, annual_opex, annual_prop_tax
             interest_y, payment_y = annual_interest_est, annual_debt_service

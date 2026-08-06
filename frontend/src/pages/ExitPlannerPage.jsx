@@ -333,7 +333,7 @@ function Waterfall({ row }) {
   )
 }
 
-function Breakdown({ row, sellingCostsPct }) {
+function Breakdown({ row, sellingCostsPct, isPrimary }) {
   const cash = asNode(preCash(row))
   const profit = asNode(preProfit(row))
   const Line = ({ icon: Icon, label, node, op, strong, indent, note, info }) => {
@@ -379,17 +379,24 @@ function Breakdown({ row, sellingCostsPct }) {
         <Line icon={Wallet} label="Cash to your account" node={cash} strong info="Sale price − selling costs − loan payoff." />
       </Block>
 
-      <Block n="2" accent="amber" title="Cash flow while you owned it" subtitle="rent minus costs over the years">
-        <Line icon={Repeat} label="Cumulative cash flow" node={row.cumCashFlow} op="+" info="Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this." />
-        <Line icon={Home} label="Rent received" node={row.cumRentReceived} op="+" indent info="Total rent collected over the ownership period." />
-        <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} op="-" indent note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, management, maintenance and property taxes over ownership." />
-        <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over the ownership period." />
-      </Block>
+      {isPrimary ? (
+        <Block n="2" accent="amber" title="While you owned it" subtitle="mortgage & costs — not counted in your home's profit">
+          <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over ownership. Shown for reference — a primary residence's profit isn't reduced by what you paid to live there." />
+          <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, maintenance and property taxes over ownership. Reference only — not subtracted from your home's profit." />
+        </Block>
+      ) : (
+        <Block n="2" accent="amber" title="Cash flow while you owned it" subtitle="rent minus costs over the years">
+          <Line icon={Repeat} label="Cumulative cash flow" node={row.cumCashFlow} op="+" info="Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this." />
+          <Line icon={Home} label="Rent received" node={row.cumRentReceived} op="+" indent info="Total rent collected over the ownership period." />
+          <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} op="-" indent note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, management, maintenance and property taxes over ownership." />
+          <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over the ownership period." />
+        </Block>
+      )}
 
       <Block n="3" accent="emerald" title="Your return" subtitle="profit after the capital you put in">
         <Line icon={Coins} label="Cash invested" node={row.cashInvested} op="-" info="Your original down payment + closing costs (plus any improvements) — the capital you put in." />
         <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-        <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info="Cash to your account + cumulative cash flow − cash invested. Pre-tax." />
+        <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info={isPrimary ? "Cash to your account − cash invested. Pre-tax. Mortgage and running costs aren't subtracted for a home you live in." : "Cash to your account + cumulative cash flow − cash invested. Pre-tax."} />
       </Block>
     </div>
   )
@@ -640,7 +647,7 @@ export default function ExitPlannerPage() {
                   <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
                 </div>
                 <Waterfall row={row} maxSale={maxSale} />
-                <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} />
+                <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} isPrimary={selected.isPrimary} />
                 <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {[
                     { label: 'Rent received', v: row.cumRentReceived.display },

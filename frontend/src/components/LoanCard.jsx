@@ -1017,12 +1017,28 @@ function rowSourceDocuments(row) {
     : row.sourceDocument
       ? [row.sourceDocument]
       : []
-  return docs.flatMap((document) => {
+  const flattened = docs.flatMap((document) => {
     if (Array.isArray(document?.combinedDocuments) && document.combinedDocuments.length) {
       return document.combinedDocuments
     }
     return document ? [document] : []
   })
+  // Show each source document once — the same file can appear via both the row's
+  // documents list and a combined-document group, which duplicated it in the popup.
+  const seen = new Set()
+  return flattened.filter((document) => {
+    const key = document?.documentId ?? document?.originalFilename ?? document?.filename
+    if (key == null) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+// The name of the file the user actually uploaded/downloaded, preferred over any
+// derived display label (e.g. "Statement", "Multiple 1098s") in the source popup.
+function sourceDocFileName(document) {
+  return document?.originalFilename || document?.filename || 'Source document'
 }
 
 function rowPreviewUrl(row) {
@@ -1181,8 +1197,8 @@ function SourcePopover({ anchorRef, row, uploadingStatement, onReplace, onRemove
             <div key={document.documentId || document.filename} className="min-w-0 rounded-lg border border-gray-100 p-2 dark:border-neutral-800">
               <div className="flex items-center gap-2">
                 <FileCheck className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
-                <span className="truncate text-xs font-medium text-gray-800 dark:text-neutral-100" title={document.filename}>
-                  {document.filename}
+                <span className="truncate text-xs font-medium text-gray-800 dark:text-neutral-100" title={sourceDocFileName(document)}>
+                  {sourceDocFileName(document)}
                 </span>
               </div>
               {fields.length ? (
