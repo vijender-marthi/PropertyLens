@@ -3289,6 +3289,9 @@ function UnifiedTaxPage({ propId, property }) {
   const [loading, setLoading] = useState(true)
   const [showCompare, setShowCompare] = useState(false)
   const [expandedRows, setExpandedRows] = useState({})
+  const [taxSubTab, setTaxSubTab] = useState('details') // 'details' | 'compare'
+  const [compareYear, setCompareYear] = useState(null)
+  const [compareData, setCompareData] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -3301,6 +3304,15 @@ function UnifiedTaxPage({ propId, property }) {
       .catch(() => toast.error('Failed to load tax figures'))
       .finally(() => setLoading(false))
   }, [propId])
+
+  // Compare tab: fetch the backend Schedule E computed-vs-filed lines for the
+  // chosen year (all figures come from the backend; the page only renders them).
+  useEffect(() => {
+    if (taxSubTab !== 'compare' || !compareYear) return
+    propAPI.scheduleE(propId, compareYear)
+      .then((res) => setCompareData(res.data))
+      .catch(() => setCompareData(null))
+  }, [taxSubTab, compareYear, propId])
 
   if (loading) {
     return (
@@ -3422,19 +3434,19 @@ hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display ||
       </div>
 
       <div className="card">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Tax Details by Year</h3>
-            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">One backend-owned yearly view. Current year expands into now and projected remainder.</p>
-          </div>
-          {totalScheduleRow ? (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-right dark:border-gray-700 dark:bg-gray-800/70">
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Accumulated net</p>
-              <p className={`text-base font-semibold ${(totalScheduleRow.netScheduleE?.value || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>{totalScheduleRow.netScheduleE?.display}</p>
-            </div>
-          ) : null}
+        <div className="mb-4 flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-800">
+          {[['details', 'Tax Details by Year'], ['compare', 'Schedule E Compare']].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTaxSubTab(key)}
+              className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${taxSubTab === key ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        {type === 'PRIMARY' ? (
+        {taxSubTab === 'details' && (type === 'PRIMARY' ? (
           <DataTable
             columns={[
               { id: 'year', header: 'Year', align: 'center', sortValue: (row) => row.year, cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.is_partial ? `${row.year} partial` : row.year },
@@ -3514,6 +3526,14 @@ hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display ||
             ) : null)}
             defaultSort={{ id: 'year', direction: 'asc' }}
           />
+        ))}
+        {taxSubTab === 'compare' && (
+          <ScheduleECompare
+            scheduleE={compareData || scheduleE}
+            availableYears={scheduleE?.availableYears || []}
+            year={compareYear || selectedYear}
+            onYearChange={setCompareYear}
+          />
         )}
       </div>
 
@@ -3539,11 +3559,67 @@ function TaxMetricCard({ metric, hero = false }) {
   )
 }
 
+function ScheduleECompare({ scheduleE, availableYears, year, onYearChange }) {
+  const lines = scheduleE?.lines || []
+  const years = availableYears.length ? availableYears : (year ? [year] : [])
+  const hasFiled = lines.some((line) => line.filed)
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-sm font-medium text-gray-600 dark:text-gray-300">Tax year</label>
+        <select
+          value={year || ''}
+          onChange={(event) => onYearChange(Number(event.target.value))}
+          className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        >
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <span className="text-xs text-gray-400 dark:text-gray-500">{scheduleE?.summary?.filedSource || ''}</span>
+      </div>
+      <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-800">
+        <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-800">
+          <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-950 dark:text-gray-400">
+            <tr>
+              <th className="px-4 py-3 text-left">Line</th>
+              <th className="px-4 py-3 text-right">PropertyLens (computed)</th>
+              <th className="px-4 py-3 text-right">Schedule E (filed)</th>
+              <th className="px-4 py-3 text-right">Variance</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-800 dark:bg-gray-900">
+            {lines.map((line) => (
+              <tr key={line.key}>
+                <td className="px-4 py-3 text-gray-700 dark:text-gray-200"><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.computed?.display ?? '—'}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.filed?.display ?? '—'}</td>
+                <td className={`px-4 py-3 text-right tabular-nums ${!line.filed ? 'text-gray-400 dark:text-gray-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!hasFiled ? (
+        <p className="text-xs text-amber-600 dark:text-amber-400">No filed Schedule E found for {year}. Upload the tax return to compare.</p>
+      ) : null}
+    </div>
+  )
+}
+
 function TaxStatusMetric({ metric }) {
+  const text = String(metric.value ?? '').trim()
+  const isCurrency = text.includes('$')
+  const isNegative = /^[-(]/.test(text) || text.includes('-$')
+  const tone = !isCurrency
+    ? 'text-gray-900 dark:text-white'
+    : isNegative
+      ? 'text-red-600 dark:text-red-400'
+      : 'text-emerald-600 dark:text-emerald-400'
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/70">
       <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">{metric.label}</p>
-      <p className="mt-1 text-base font-bold text-gray-900 dark:text-white">{metric.value}</p>
+      <p className={`mt-1 text-base font-bold ${tone}`}>{metric.value}</p>
     </div>
   )
 }
