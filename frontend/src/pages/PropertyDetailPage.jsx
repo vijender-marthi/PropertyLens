@@ -1346,9 +1346,7 @@ function UsageTimelineTab({ propId, onSaved }) {
             <h4 className="text-base font-semibold text-gray-900 dark:text-white">Occupancy Timeline</h4>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Vacancy is backend-derived from gaps between occupied periods inside rental-available months.</p>
           </div>
-          <button type="button" className="btn-primary text-sm" onClick={() => startAddTimelinePeriod()}>+ Add period</button>
         </div>
-        {timelineFormOpen ? renderTimelineForm() : null}
         {(timeline?.timeline || []).length ? (
           <div className="overflow-hidden rounded-lg border border-gray-100 dark:border-gray-700">
             <div className="grid min-h-9 grid-cols-[minmax(360px,0.48fr)_minmax(0,0.52fr)] items-center bg-gray-50 text-xs font-medium text-gray-500 dark:bg-gray-700/80 dark:text-gray-400">
@@ -1428,7 +1426,9 @@ function UsageTimelineTab({ propId, onSaved }) {
             <h4 className="text-base font-semibold text-gray-900 dark:text-white">Occupancy History</h4>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Entered occupied periods plus backend-derived vacancy gaps.</p>
           </div>
+          <button type="button" className="btn-primary text-sm" onClick={() => startAddTimelinePeriod()}>+ Add period</button>
         </div>
+        {timelineFormOpen ? renderTimelineForm() : null}
         <DataTable
           columns={historyColumns}
           rows={historyRows}
