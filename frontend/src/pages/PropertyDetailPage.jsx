@@ -1099,6 +1099,7 @@ function UsageTimelineTab({ propId, onSaved }) {
   const [timelineForm, setTimelineForm] = useState(emptyTimelineForm)
   const [timelineError, setTimelineError] = useState(null)
   const [timelineFormOpen, setTimelineFormOpen] = useState(false)
+  const [occTab, setOccTab] = useState('timeline') // 'timeline' | 'history'
   const editingTimeline = Boolean(timelineForm.period_ref)
 
   const loadRentalTimeline = () => {
@@ -1340,6 +1341,20 @@ function UsageTimelineTab({ propId, onSaved }) {
         </div>
       </section>
 
+      <div className="flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-800">
+        {[['timeline', 'Occupancy Timeline'], ['history', 'Occupancy History']].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setOccTab(key)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${occTab === key ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {occTab === 'timeline' ? (
       <section className="card space-y-3 p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1419,7 +1434,9 @@ function UsageTimelineTab({ propId, onSaved }) {
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full border border-gray-300 opacity-40 dark:border-gray-700" /> Not Rental</span>
         </div>
       </section>
+      ) : null}
 
+      {occTab === 'history' ? (
       <section className="card space-y-3 p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1436,6 +1453,7 @@ function UsageTimelineTab({ propId, onSaved }) {
           emptyMessage="No occupancy history recorded."
         />
       </section>
+      ) : null}
 
       <section className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-4 text-sm font-medium text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/10 dark:text-emerald-100">
         {timeline?.insightLine || 'Rental performance insight unavailable.'}
