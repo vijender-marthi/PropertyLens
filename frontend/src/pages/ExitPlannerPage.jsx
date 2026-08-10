@@ -442,7 +442,8 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
 
       {(row.accumulatedDepreciation?.value || 0) > 0 ? (
         <Block n="4" accent="purple" title="Tax assets" subtitle="depreciation benefit and your pre-tax cash">
-          <Line icon={FileText} label="Depreciation captured" node={row.accumulatedDepreciation} strong info="Total depreciation deducted over ownership — it lowered your taxable rental income each year. It is recaptured at 25% when you sell." />
+          <Line icon={FileText} label="Depreciation captured" node={row.accumulatedDepreciation} strong info="Total depreciation deducted over ownership — it lowered your taxable rental income each year. This is the full amount; recapture tax is shown separately below." />
+          <Line icon={Percent} label="Depreciation recapture at sale (25%)" node={row.recaptureTax} op="-" indent info="Tax owed on the captured depreciation when you sell — 25% of the amount above. A future cost, not subtracted from the asset." />
           <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
           <Line icon={Wallet} label="Total cash into your pocket (before taxes)" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)))} strong info="Sale cash plus cumulative rental cash flow over ownership, before capital-gains or depreciation-recapture tax." />
         </Block>
