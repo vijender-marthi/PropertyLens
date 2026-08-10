@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag } from 'lucide-react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight } from 'lucide-react'
 import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Table2, BarChart3 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
@@ -351,6 +351,26 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
       </div>
     )
   }
+  // Expandable parent line: click to reveal indented sub-items below it.
+  const GroupLine = ({ icon: Icon, label, node, op, info, note, indent, children }) => {
+    let prefix = '', cls = 'text-gray-900 dark:text-white'
+    if (op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
+    return (
+      <details className="group/gl">
+        <summary className={`flex cursor-pointer list-none items-center gap-2 py-1 ${indent ? 'pl-5 text-[13px]' : 'text-sm'}`}>
+          <ChevronRight className={`${indent ? 'h-3 w-3' : 'h-3.5 w-3.5'} shrink-0 text-gray-400 transition-transform group-open/gl:rotate-90`} aria-hidden="true" />
+          <Icon className={`${indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
+          <span className={indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{label}</span>
+          {note ? <span className="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:inline">· {note}</span> : null}
+          <MetricHint text={info} label={label} />
+          <span className={`ml-auto tabular-nums ${cls}`}>{prefix}{node?.display ?? '—'}</span>
+        </summary>
+        <div className={`${indent ? 'ml-8' : 'ml-[9px]'} border-l border-gray-100 dark:border-gray-800`}>
+          {children}
+        </div>
+      </details>
+    )
+  }
   const ACCENTS = {
     blue: { border: 'border-blue-200 dark:border-blue-900/50', head: 'bg-blue-50 dark:bg-blue-950/30', chip: 'bg-blue-600 text-white', title: 'text-blue-700 dark:text-blue-300' },
     amber: { border: 'border-amber-200 dark:border-amber-900/50', head: 'bg-amber-50 dark:bg-amber-950/30', chip: 'bg-amber-500 text-white', title: 'text-amber-700 dark:text-amber-300' },
@@ -359,8 +379,8 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
   const Block = ({ n, title, subtitle, accent, children }) => {
     const a = ACCENTS[accent]
     return (
-      <div className={`overflow-hidden rounded-xl border ${a.border}`}>
-        <div className={`flex flex-wrap items-center gap-x-2 px-3 py-2 ${a.head}`}>
+      <div className={`rounded-xl border ${a.border}`}>
+        <div className={`flex flex-wrap items-center gap-x-2 rounded-t-xl px-3 py-2 ${a.head}`}>
           <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold ${a.chip}`}>{n}</span>
           <span className={`text-[11px] font-semibold uppercase tracking-wide ${a.title}`}>{title}</span>
           <span className="text-[11px] text-gray-500 dark:text-gray-400">· {subtitle}</span>
@@ -381,15 +401,27 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
 
       {isPrimary ? (
         <Block n="2" accent="amber" title="While you owned it" subtitle="mortgage & costs — not counted in your home's profit">
-          <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over ownership. Shown for reference — a primary residence's profit isn't reduced by what you paid to live there." />
-          <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, maintenance and property taxes over ownership. Reference only — not subtracted from your home's profit." />
+          <GroupLine icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} info="Total principal + interest paid over ownership. Shown for reference — a primary residence's profit isn't reduced by what you paid to live there.">
+            <Line icon={Coins} label="Principal paid" node={asNode((row.cumMortgagePayment?.value || 0) - (row.cumMortgageInterest?.value || 0))} indent info="The part of your payments that reduced the loan balance." />
+            <Line icon={Percent} label="Interest paid" node={row.cumMortgageInterest} indent info="The interest portion of your mortgage payments." />
+          </GroupLine>
+          <GroupLine icon={Wrench} label="Operating expenses" node={row.cumExpenses} info="Insurance, HOA, maintenance and property taxes over ownership. Reference only — not subtracted from your home's profit.">
+            <Line icon={Landmark} label="Property taxes" node={row.cumPropertyTaxes} indent info="Property taxes paid over the ownership period." />
+            <Line icon={Wrench} label="Other expenses" node={asNode((row.cumExpenses?.value || 0) - (row.cumPropertyTaxes?.value || 0))} indent info="Insurance, HOA, management and maintenance over the ownership period." />
+          </GroupLine>
         </Block>
       ) : (
         <Block n="2" accent="amber" title="Cash flow while you owned it" subtitle="rent minus costs over the years">
           <Line icon={Repeat} label="Cumulative cash flow" node={row.cumCashFlow} op="+" info="Net rental cash over the full ownership: rent − operating expenses − mortgage payments. The three lines below sum to this." />
           <Line icon={Home} label="Rent received" node={row.cumRentReceived} op="+" indent info="Total rent collected over the ownership period." />
-          <Line icon={Wrench} label="Operating expenses" node={row.cumExpenses} op="-" indent note={`incl. property taxes ${row.cumPropertyTaxes.display}`} info="Insurance, HOA, management, maintenance and property taxes over ownership." />
-          <Line icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent note={`incl. interest ${row.cumMortgageInterest.display}`} info="Total principal + interest paid over the ownership period." />
+          <GroupLine icon={Wrench} label="Operating expenses" node={row.cumExpenses} op="-" indent info="Insurance, HOA, management, maintenance and property taxes over ownership.">
+            <Line icon={Landmark} label="Property taxes" node={row.cumPropertyTaxes} indent info="Property taxes paid over the ownership period." />
+            <Line icon={Wrench} label="Other expenses" node={asNode((row.cumExpenses?.value || 0) - (row.cumPropertyTaxes?.value || 0))} indent info="Insurance, HOA, management and maintenance over the ownership period." />
+          </GroupLine>
+          <GroupLine icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent info="Total principal + interest paid over the ownership period.">
+            <Line icon={Coins} label="Principal paid" node={asNode((row.cumMortgagePayment?.value || 0) - (row.cumMortgageInterest?.value || 0))} indent info="The part of your payments that reduced the loan balance." />
+            <Line icon={Percent} label="Interest paid" node={row.cumMortgageInterest} indent info="The interest portion of your mortgage payments." />
+          </GroupLine>
         </Block>
       )}
 
