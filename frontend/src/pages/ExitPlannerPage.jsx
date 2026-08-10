@@ -383,6 +383,7 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
     blue: { border: 'border-blue-200 dark:border-blue-900/50', head: 'bg-blue-50 dark:bg-blue-950/30', chip: 'bg-blue-600 text-white', title: 'text-blue-700 dark:text-blue-300' },
     amber: { border: 'border-amber-200 dark:border-amber-900/50', head: 'bg-amber-50 dark:bg-amber-950/30', chip: 'bg-amber-500 text-white', title: 'text-amber-700 dark:text-amber-300' },
     emerald: { border: 'border-emerald-200 dark:border-emerald-900/50', head: 'bg-emerald-50 dark:bg-emerald-950/30', chip: 'bg-emerald-600 text-white', title: 'text-emerald-700 dark:text-emerald-300' },
+    purple: { border: 'border-purple-200 dark:border-purple-900/50', head: 'bg-purple-50 dark:bg-purple-950/30', chip: 'bg-purple-600 text-white', title: 'text-purple-700 dark:text-purple-300' },
   }
   const Block = ({ n, title, subtitle, accent, children }) => {
     const a = ACCENTS[accent]
@@ -438,6 +439,14 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
         <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
         <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info={isPrimary ? "Cash to your account − cash invested. Pre-tax. Mortgage and running costs aren't subtracted for a home you live in." : "Cash to your account + cumulative cash flow − cash invested. Pre-tax."} />
       </Block>
+
+      {(row.accumulatedDepreciation?.value || 0) > 0 ? (
+        <Block n="4" accent="purple" title="Tax assets" subtitle="depreciation benefit and your pre-tax cash">
+          <Line icon={FileText} label="Depreciation captured" node={row.accumulatedDepreciation} strong info="Total depreciation deducted over ownership — it lowered your taxable rental income each year. It is recaptured at 25% when you sell." />
+          <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+          <Line icon={Wallet} label="Total cash into your pocket (before taxes)" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)))} strong info="Sale cash plus cumulative rental cash flow over ownership, before capital-gains or depreciation-recapture tax." />
+        </Block>
+      ) : null}
     </div>
   )
 }
