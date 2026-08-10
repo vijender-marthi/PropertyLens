@@ -9,13 +9,28 @@ import {
   ChevronDown,
   Download,
   FileSpreadsheet,
+  FileText,
+  Files,
+  Home,
   Landmark,
   Percent,
   ReceiptText,
   ShieldCheck,
   Sparkles,
+  TrendingDown,
   Upload,
 } from 'lucide-react'
+
+const SCHEDULE_E_LINE_DECOR = {
+  rents_received: { Icon: Home, fg: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/40' },
+  mortgage_interest: { Icon: Landmark, fg: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/40' },
+  other_interest: { Icon: Landmark, fg: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/40' },
+  taxes: { Icon: ReceiptText, fg: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/40' },
+  depreciation: { Icon: TrendingDown, fg: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-950/40' },
+  total_expenses: { Icon: Files, fg: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800/60' },
+  net_income: { Icon: FileText, fg: 'text-gray-700 dark:text-gray-200', bg: 'bg-gray-100 dark:bg-gray-800/70' },
+}
+const scheduleELineDecor = (key) => SCHEDULE_E_LINE_DECOR[key] || { Icon: null, fg: 'text-gray-400', bg: 'bg-gray-100 dark:bg-neutral-800' }
 import {
   Area,
   AreaChart,
@@ -225,16 +240,27 @@ function ScheduleELines({ lines }) {
           </tr>
         </thead>
         <tbody className="tabular-nums">
-          {lines.map((line) => (
+          {lines.map((line) => {
+            const decor = scheduleELineDecor(line.key)
+            const LineIcon = decor.Icon
+            return (
             <tr key={line.key} className="border-t border-gray-100 dark:border-neutral-800">
-              <td className="px-3 py-2 text-gray-600 dark:text-neutral-300"><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</td>
+              <td className="px-3 py-2 text-gray-600 dark:text-neutral-300">
+                <span className="inline-flex items-center gap-2">
+                  <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
+                    {LineIcon ? <LineIcon className={`h-3 w-3 ${decor.fg}`} /> : <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
+                  </span>
+                  <span><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</span>
+                </span>
+              </td>
               <td className="px-3 py-2 text-right">{line.filed?.display ?? '—'}</td>
               <td className="px-3 py-2 text-right">{line.computed?.display ?? '—'}</td>
               <td className={`px-3 py-2 text-right ${!line.filed ? 'text-gray-400 dark:text-neutral-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                 {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
               </td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>
