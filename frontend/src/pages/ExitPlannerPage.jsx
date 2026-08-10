@@ -371,7 +371,7 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
           <span className={indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{label}</span>
           {note ? <span className="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:inline">· {note}</span> : null}
           <MetricHint text={info} label={label} />
-          <span className={`ml-auto tabular-nums ${cls}`}>{prefix}{node?.display ?? '—'}</span>
+          <span className={`ml-auto tabular-nums ${indent ? '' : 'font-bold'} ${cls}`}>{prefix}{node?.display ?? '—'}</span>
         </summary>
         <div className={`${indent ? 'ml-8' : 'ml-[9px]'} border-l border-gray-100 dark:border-gray-800`}>
           {children}
