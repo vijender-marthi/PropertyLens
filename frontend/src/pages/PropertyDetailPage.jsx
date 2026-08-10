@@ -1814,29 +1814,85 @@ function ExpenseSourceDialog({ row, onClose }) {
   )
 }
 
+const EDITABLE_EXPENSE_FIELDS = [
+  { key: 'insurance', label: 'Insurance', decor: 'insurance' },
+  { key: 'hoa', label: 'HOA', decor: 'other_expenses' },
+  { key: 'repairs_maintenance', label: 'Repairs & maintenance', decor: 'repairs' },
+  { key: 'property_management', label: 'Property management', decor: 'management_fees' },
+  { key: 'utilities', label: 'Utilities', decor: 'utilities' },
+  { key: 'vacancy_allowance', label: 'Vacancy allowance', decor: 'other_expenses' },
+  { key: 'capex_reserve', label: 'Capex reserve', decor: 'other_expenses' },
+  { key: 'other', label: 'Other', decor: 'other_expenses' },
+]
+
 function ScheduleEExpensesByYear({ propId }) {
   const [year, setYear] = useState(null)
-  const [data, setData] = useState(null)
+  const [row, setRow] = useState(null)
+  const [schedule, setSchedule] = useState(null)
+  const [visibleKeys, setVisibleKeys] = useState([])
+  const [addKey, setAddKey] = useState('')
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
   useEffect(() => {
     let active = true
     setLoading(true)
-    propAPI.scheduleE(propId, year || undefined)
-      .then((res) => { if (active) setData(res.data) })
-      .catch(() => { if (active) setData(null) })
-      .finally(() => { if (active) setLoading(false) })
+    Promise.all([
+      propAPI.annualExpenses(propId).catch(() => ({ data: [] })),
+      propAPI.scheduleE(propId, year || undefined).catch(() => ({ data: null })),
+    ]).then(([annualRes, schedRes]) => {
+      if (!active) return
+      setSchedule(schedRes.data)
+      const resolvedYear = year || schedRes.data?.selectedYear || CURRENT_YEAR
+      if (!year) setYear(resolvedYear)
+      const found = (annualRes.data || []).find((r) => Number(r.year) === Number(resolvedYear))
+      const normalized = found ? normalizeAnnualExpense(found, resolvedYear) : blankAnnualExpense(resolvedYear)
+      setRow(normalized)
+      setVisibleKeys(EDITABLE_EXPENSE_FIELDS.filter((f) => inputNumber(normalized[f.key]) > 0).map((f) => f.key))
+    }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [propId, year])
 
-  const availableYears = data?.availableYears || []
-  const selectedYear = year || data?.selectedYear
-  // Every Schedule E expense line — income (rents) and the net total are excluded.
-  const expenseLines = (data?.lines || []).filter((line) => !['rents_received', 'net_income'].includes(line.key))
+  const availableYears = schedule?.availableYears || []
+  const selectedYear = year || schedule?.selectedYear
+  const lineByKey = Object.fromEntries((schedule?.lines || []).map((line) => [line.key, line]))
+  const setField = (key, value) => setRow((current) => ({ ...current, [key]: value }))
+  const addable = EDITABLE_EXPENSE_FIELDS.filter((field) => !visibleKeys.includes(field.key))
+  const addExpense = () => { if (addKey) { setVisibleKeys((keys) => [...keys, addKey]); setAddKey('') } }
+  const removeExpense = (key) => { setVisibleKeys((keys) => keys.filter((k) => k !== key)); setField(key, '') }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await propAPI.upsertAnnualExpense(propId, selectedYear, annualExpensePayload(row, selectedYear))
+      toast.success(`${selectedYear} expenses saved`)
+    } catch {
+      toast.error('Could not save expenses.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const AutoRow = ({ decorKey, label, display, note }) => {
+    const decor = scheduleELineDecor(decorKey)
+    const Icon = decor.Icon
+    return (
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <span className="inline-flex items-center gap-2 text-gray-700 dark:text-gray-200">
+          <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
+            {Icon ? <Icon className={`h-3 w-3 ${decor.fg}`} /> : null}
+          </span>
+          <span>{label}<span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">auto</span>{note ? <span className="ml-2 text-xs text-gray-400">{note}</span> : null}</span>
+        </span>
+        <span className="tabular-nums font-medium text-gray-900 dark:text-white">{display ?? '—'}</span>
+      </div>
+    )
+  }
 
   return (
-    <section className="card">
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <h3 className="font-semibold text-gray-900 dark:text-white">Schedule E expenses</h3>
+    <section className="card space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="font-semibold text-gray-900 dark:text-white">Expenses</h3>
         <label className="ml-1 text-sm font-medium text-gray-600 dark:text-gray-300">Tax year</label>
         <select
           value={selectedYear || ''}
@@ -1845,41 +1901,66 @@ function ScheduleEExpensesByYear({ propId }) {
         >
           {(availableYears.length ? availableYears : (selectedYear ? [selectedYear] : [])).map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
+        <button type="button" onClick={save} disabled={saving || loading} className="btn-primary ml-auto text-sm">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
       </div>
-      {loading && !data ? (
+
+      {loading && !row ? (
         <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
       ) : (
-        <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-800">
-          <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-800">
-            <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-950 dark:text-gray-400">
-              <tr>
-                <th className="px-4 py-3 text-left">Expense</th>
-                <th className="px-4 py-3 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-800 dark:bg-gray-900">
-              {expenseLines.map((line) => {
-                const decor = scheduleELineDecor(line.key)
-                const LineIcon = decor.Icon
-                const isTotal = line.key === 'total_expenses'
-                return (
-                  <tr key={line.key} className={isTotal ? 'bg-gray-50 font-semibold dark:bg-gray-800/60' : undefined}>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-2 text-gray-700 dark:text-gray-200">
-                        <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
-                          {LineIcon ? <LineIcon className={`h-3 w-3 ${decor.fg}`} /> : <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
-                        </span>
-                        <span><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</span>
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.computed?.display ?? '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div className="divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
+          {/* Auto-populated from their canonical sources — read-only here. */}
+          <AutoRow decorKey="taxes" label="Property tax" display={lineByKey.taxes?.computed?.display} note="from property-tax bills / escrow" />
+          <AutoRow decorKey="depreciation" label="Depreciation" display={lineByKey.depreciation?.computed?.display} note="computed from basis" />
+
+          {/* Editable expense categories. */}
+          {visibleKeys.map((key) => {
+            const field = EDITABLE_EXPENSE_FIELDS.find((f) => f.key === key)
+            const decor = scheduleELineDecor(field.decor)
+            const Icon = decor.Icon
+            return (
+              <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                <span className="inline-flex items-center gap-2 text-gray-700 dark:text-gray-200">
+                  <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
+                    {Icon ? <Icon className={`h-3 w-3 ${decor.fg}`} /> : <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
+                  </span>
+                  {field.label}
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="text-gray-400">$</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={row?.[key] ?? ''}
+                    onChange={(event) => setField(key, event.target.value)}
+                    className="w-32 rounded-md border border-gray-200 bg-white px-2 py-1 text-right text-sm tabular-nums text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                  />
+                  <button type="button" onClick={() => removeExpense(key)} title="Remove" className="text-gray-400 hover:text-red-600">
+                    <X className="h-4 w-4" />
+                  </button>
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
+
+      {addable.length ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={addKey}
+            onChange={(event) => setAddKey(event.target.value)}
+            className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          >
+            <option value="">Add an expense…</option>
+            {addable.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
+          </select>
+          <button type="button" onClick={addExpense} disabled={!addKey} className="btn-secondary inline-flex items-center gap-1.5 text-sm">
+            <Plus className="h-3.5 w-3.5" /> Add
+          </button>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -2210,7 +2291,7 @@ function ExpensesTab({ propId }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-800">
-        {[['byYear', 'Expenses by Year'], ['scheduleE', 'Schedule E Expenses']].map(([key, label]) => (
+        {[['byYear', 'Overview'], ['scheduleE', 'Expenses']].map(([key, label]) => (
           <button
             key={key}
             type="button"
