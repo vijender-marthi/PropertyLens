@@ -50,8 +50,16 @@ function NumField({ label, value, onChange, min, max, suffix, step = false }) {
 
 function MetricHint({ text, label }) {
   if (!text) return null
+  // Only one info popover open at a time — opening this one closes the others.
+  const closeOthers = (event) => {
+    if (event.currentTarget.open) {
+      document.querySelectorAll('details[data-metric-hint]').forEach((el) => {
+        if (el !== event.currentTarget) el.open = false
+      })
+    }
+  }
   return (
-    <details className="group/hint relative inline-flex">
+    <details data-metric-hint onToggle={closeOthers} className="group/hint relative inline-flex">
       <summary className="inline-flex cursor-pointer list-none rounded text-gray-400 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-gray-200"
         aria-label={`What is ${label}?`}>
         <Info className="h-3 w-3" aria-hidden="true" />
