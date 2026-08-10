@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import {
 ChevronLeft, ChevronDown, ChevronRight, Pencil, Trash2, Plus, Upload,
-FileText, Building2, Home, X, Download, Info, CheckCircle2, AlertTriangle, PauseCircle, TrendingDown, Lock,
+FileText, Building2, Home, X, Download, Printer, Info, CheckCircle2, AlertTriangle, PauseCircle, TrendingDown, Lock,
 LayoutDashboard, Landmark, KeyRound, ReceiptText, SlidersHorizontal, Files, HeartPulse, ClipboardList, ListChecks, Table2, GitBranch
 } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -3533,6 +3533,7 @@ hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display ||
             availableYears={scheduleE?.availableYears || []}
             year={compareYear || selectedYear}
             onYearChange={setCompareYear}
+            propertyName={propertyLabel(property)}
           />
         )}
       </div>
@@ -3559,10 +3560,59 @@ function TaxMetricCard({ metric, hero = false }) {
   )
 }
 
-function ScheduleECompare({ scheduleE, availableYears, year, onYearChange }) {
+const SCHEDULE_E_LINE_DECOR = {
+  rents_received: { Icon: Home, fg: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/40' },
+  mortgage_interest: { Icon: Landmark, fg: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/40' },
+  other_interest: { Icon: Landmark, fg: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/40' },
+  taxes: { Icon: ReceiptText, fg: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/40' },
+  depreciation: { Icon: TrendingDown, fg: 'text-purple-600 dark:text-purple-400', bg: 'bg-purple-50 dark:bg-purple-950/40' },
+  total_expenses: { Icon: Files, fg: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800/60' },
+  net_income: { Icon: FileText, fg: 'text-gray-700 dark:text-gray-200', bg: 'bg-gray-100 dark:bg-gray-800/70' },
+}
+const scheduleELineDecor = (key) => SCHEDULE_E_LINE_DECOR[key] || { Icon: null, fg: 'text-gray-400', bg: 'bg-gray-100 dark:bg-gray-800/60' }
+
+function ScheduleECompare({ scheduleE, availableYears, year, onYearChange, propertyName }) {
   const lines = scheduleE?.lines || []
   const years = availableYears.length ? availableYears : (year ? [year] : [])
   const hasFiled = lines.some((line) => line.filed)
+
+  const variance = (line) => (!line.filed ? '' : line.status === 'Match' ? '$0' : (line.delta?.display ?? ''))
+
+  const exportCsv = () => {
+    const rows = [
+      ['Schedule E — PropertyLens vs Filed'],
+      ['Property', propertyName || ''],
+      ['Tax year', String(year || '')],
+      [],
+      ['Line', 'Line item', 'PropertyLens (computed)', 'Schedule E (filed)', 'Variance'],
+      ...lines.map((line) => [line.lineNumber, line.lineItem, line.computed?.display ?? '', line.filed?.display ?? '', variance(line)]),
+    ]
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const anchor = document.createElement('a')
+    anchor.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    anchor.download = `schedule_e_compare_${year}_${(propertyName || 'property').toString().replace(/\s+/g, '_')}.csv`
+    anchor.click()
+    URL.revokeObjectURL(anchor.href)
+  }
+
+  const printCompare = () => {
+    const esc = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]))
+    const body = lines.map((line) => `<tr><td>${esc(line.lineNumber)} · ${esc(line.lineItem)}</td><td class="n">${esc(line.computed?.display ?? '—')}</td><td class="n">${esc(line.filed?.display ?? '—')}</td><td class="n">${esc(variance(line) || '—')}</td></tr>`).join('')
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`<!doctype html><html><head><title>Schedule E Compare — ${esc(propertyName || '')} ${esc(year || '')}</title>`
+      + `<style>body{font-family:Arial,Helvetica,sans-serif;color:#111;padding:28px}h1{font-size:18px;margin:0}p{color:#555;margin:4px 0 16px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid #ddd;padding:8px 10px;text-align:left}.n{text-align:right;font-variant-numeric:tabular-nums}thead th{background:#f4f4f5;text-transform:uppercase;font-size:11px;letter-spacing:.03em}tfoot{color:#777;font-size:11px}</style>`
+      + `</head><body><h1>Schedule E — PropertyLens vs Filed</h1>`
+      + `<p>${esc(propertyName || '')} · Tax year ${esc(year || '')}</p>`
+      + `<table><thead><tr><th>Line</th><th class="n">PropertyLens (computed)</th><th class="n">Schedule E (filed)</th><th class="n">Variance</th></tr></thead>`
+      + `<tbody>${body}</tbody></table>`
+      + `<p style="margin-top:16px">Computed figures are from PropertyLens; filed figures are from the uploaded Schedule E. For preparer review.</p>`
+      + `</body></html>`)
+    win.document.close()
+    win.focus()
+    win.print()
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -3575,6 +3625,14 @@ function ScheduleECompare({ scheduleE, availableYears, year, onYearChange }) {
           {years.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
         <span className="text-xs text-gray-400 dark:text-gray-500">{scheduleE?.summary?.filedSource || ''}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <button type="button" onClick={printCompare} className="btn-secondary inline-flex items-center gap-1.5 text-sm">
+            <Printer className="h-3.5 w-3.5" /> Print
+          </button>
+          <button type="button" onClick={exportCsv} className="btn-secondary inline-flex items-center gap-1.5 text-sm">
+            <Download className="h-3.5 w-3.5" /> Export CSV
+          </button>
+        </div>
       </div>
       <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-800">
         <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-800">
@@ -3587,16 +3645,27 @@ function ScheduleECompare({ scheduleE, availableYears, year, onYearChange }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-800 dark:bg-gray-900">
-            {lines.map((line) => (
+            {lines.map((line) => {
+              const decor = scheduleELineDecor(line.key)
+              const LineIcon = decor.Icon
+              return (
               <tr key={line.key}>
-                <td className="px-4 py-3 text-gray-700 dark:text-gray-200"><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</td>
+                <td className="px-4 py-3">
+                  <span className="inline-flex items-center gap-2 text-gray-700 dark:text-gray-200">
+                    <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
+                      {LineIcon ? <LineIcon className={`h-3 w-3 ${decor.fg}`} /> : <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
+                    </span>
+                    <span><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</span>
+                  </span>
+                </td>
                 <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.computed?.display ?? '—'}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.filed?.display ?? '—'}</td>
                 <td className={`px-4 py-3 text-right tabular-nums ${!line.filed ? 'text-gray-400 dark:text-gray-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                   {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
