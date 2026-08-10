@@ -130,6 +130,27 @@ def _rent_by_month(occupied_ranges: Iterable[RangeRow]) -> Dict[MonthKey, float]
     return rent
 
 
+def _prorated_rent_by_year(occupied_ranges: Iterable[RangeRow], as_of: date) -> Dict[int, float]:
+    """Rent actually earned per calendar year, prorating partial first/last months
+    by day (monthly_rent * days_covered / days_in_month). This is the SAME formula
+    the Tax page uses (routers.properties._prorate_income_by_month) so 'Rent
+    received' matches across the Rental and Taxes tabs."""
+    result: Dict[int, float] = {}
+    for start, end, rental in occupied_ranges:
+        monthly_rent = float(getattr(rental, "monthly_rent", 0) or 0)
+        end = min(end, as_of)
+        cur = date(start.year, start.month, 1)
+        while cur <= end:
+            days_in_month = calendar.monthrange(cur.year, cur.month)[1]
+            seg_start = max(start, cur)
+            seg_end = min(end, date(cur.year, cur.month, days_in_month))
+            if seg_end >= seg_start:
+                days_covered = (seg_end - seg_start).days + 1
+                result[cur.year] = result.get(cur.year, 0.0) + round(monthly_rent * days_covered / days_in_month, 2)
+            cur = date(cur.year + 1, 1, 1) if cur.month == 12 else date(cur.year, cur.month + 1, 1)
+    return {year: round(value, 2) for year, value in result.items()}
+
+
 def _period_sort_key(period: Any, year: int) -> Tuple[int, int]:
     end_year = int(getattr(period, "end_year", None) or year)
     end_month = int(getattr(period, "end_month", None) or 12)
@@ -415,6 +436,7 @@ def build_rental_timeline(prop: Any, as_of: Optional[date] = None) -> Dict[str, 
             "recommendation": "Add occupied periods when rent is collected and not-rental periods when the property leaves the rental market.",
         })
 
+    prorated_rent_by_year = _prorated_rent_by_year(occupied_ranges, as_of)
     years = sorted({year for year, _month in rental_available_months | occupied_months | not_rental_months})
     yearly = []
     for year in years:
@@ -422,10 +444,11 @@ def build_rental_timeline(prop: Any, as_of: Optional[date] = None) -> Dict[str, 
         year_occupied = {m for m in occupied_months if m[0] == year}
         year_vacant = {m for m in vacant_months if m[0] == year}
         year_not_rental = {m for m in not_rental_months if m[0] == year}
-        rent_received = sum(rent_by_month.get(month, 0.0) for month in year_occupied)
+        # Day-prorated actual rent — identical formula to the Tax page, so both
+        # tabs agree. No whole-month cap (partial months are already prorated).
+        rent_received = round(prorated_rent_by_year.get(year, 0.0), 2)
         resolved_rent = _resolve_monthly_rent(prop, year)
         expected_rent = round(len(year_available) * float(resolved_rent["monthlyRent"] or 0), 2)
-        rent_received = min(round(rent_received, 2), expected_rent) if expected_rent else round(rent_received, 2)
         vacancy_loss = max(round(expected_rent - rent_received, 2), 0.0)
         yearly.append({
             "year": year,
