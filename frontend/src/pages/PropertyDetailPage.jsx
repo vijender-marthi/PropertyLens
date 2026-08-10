@@ -3409,20 +3409,7 @@ hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display ||
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={exportCSV} className="btn-secondary flex items-center gap-1.5 text-sm">
-          <Download className="h-3.5 w-3.5" /> Export CSV
-        </button>
-        <button type="button" onClick={() => setShowCompare((value) => !value)} className="btn-secondary text-sm">
-          {showCompare ? 'Hide comparison' : 'Compare'}
-        </button>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-4">
-        <TaxMetricCard metric={config.hero} hero />
-        {config.components.map((metric) => <TaxMetricCard key={metric.label} metric={metric} />)}
-      </div>
-
+      {/* Overall (accumulated) property metrics — not single-year figures. */}
       <div className="grid gap-3 md:grid-cols-3">
         {config.lifetime.map((metric) => <TaxStatusMetric key={metric.label} metric={metric} />)}
       </div>
@@ -3437,7 +3424,7 @@ hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display ||
       <div className="card">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">Schedule E history</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white">Tax Details by Year</h3>
             <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">One backend-owned yearly view. Current year expands into now and projected remainder.</p>
           </div>
           {totalScheduleRow ? (
