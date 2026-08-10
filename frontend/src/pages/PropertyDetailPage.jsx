@@ -3803,14 +3803,20 @@ function ScheduleECompare({ scheduleE, availableYears, year, onYearChange, prope
           </button>
         </div>
       </div>
+      {!hasFiled ? (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>No 1040 for {year} — the Schedule E pages haven&apos;t been uploaded, so there&apos;s nothing to compare. Showing PropertyLens computed figures only. Upload the return under Documents to compare filed vs. computed.</span>
+        </div>
+      ) : null}
       <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-800">
         <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-800">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-950 dark:text-gray-400">
             <tr>
               <th className="px-4 py-3 text-left">Line</th>
               <th className="px-4 py-3 text-right">PropertyLens (computed)</th>
-              <th className="px-4 py-3 text-right">Schedule E (filed)</th>
-              <th className="px-4 py-3 text-right">Variance</th>
+              {hasFiled ? <th className="px-4 py-3 text-right">Schedule E (filed)</th> : null}
+              {hasFiled ? <th className="px-4 py-3 text-right">Variance</th> : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-800 dark:bg-gray-900">
@@ -3828,19 +3834,18 @@ function ScheduleECompare({ scheduleE, availableYears, year, onYearChange, prope
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.computed?.display ?? '—'}</td>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.filed?.display ?? '—'}</td>
+                {hasFiled ? <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.filed?.display ?? '—'}</td> : null}
+                {hasFiled ? (
                 <td className={`px-4 py-3 text-right tabular-nums ${!line.filed ? 'text-gray-400 dark:text-gray-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                   {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
                 </td>
+                ) : null}
               </tr>
               )
             })}
           </tbody>
         </table>
       </div>
-      {!hasFiled ? (
-        <p className="text-xs text-amber-600 dark:text-amber-400">No filed Schedule E found for {year}. Upload the tax return to compare.</p>
-      ) : null}
     </div>
   )
 }
