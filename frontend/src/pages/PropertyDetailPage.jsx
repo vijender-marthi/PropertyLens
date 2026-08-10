@@ -1814,6 +1814,76 @@ function ExpenseSourceDialog({ row, onClose }) {
   )
 }
 
+function ScheduleEExpensesByYear({ propId }) {
+  const [year, setYear] = useState(null)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    propAPI.scheduleE(propId, year || undefined)
+      .then((res) => { if (active) setData(res.data) })
+      .catch(() => { if (active) setData(null) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [propId, year])
+
+  const availableYears = data?.availableYears || []
+  const selectedYear = year || data?.selectedYear
+  // Every Schedule E expense line — income (rents) and the net total are excluded.
+  const expenseLines = (data?.lines || []).filter((line) => !['rents_received', 'net_income'].includes(line.key))
+
+  return (
+    <section className="card">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <h3 className="font-semibold text-gray-900 dark:text-white">Schedule E expenses</h3>
+        <label className="ml-1 text-sm font-medium text-gray-600 dark:text-gray-300">Tax year</label>
+        <select
+          value={selectedYear || ''}
+          onChange={(event) => setYear(Number(event.target.value))}
+          className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+        >
+          {(availableYears.length ? availableYears : (selectedYear ? [selectedYear] : [])).map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+      {loading && !data ? (
+        <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
+      ) : (
+        <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-800">
+          <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-800">
+            <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-950 dark:text-gray-400">
+              <tr>
+                <th className="px-4 py-3 text-left">Expense</th>
+                <th className="px-4 py-3 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white dark:divide-gray-800 dark:bg-gray-900">
+              {expenseLines.map((line) => {
+                const decor = scheduleELineDecor(line.key)
+                const LineIcon = decor.Icon
+                const isTotal = line.key === 'total_expenses'
+                return (
+                  <tr key={line.key} className={isTotal ? 'bg-gray-50 font-semibold dark:bg-gray-800/60' : undefined}>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-2 text-gray-700 dark:text-gray-200">
+                        <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
+                          {LineIcon ? <LineIcon className={`h-3 w-3 ${decor.fg}`} /> : <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
+                        </span>
+                        <span><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-gray-900 dark:text-white">{line.computed?.display ?? '—'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function ExpensesTab({ propId }) {
   const [data, setData] = useState(null)
   const [annualRows, setAnnualRows] = useState([])
@@ -1826,6 +1896,7 @@ function ExpensesTab({ propId }) {
   const [saving, setSaving] = useState(false)
   const [escrowUploading, setEscrowUploading] = useState(false)
   const [addressReview, setAddressReview] = useState(null)
+  const [expenseSubTab, setExpenseSubTab] = useState('byYear') // 'byYear' | 'scheduleE'
   const escrowInputRef = useRef(null)
 
   const loadExpenses = () => {
@@ -2138,6 +2209,22 @@ function ExpensesTab({ propId }) {
         ))}
       </div>
 
+      <div className="flex flex-wrap items-center gap-1 border-b border-gray-200 dark:border-gray-800">
+        {[['byYear', 'Expenses by Year'], ['scheduleE', 'Schedule E Expenses']].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setExpenseSubTab(key)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium ${expenseSubTab === key ? 'border-blue-600 text-blue-700 dark:text-blue-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {expenseSubTab === 'scheduleE' ? (
+        <ScheduleEExpensesByYear propId={propId} />
+      ) : (
       <section className="card">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -2287,6 +2374,7 @@ function ExpensesTab({ propId }) {
           emptyMessage="No expense years available."
         />
       </section>
+      )}
       <ExpenseSourceDialog row={sourceRow} onClose={() => setSourceRow(null)} />
     </div>
   )
