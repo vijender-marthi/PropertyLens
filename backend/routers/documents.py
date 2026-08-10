@@ -83,7 +83,7 @@ from routers.properties import (
     import_tax_return_from_parsed,
     annotate_tax_property_matches,
 )
-from services.document_parser import parse_document
+from services.document_parser import parse_document, redact_ssns_deep
 from services.document_conversion import MarkItDownConverter
 from services.property_tax_parser import (
     PARSER_NAME as PROPERTY_TAX_PARSER_NAME,
@@ -2034,12 +2034,17 @@ async def _commit_parsed_document(
                 detail=_duplicate_of_payload(duplicate_by_content, "exact"),
             )
 
-    markdown_name = None
-    if markdown:
-        markdown_name = f"{save_path.stem}.md"
-        (UPLOAD_DIR / markdown_name).write_text(markdown)
-
     is_tax_return = (category == "tax_return")
+
+    # Privacy: we never retain the uploaded document itself — only the parsed
+    # content saved to the tables. The original file is discarded after parsing
+    # (see _discard_uploaded_source below), and we do NOT keep a full-text
+    # markdown copy on disk for ANY document category. SSN-shaped text is also
+    # masked out of the structured parse before it is stored.
+    extracted = redact_ssns_deep(extracted)
+    markdown_name = None  # full-text copy intentionally not stored
+
+
     prop = None
     property_created = False
     auto_applied = {}
@@ -2141,10 +2146,25 @@ async def _commit_parsed_document(
     tax_import_error = None
     if is_tax_return:
         try:
-            tax_entries_imported = await import_tax_return(
-                db, current_user.id, doc.id, str(save_path),
-                include_addresses=selected_property_addresses,
-                property_map=property_map)
+            # Persist Schedule E rows from the SAME parsed dict we just stored on
+            # the document (extracted_data) — the single source of truth the user
+            # sees in the preview. Previously this re-parsed the PDF from disk,
+            # which risked a second, divergent parse and left nothing saved when
+            # the source file had already been discarded. import_* is an
+            # idempotent upsert (keyed on owner/year/property), so re-uploading a
+            # return updates rows in place instead of duplicating them.
+            if isinstance(extracted, dict) and extracted.get("properties"):
+                tax_entries_imported = import_tax_return_from_parsed(
+                    db, current_user.id, doc.id, extracted,
+                    include_addresses=selected_property_addresses,
+                    property_map=property_map)
+            else:
+                # No structured rows in the stored parse — fall back to a fresh
+                # file parse (e.g. an older upload path that didn't populate them).
+                tax_entries_imported = await import_tax_return(
+                    db, current_user.id, doc.id, str(save_path),
+                    include_addresses=selected_property_addresses,
+                    property_map=property_map)
         except Exception as e:
             tax_entries_imported = 0
             tax_import_error = str(e)
@@ -2742,8 +2762,8 @@ async def _store_structured_property_tax_upload(
     match = _property_tax_match(selected_property, parsed, db)
     attach = match["status"] == "MATCHED" or address_override
     match_status = "OVERRIDDEN" if address_override and match["status"] != "MATCHED" else match["status"]
-    markdown_name = f"{save_path.stem}.md"
-    (UPLOAD_DIR / markdown_name).write_text(converted.markdown)
+    # Privacy: do not persist a full-text markdown copy of the uploaded document.
+    markdown_name = None
     display_prefix = (
         "Supplemental Property Tax Bill"
         if parsed["document_type"].startswith("supplemental")
@@ -2765,7 +2785,7 @@ async def _store_structured_property_tax_upload(
     doc.file_size = file_size
     doc.extracted_data = json.dumps(parsed)
     doc.markdown_file = markdown_name
-    doc.normalized_text = converted.text
+    doc.normalized_text = None  # privacy: do not store the document's full text
     doc.parser_version = PROPERTY_TAX_PARSER_VERSION
     doc.pipeline_status = "NEEDS_REVIEW" if not validation["valid"] or not attach else "COMPLETED"
     doc.conversion_metadata = json.dumps(converted.metadata())
@@ -4389,10 +4409,9 @@ async def reparse_document(
     # extracted payload. Otherwise a reparsed Loan Estimate can retain stale
     # Closing Disclosure semantics from its prior parser version.
     extracted = classify_document(doc)
-    if markdown:
-        markdown_name = doc.markdown_file or f"{Path(doc.filename).stem}.md"
-        (UPLOAD_DIR / markdown_name).write_text(markdown)
-        doc.markdown_file = markdown_name
+    # Privacy: reprocessing re-derives structured fields only — no full-text copy
+    # of the document is written or kept.
+    doc.markdown_file = None
     db.commit()
 
     if category == "tax_return":
@@ -4465,10 +4484,8 @@ async def reprocess_all_documents(
         doc.display_name = _build_display_name(
             category, extracted, doc.statement_year, doc.period_start, doc.period_end,
         )
-        if markdown:
-            markdown_name = doc.markdown_file or f"{Path(doc.filename).stem}.md"
-            (UPLOAD_DIR / markdown_name).write_text(markdown)
-            doc.markdown_file = markdown_name
+        # Privacy: do not persist a full-text markdown copy of the document.
+        doc.markdown_file = None
 
         reprocessed += 1
         categories[category] = categories.get(category, 0) + 1

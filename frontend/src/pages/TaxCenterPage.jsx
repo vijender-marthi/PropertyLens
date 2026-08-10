@@ -148,19 +148,25 @@ function DeductionBars({ categories }) {
   )
 }
 
-function DeductionTable({ rows }) {
+const DEDUCTION_COLUMNS = {
+  totalDeductions: { header: 'Total deductions', get: (r) => money(r.totalDeductions), className: () => 'font-semibold text-gray-950 dark:text-white' },
+  depreciation: { header: 'Depreciation', get: (r) => money(r.depreciation) },
+  mortgageInterest: { header: 'Interest', get: (r) => money(r.mortgageInterest) },
+  propertyTax: { header: 'Property tax', get: (r) => money(r.propertyTax) },
+  operatingExpenses: { header: 'Operating', get: (r) => money(r.operatingExpenses) },
+  taxableIncome: { header: 'Taxable income', get: (r) => money(r.taxableIncome), className: (r) => `font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}` },
+}
+const ALL_DEDUCTION_COLUMNS = ['totalDeductions', 'depreciation', 'mortgageInterest', 'propertyTax', 'operatingExpenses', 'taxableIncome']
+
+function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
+  const cols = columns.filter((id) => DEDUCTION_COLUMNS[id])
   return (
     <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
       <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
         <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
           <tr>
             <th className="px-4 py-3 text-left">Property</th>
-            <th className="px-4 py-3 text-right">Total deductions</th>
-            <th className="px-4 py-3 text-right">Depreciation</th>
-            <th className="px-4 py-3 text-right">Interest</th>
-            <th className="px-4 py-3 text-right">Property tax</th>
-            <th className="px-4 py-3 text-right">Operating</th>
-            <th className="px-4 py-3 text-right">Taxable income</th>
+            {cols.map((id) => <th key={id} className="px-4 py-3 text-right">{DEDUCTION_COLUMNS[id].header}</th>)}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 bg-white dark:divide-neutral-800 dark:bg-neutral-900">
@@ -170,12 +176,11 @@ function DeductionTable({ rows }) {
                 <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300">{row.propertyName}</Link>
                 <p className="text-xs text-gray-400">{row.location || row.sourceLabel}</p>
               </td>
-              <td className="px-4 py-3 text-right font-semibold text-gray-950 dark:text-white">{money(row.totalDeductions)}</td>
-              <td className="px-4 py-3 text-right">{money(row.depreciation)}</td>
-              <td className="px-4 py-3 text-right">{money(row.mortgageInterest)}</td>
-              <td className="px-4 py-3 text-right">{money(row.propertyTax)}</td>
-              <td className="px-4 py-3 text-right">{money(row.operatingExpenses)}</td>
-              <td className={`px-4 py-3 text-right font-medium ${row.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(row.taxableIncome)}</td>
+              {cols.map((id) => {
+                const col = DEDUCTION_COLUMNS[id]
+                const cls = col.className ? col.className(row) : ''
+                return <td key={id} className={`px-4 py-3 text-right ${cls}`}>{col.get(row)}</td>
+              })}
             </tr>
           ))}
         </tbody>
@@ -511,6 +516,18 @@ export default function TaxCenterPage() {
   const showTrend = ['Overview', 'Estimated Taxes', 'History'].includes(activeTab)
   const showCategories = ['Overview', 'Deductions'].includes(activeTab)
   const showTable = ['Overview', 'Deductions', 'Depreciation', 'Property Taxes', 'Tax Reports'].includes(activeTab)
+  // Per-tab focus: the Depreciation and Property Taxes tabs show only their own
+  // column; the broader tabs show the full deduction breakdown.
+  const deductionTableColumns = activeTab === 'Depreciation'
+    ? ['depreciation']
+    : activeTab === 'Property Taxes'
+      ? ['propertyTax']
+      : ALL_DEDUCTION_COLUMNS
+  const deductionTableTitle = activeTab === 'Depreciation'
+    ? 'Depreciation by Property'
+    : activeTab === 'Property Taxes'
+      ? 'Property Tax by Property'
+      : 'Deduction Summary by Property'
 
   const exportCSV = () => {
     const headers = ['Property', 'Location', 'Tax year', 'Total deductions', 'Depreciation', 'Mortgage interest', 'Property tax', 'Operating expenses', 'Taxable income']
@@ -619,8 +636,8 @@ export default function TaxCenterPage() {
             </div> : null}
 
             {showTable ? <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-              <Panel title={`Deduction Summary by Property (${selectedYear})`} subtitle="One row per property, export-ready">
-                <DeductionTable rows={model.rows} />
+              <Panel title={`${deductionTableTitle} (${selectedYear})`} subtitle="One row per property, export-ready">
+                <DeductionTable rows={model.rows} columns={deductionTableColumns} />
                 <Link to="/properties" className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-blue-700 dark:text-blue-300">
                   View Property Details
                   <ArrowRight className="h-4 w-4" />

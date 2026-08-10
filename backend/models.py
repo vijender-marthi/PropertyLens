@@ -149,8 +149,17 @@ class Property(Base):
     usage_periods = relationship(
         "UsagePeriod", back_populates="property",
         cascade="all, delete-orphan", order_by="UsagePeriod.start_date")
+    # NB: no "delete-orphan" here. A TaxReturnEntry is meant to outlive its link
+    # to a property — an unmatched filed row is stored with property_id=NULL and
+    # surfaced in the Tax Center for the user to assign later (see the model's
+    # docstring). With delete-orphan, SQLAlchemy silently DELETES the filed row
+    # the instant its property association is cleared (e.g. a re-import that no
+    # longer matches, or unassigning it), wiping the Tax Center's filed column.
+    # "all" (which includes "delete") still removes a property's tax entries when
+    # the property itself is deleted; it just no longer treats an unlinked row as
+    # an orphan to destroy.
     tax_entries = relationship(
-        "TaxReturnEntry", back_populates="property", cascade="all, delete-orphan")
+        "TaxReturnEntry", back_populates="property", cascade="all")
     depreciation_assets = relationship(
         "DepreciationAsset", back_populates="property", cascade="all, delete-orphan")
     annual_expenses = relationship(
@@ -549,8 +558,12 @@ class RentalPeriod(Base):
     tenant_name = Column(String)  # optional label
     start_year = Column(Integer, nullable=False)
     start_month = Column(Integer, nullable=False)  # 1-12
+    start_day = Column(Integer)   # 1-31; null → 1st of the month
     end_year = Column(Integer)   # null = ongoing
     end_month = Column(Integer)  # null = ongoing (1-12)
+    end_day = Column(Integer)    # 1-31; null → last day of end_month
+    # monthly_rent is always the FULL monthly amount. Partial first/last months
+    # (per start_day / end_day) are prorated by day when income is derived.
     monthly_rent = Column(Float, nullable=False, default=0.0)
     notes = Column(String)
 

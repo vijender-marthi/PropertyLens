@@ -318,7 +318,8 @@ class TestExecutiveDashboardAggregator:
             depreciation_years=27.5,
         )
         m = compute_property_metrics(prop)
-        expected = (400_000 * 0.75) / 27.5
+        # Depreciable basis = (purchase price + closing costs) − land value.
+        expected = (400_000 - 80_000) / 27.5
         assert m["annual_depreciation"] == pytest.approx(expected, rel=1e-4)
 
     def test_annual_depreciation_uses_construction_price(self):

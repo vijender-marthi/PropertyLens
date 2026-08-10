@@ -292,16 +292,26 @@ class TestScheduleECaptureEndpoint:
         assert data["summary"]["linesFiled"] > 0
 
 class TestScheduleEInterestPriority:
-    """Schedule E mortgage_interest should override statement-based estimates."""
+    """A filed tax return is comparison-only: it must NOT source computed interest.
+    Interest comes from 1098s/statements, or the loan's amortization projection."""
 
-    def test_schedule_e_interest_used_when_no_1098(self, client, db, user, prop):
-        """Without a 1098 document, mortgage_interest from TaxReturnEntry wins."""
+    def test_schedule_e_interest_is_not_a_source(self, client, db, user, prop):
+        """Without a 1098/statement, computed interest comes from amortization —
+        NEVER the filed return's mortgage_interest, which is comparison-only."""
+        # A lease makes the year appear now that the tax return is not a source.
+        db.add(models.RentalPeriod(
+            property_id=prop.id,
+            start_year=2022, start_month=1,
+            end_year=2022, end_month=12,
+            monthly_rent=3_000.0,
+        ))
         _add_tax_entry(
             db, prop.id, user.id, 2022,
             rents_received=36_000.0,
-            mortgage_interest=21_500.0,   # actual figure from Schedule E
-            total_expenses=0.0,           # no full opex override
+            mortgage_interest=21_500.0,   # filed figure — must be ignored here
+            total_expenses=0.0,
         )
+        db.commit()
 
         resp = client.get(f"/api/properties/{prop.id}/lifetime",
                           headers=auth_headers(user.email))
@@ -310,9 +320,11 @@ class TestScheduleEInterestPriority:
 
         row = _get_year(data["yearly"], 2022)
         assert row is not None, "Year 2022 missing from yearly data"
-        assert row["interest_paid"] == pytest.approx(21_500.0), (
-            f"Expected Schedule E interest 21 500, got {row['interest_paid']}"
+        assert row["interest_paid"] != pytest.approx(21_500.0), (
+            "Filed return interest must not be used as a computed source"
         )
+        assert row.get("interest_source") != "tax_return"
+        assert row["interest_paid"] > 0, "amortization projection should fill interest"
 
     def test_1098_document_overrides_schedule_e(self, client, db, user, prop):
         """A Form 1098 document must take priority over TaxReturnEntry interest."""
@@ -357,18 +369,16 @@ class TestScheduleEInterestPriority:
 
 
 class TestScheduleEExpensesPriority:
-    """Schedule E total_expenses (minus interest+depreciation) should
-    replace the static field estimate for operating_expenses."""
+    """A filed return's total_expenses is comparison-only and must NOT replace the
+    property's own operating-expense figures in the computed column."""
 
-    def test_schedule_e_opex_replaces_static_fields(self, client, db, user, prop):
+    def test_schedule_e_opex_is_not_a_source(self, client, db, user, prop):
         """
         Static fields: property_tax=6000/yr, insurance=1200/yr, maintenance=0
-        → static opex = 7200
+        → computed opex = 7200
 
-        Schedule E total_expenses=10000, mortgage_interest=6000, depreciation=1000
-        → opex from Schedule E = 10000 - 6000 - 1000 = 3000
-
-        The API should return 3000, not 7200.
+        The filed return (total_expenses=10000 → opex 3000) must be IGNORED as a
+        source, so the API returns 7200, not 3000.
         """
         _add_tax_entry(
             db, prop.id, user.id, 2022,
@@ -378,26 +388,34 @@ class TestScheduleEExpensesPriority:
             depreciation=1_000.0,
             property_taxes=500.0,
         )
+        # A lease makes the year appear now that the tax return is not a source.
+        db.add(models.RentalPeriod(
+            property_id=prop.id,
+            start_year=2022, start_month=1,
+            end_year=2022, end_month=12,
+            monthly_rent=3_000.0,
+        ))
+        db.commit()
 
         resp = client.get(f"/api/properties/{prop.id}/lifetime",
                           headers=auth_headers(user.email))
         assert resp.status_code == 200
         row = _get_year(resp.json()["yearly"], 2022)
         assert row is not None
-        # Schedule E opex = 10000 - 6000 - 1000 = 3000
-        assert row["operating_expenses"] == pytest.approx(3_000.0, abs=10), (
-            f"Expected Schedule E opex 3000, got {row['operating_expenses']}"
+        # Computed opex from the property's own fields = insurance 1200 + tax 6000.
+        assert row["operating_expenses"] == pytest.approx(7_200.0, abs=50), (
+            f"Expected computed opex 7200 (filed return ignored), got {row['operating_expenses']}"
         )
 
-    def test_static_fields_used_when_no_total_expenses(self, client, db, user, prop):
-        """When total_expenses is 0/None, static field calculation applies."""
-        # Add a tax entry but with no total_expenses
-        _add_tax_entry(
-            db, prop.id, user.id, 2022,
-            rents_received=36_000.0,
-            mortgage_interest=6_000.0,
-            # total_expenses = 0 → no override
-        )
+    def test_static_fields_used_for_opex(self, client, db, user, prop):
+        """Computed opex always comes from the property's own fields."""
+        db.add(models.RentalPeriod(
+            property_id=prop.id,
+            start_year=2022, start_month=1,
+            end_year=2022, end_month=12,
+            monthly_rent=3_000.0,
+        ))
+        db.commit()
 
         resp = client.get(f"/api/properties/{prop.id}/lifetime",
                           headers=auth_headers(user.email))
@@ -409,15 +427,15 @@ class TestScheduleEExpensesPriority:
             f"Expected static opex ~7200, got {row['operating_expenses']}"
         )
 
-    def test_schedule_e_opex_never_negative(self, client, db, user, prop):
-        """If interest+depreciation exceed total_expenses, opex is clamped to 0."""
-        _add_tax_entry(
-            db, prop.id, user.id, 2022,
-            rents_received=36_000.0,
-            total_expenses=5_000.0,
-            mortgage_interest=4_500.0,
-            depreciation=1_000.0,   # total > total_expenses
-        )
+    def test_computed_opex_never_negative(self, client, db, user, prop):
+        """Computed opex is sourced from property fields and is never negative."""
+        db.add(models.RentalPeriod(
+            property_id=prop.id,
+            start_year=2022, start_month=1,
+            end_year=2022, end_month=12,
+            monthly_rent=3_000.0,
+        ))
+        db.commit()
 
         resp = client.get(f"/api/properties/{prop.id}/lifetime",
                           headers=auth_headers(user.email))
@@ -429,10 +447,10 @@ class TestScheduleEExpensesPriority:
 
 
 class TestScheduleERentPriority:
-    """Existing behavior: rents_received from TaxReturnEntry overrides lease records."""
+    """Comparison-only: lease records drive computed rent; a filed return does not."""
 
-    def test_tax_return_rent_takes_priority(self, client, db, user, prop):
-        # Lease says $3 000/mo but Schedule E says $31 000 for the year
+    def test_lease_rent_is_the_source_not_the_return(self, client, db, user, prop):
+        # Lease says $3 000/mo ($36 000/yr); the filed return's $31 000 is ignored.
         db.add(models.RentalPeriod(
             property_id=prop.id,
             start_year=2022, start_month=1,
@@ -449,8 +467,8 @@ class TestScheduleERentPriority:
                           headers=auth_headers(user.email))
         assert resp.status_code == 200
         row = _get_year(resp.json()["yearly"], 2022)
-        assert row["rental_income"] == pytest.approx(31_000.0)
-        assert row["rent_source"] == "tax_return"
+        assert row["rental_income"] == pytest.approx(36_000.0)
+        assert row["rent_source"] == "leases"
 
 
 class TestLifetimeSummaryStructure:

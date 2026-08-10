@@ -8,6 +8,44 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+# --- SSN / TIN redaction ---------------------------------------------------
+# Tax returns carry the taxpayer's and dependents' SSNs. We never want those
+# persisted — not in a document's stored markdown, not in extracted_data JSON,
+# not in a TaxReturnEntry. Redact the canonical SSN/ITIN shapes to a fixed mask
+# before anything is written to disk or the database. The pattern is
+# deliberately SSN-specific (3-2-4 grouping) so it doesn't clobber EINs
+# (2-7 grouping), account numbers, ZIP+4, phone numbers, or dollar amounts.
+_SSN_MASK = "XXX-XX-XXXX"
+_SSN_RE = re.compile(r'\b\d{3}[-‐‑\s]\d{2}[-‐‑\s]\d{4}\b')
+# "SSN 123456789" / "Social Security No: 123-45-6789" — a 9-digit run that is
+# explicitly labelled as an SSN, even when written without separators.
+_SSN_LABELLED_RE = re.compile(
+    r'(?i)\b(SSN|S\.S\.N|social\s+security(?:\s+(?:no|number|#))?)\b[\s:#]*'
+    r'(\d{3}[-‐‑\s]?\d{2}[-‐‑\s]?\d{4})'
+)
+
+
+def redact_ssns(text: Optional[str]) -> Optional[str]:
+    """Replace SSN/ITIN-shaped substrings with a fixed mask. Non-strings pass
+    through untouched so it is safe to map over mixed values."""
+    if not isinstance(text, str) or not text:
+        return text
+    text = _SSN_LABELLED_RE.sub(lambda m: f"{m.group(1)} {_SSN_MASK}", text)
+    return _SSN_RE.sub(_SSN_MASK, text)
+
+
+def redact_ssns_deep(value):
+    """Recursively redact SSNs from strings inside dicts/lists so a parsed
+    document dict can be scrubbed before it is stored as JSON."""
+    if isinstance(value, str):
+        return redact_ssns(value)
+    if isinstance(value, dict):
+        return {k: redact_ssns_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_ssns_deep(v) for v in value]
+    return value
+
+
 def _looks_spaceless(text: str) -> bool:
     """Heuristic: pdfminer/pdfplumber sometimes drop the spaces between words
     on certain statement PDFs, gluing words into 'PropertyAddress',
@@ -1797,7 +1835,9 @@ def parse_tax_return_properties(filepath: str) -> Dict[str, Any]:
             },
         }
 
-    return {
+    # Defence in depth: scrub any SSN-shaped text (e.g. an address line that
+    # OCR ran together with the SSN row) before this dict is stored or persisted.
+    return redact_ssns_deep({
         'tax_year': tax_year,
         'properties': properties,
         'schedule1_line5_total': schedule1_line5_total,
@@ -1805,7 +1845,7 @@ def parse_tax_return_properties(filepath: str) -> Dict[str, Any]:
         'schedule1_line5_warning': schedule1_warning,
         'form4562_present': form4562_present,
         'depreciation_worksheet_present': depreciation_worksheet_present,
-    }
+    })
 
 
 def _money_after(text: str, label: str, window: int = 120,

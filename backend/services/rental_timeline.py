@@ -102,12 +102,12 @@ def _occupied_ranges(prop: Any, as_of: date) -> List[RangeRow]:
         start_month = getattr(rental, "start_month", None)
         if not start_year or not start_month:
             continue
-        start = date(int(start_year), int(start_month), 1)
+        start = date(int(start_year), int(start_month), int(getattr(rental, "start_day", None) or 1))
         end_year = getattr(rental, "end_year", None)
         end_month = getattr(rental, "end_month", None)
         if end_year and end_month:
-            last_day = calendar.monthrange(int(end_year), int(end_month))[1]
-            end = date(int(end_year), int(end_month), last_day)
+            _last = calendar.monthrange(int(end_year), int(end_month))[1]
+            end = date(int(end_year), int(end_month), int(getattr(rental, "end_day", None) or _last))
         else:
             end = as_of
         ranges.append((start, min(end, as_of), rental))
@@ -222,6 +222,25 @@ def _status_key(status: str) -> str:
     return "warning"
 
 
+def _merge_date_ranges(ranges: List[Tuple[date, date]]) -> List[Tuple[date, date]]:
+    """Union overlapping or touching [start, end] ranges into a minimal set.
+
+    Rental availability can be described by more than one source that overlaps —
+    e.g. a RENTAL usage period AND the property's rental_start_date both cover the
+    same span. Without merging, the vacancy-gap walk runs once per overlapping
+    range and emits the SAME vacant gap multiple times, showing duplicate
+    "Vacant · auto" rows in the timeline.
+    """
+    spans = sorted((s, e) for s, e in ranges if s and e and s <= e)
+    merged: List[Tuple[date, date]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1] + timedelta(days=1):
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def _vacant_gap_ranges(
     available_ranges: List[RangeRow],
     occupied_ranges: List[RangeRow],
@@ -232,7 +251,11 @@ def _vacant_gap_ranges(
         key=lambda item: item[0],
     )
     gaps: List[Tuple[date, date]] = []
-    for available_start, available_end, _source in available_ranges:
+    # Collapse overlapping availability sources first so each real gap is emitted
+    # exactly once (see _merge_date_ranges).
+    for available_start, available_end in _merge_date_ranges(
+        [(start, end) for start, end, _source in available_ranges]
+    ):
         cursor = available_start
         for block_start, block_end in blockers:
             if block_end < cursor or block_start > available_end:

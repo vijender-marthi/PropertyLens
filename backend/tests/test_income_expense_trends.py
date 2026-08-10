@@ -76,7 +76,10 @@ def test_portfolio_trends_ignore_expenses_before_purchase(db, user):
     assert 2022 not in {row["year"] for row in rows}
 
 
-def test_portfolio_trends_exclude_primary_and_schedule_e_non_operating_costs(db, user):
+def test_portfolio_trends_source_from_leases_not_the_filed_return(db, user):
+    """Portfolio income/expense trends are sourced from leases + entered expenses.
+    A filed tax return is comparison-only and must NOT feed these trends — but it
+    still appears in the separate _tax_yearly_trends comparison view."""
     rental = models.Property(
         owner_id=user.id,
         name="Rental",
@@ -84,6 +87,7 @@ def test_portfolio_trends_exclude_primary_and_schedule_e_non_operating_costs(db,
         usage_type="Rental",
         monthly_rent=0,
         occupancy_rate=100,
+        purchase_date="2024-01-01",
     )
     primary = models.Property(
         owner_id=user.id,
@@ -95,6 +99,14 @@ def test_portfolio_trends_exclude_primary_and_schedule_e_non_operating_costs(db,
     )
     db.add_all([rental, primary])
     db.flush()
+    # Non-tax source for 2025: a full-year lease at $3,000/mo ($36,000).
+    db.add(models.RentalPeriod(
+        property_id=rental.id,
+        start_year=2025, start_month=1,
+        end_year=2025, end_month=12,
+        monthly_rent=3000,
+    ))
+    # A filed return whose figures must be IGNORED by the portfolio trend.
     db.add(models.TaxReturnEntry(
         property_id=rental.id,
         owner_id=user.id,
@@ -111,11 +123,11 @@ def test_portfolio_trends_exclude_primary_and_schedule_e_non_operating_costs(db,
     rows = _portfolio_income_expense_yearly_trends([rental, primary], current_year=2026)
     by_year = {row["year"]: row for row in rows}
 
-    assert by_year[2025]["rental_income"] == 40000
-    assert by_year[2025]["operating_expenses"] == 5000
-    assert by_year[2025]["net_operating_income"] == 35000
+    # Income is the lease figure ($36,000), NOT the filed return's $40,000.
+    assert by_year[2025]["rental_income"] == 36000
     assert all(item["property_id"] != primary.id for row in rows for item in row["properties"])
 
+    # The filed return is still available for the comparison view unchanged.
     tax_rows = _tax_yearly_trends(rental.tax_entries, {rental.id})
     assert tax_rows[0]["operating_expenses"] == 30000
     assert tax_rows[0]["mortgage_interest"] == 15000

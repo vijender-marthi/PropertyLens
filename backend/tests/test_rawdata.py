@@ -68,8 +68,8 @@ class TestRawDataStructure:
         resp = client.get(f"/api/properties/{prop.id}/rawdata",
                           headers=auth_headers(user.email))
         data = resp.json()
-        # construction_price empty, so depreciation basis falls back to 75% purchase_price
-        expected = (400_000 * 0.75) / 27.5
+        # Depreciable basis = (purchase price + closing costs) − land value.
+        expected = (400_000 - 80_000) / 27.5
         assert data["irs_annual_depreciation"] == pytest.approx(expected, rel=1e-4)
 
     def test_loans_included(self, client, user, prop):

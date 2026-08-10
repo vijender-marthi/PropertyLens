@@ -754,7 +754,7 @@ function PropertySetupFooter({ isFinalSection, nextSection, previousSection, sav
         </button>
       ) : (
         <>
-          <button type="button" className="inline-flex h-9 items-center justify-center px-2 text-sm font-medium text-gray-500 transition hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200" onClick={onSaveDraft} disabled={saving}>
+          <button type="button" className="inline-flex h-9 items-center justify-center rounded-lg border border-blue-500 px-3 text-sm font-medium text-blue-600 transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-blue-950/40" onClick={onSaveDraft} disabled={saving}>
             Save &amp; finish later
           </button>
           <button type="button" className="btn-primary inline-flex h-9 items-center justify-center gap-1.5 py-0" onClick={onNext} disabled={!nextSection}>
@@ -1000,6 +1000,9 @@ export default function PropertyFormPage() {
   const [rentalDeleteTarget, setRentalDeleteTarget] = useState(null)
   const [expenseRows, setExpenseRows] = useState([])
   const [expenseYear, setExpenseYear] = useState(CURRENT_YEAR)
+  // Expense editor visibility: null = auto (hidden when entries exist, edit when
+  // there are none), or an explicit user override of 'hidden' | 'read' | 'edit'.
+  const [expensePanelModeOverride, setExpensePanelModeOverride] = useState(null)
   const [escrowPayments, setEscrowPayments] = useState([])
   const [escrowUploading, setEscrowUploading] = useState(false)
   const [setupStatus, setSetupStatus] = useState(null)
@@ -1101,6 +1104,20 @@ export default function PropertyFormPage() {
   const selectedExpenseRow = useMemo(() => (
     expenseRows.find((row) => Number(row.year) === Number(expenseYear)) || blankAnnualExpense(expenseYear)
   ), [expenseRows, expenseYear])
+  const expenseRowHasValues = (row) => Boolean(row) && (row.entered || EXPENSE_FIELDS.some((field) => toNumber(row[field.key]) > 0))
+  const hasAnyExpenseEntries = useMemo(() => expenseRows.some((row) => expenseRowHasValues(row)), [expenseRows])
+  // Default: hide the editor when expenses already exist, and auto-open it in edit
+  // mode (on the latest year) when nothing has been entered yet. An explicit user
+  // action (selecting a row, editing, or closing) takes precedence over the default.
+  const expensePanelMode = expensePanelModeOverride ?? (hasAnyExpenseEntries ? 'hidden' : 'edit')
+  const openExpenseRowForView = (year) => {
+    setExpenseYear(Number(year))
+    setExpensePanelModeOverride('read')
+  }
+  const openExpenseRowForEdit = (year) => {
+    setExpenseYear(Number(year))
+    setExpensePanelModeOverride('edit')
+  }
 
   useEffect(() => {
     setActiveSection(normalizeHash(location.hash))
@@ -1825,6 +1842,9 @@ export default function PropertyFormPage() {
   }
 
   function updateExpenseField(key, value) {
+    // Editing pins the panel to edit mode so it stays open after the first save
+    // (which would otherwise flip the auto-default from 'edit' to 'hidden').
+    setExpensePanelModeOverride('edit')
     setExpenseRows((current) => {
       const existing = current.find((row) => Number(row.year) === Number(expenseYear)) || blankAnnualExpense(expenseYear)
       const sourcePatch = key === 'property_tax'
@@ -2054,6 +2074,7 @@ export default function PropertyFormPage() {
       toast.error(`No ${previousYear} expenses to copy.`)
       return
     }
+    setExpensePanelModeOverride('edit')
     setExpenseRows((current) => {
       const copied = {
         ...blankAnnualExpense(expenseYear),
@@ -4028,26 +4049,43 @@ export default function PropertyFormPage() {
         header: 'Actions',
         sortable: false,
         render: (row) => (
-          <button type="button" className="text-blue-600 hover:underline" onClick={() => setExpenseYear(Number(row.year))}>
-            Edit
-          </button>
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              className="text-gray-600 hover:underline dark:text-gray-300"
+              onClick={(event) => { event.stopPropagation(); openExpenseRowForView(row.year) }}
+            >
+              View
+            </button>
+            <button
+              type="button"
+              className="text-blue-600 hover:underline"
+              onClick={(event) => { event.stopPropagation(); openExpenseRowForEdit(row.year) }}
+            >
+              Edit
+            </button>
+          </div>
         ),
       },
     ]
     const currentRow = tableRows.find((row) => Number(row.year) === CURRENT_YEAR) || blankAnnualExpense(CURRENT_YEAR)
     const currentStatus = currentRow.entered || EXPENSE_FIELDS.some((field) => toNumber(currentRow[field.key]) > 0) || solarAnnual > 0 ? 'Entered' : 'Blank'
     return (
-      <PropertySetupRecords title="Current Year Summary" description={`${CURRENT_YEAR} expenses are ${currentStatus.toLowerCase()}. Review existing years before editing the selected row.`}>
+      <PropertySetupRecords title="Current Year Summary" description={`${CURRENT_YEAR} expenses are ${currentStatus.toLowerCase()}. Select a year to view its expenses, or use Edit to change them.`}>
         <DataTable
           columns={expenseTableColumns}
           rows={tableRows}
           getRowKey={(row) => row.year}
           defaultSort={{ id: 'year', direction: 'asc' }}
-          getRowProps={(row) => ({
-            className: Number(row.year) === Number(expenseYear)
-              ? 'bg-blue-50 hover:bg-blue-50 dark:bg-blue-950/20 dark:hover:bg-blue-950/30'
-              : undefined,
-          })}
+          getRowProps={(row) => {
+            const isSelected = expensePanelMode !== 'hidden' && Number(row.year) === Number(expenseYear)
+            return {
+              className: `cursor-pointer ${isSelected
+                ? 'bg-blue-50 hover:bg-blue-50 dark:bg-blue-950/20 dark:hover:bg-blue-950/30'
+                : 'hover:bg-gray-50 dark:hover:bg-gray-800/40'}`,
+              onClick: () => openExpenseRowForView(row.year),
+            }
+          }}
           emptyMessage="No annual expense years available."
         />
       </PropertySetupRecords>
@@ -4232,6 +4270,38 @@ export default function PropertyFormPage() {
     )
   }
 
+  function renderExpenseReadView() {
+    const row = selectedExpenseRow
+    const activeFields = EXPENSE_FIELDS.filter((field) => !field.feature || flags[field.feature])
+    const solarAnnual = flags.hasSolar ? annualSolarExpense(form) : 0
+    const total = activeFields.reduce((sum, field) => sum + toNumber(row[field.key]), 0)
+      + toNumber(form.hoa_special_assessment) + solarAnnual
+    return (
+      <div className="space-y-5">
+        <div className="grid gap-4 md:grid-cols-3">
+          {activeFields.map((field) => (
+            <ReadOnlyMoneyField
+              key={field.key}
+              label={field.label}
+              display={toNumber(row[field.key]) ? formatCurrency(toNumber(row[field.key])) : '—'}
+              source={annualExpenseSourceBadge(row, field.key)}
+            />
+          ))}
+          {flags.hasHoa ? (
+            <ReadOnlyMoneyField label="HOA special assessment / yr" display={toNumber(form.hoa_special_assessment) ? formatCurrency(toNumber(form.hoa_special_assessment)) : '—'} />
+          ) : null}
+          {flags.hasSolar ? (
+            <ReadOnlyMoneyField label="Solar (annual)" display={solarAnnual ? formatCurrency(solarAnnual) : '—'} helper={form.solar_ownership && form.solar_ownership !== 'None' ? form.solar_ownership : undefined} />
+          ) : null}
+        </div>
+        <div className="flex items-center justify-between border-t border-gray-200 pt-3 dark:border-gray-800">
+          <span className="text-sm text-gray-500 dark:text-gray-400">Total {row.year} operating expenses</span>
+          <span className="text-sm font-semibold text-gray-950 dark:text-white">{total ? formatCurrency(total) : '—'}</span>
+        </div>
+      </div>
+    )
+  }
+
   function renderExpensesSection() {
     return (
       <div className="space-y-5">
@@ -4276,11 +4346,47 @@ export default function PropertyFormPage() {
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,0.9fr)]">
         <div className="min-w-0 space-y-4">
           {renderExpenseHistoryRecords()}
-          <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
-            <PropertySetupEditor title="Expenses" description="Review or manually edit the selected annual expense row.">
-              {renderExpensesSection()}
-            </PropertySetupEditor>
-          </div>
+          {expensePanelMode === 'hidden' ? (
+            <p className="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              Select a year above to view its expenses, or use its Edit action to make changes.
+            </p>
+          ) : (
+            <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-gray-950 dark:text-white">
+                    {expensePanelMode === 'edit' ? `Edit ${expenseYear} expenses` : `${expenseYear} expenses`}
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {expensePanelMode === 'edit'
+                      ? 'Manually enter or adjust the annual expense values for this year.'
+                      : 'Review the saved values for the selected year. Choose Edit to change them.'}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {expensePanelMode === 'read' ? (
+                    <button type="button" className="btn-secondary inline-flex items-center gap-1.5 text-sm" onClick={() => setExpensePanelModeOverride('edit')}>
+                      <PencilLine className="h-4 w-4" aria-hidden="true" /> Edit
+                    </button>
+                  ) : expenseRowHasValues(selectedExpenseRow) ? (
+                    <button type="button" className="btn-secondary inline-flex items-center gap-1.5 text-sm" onClick={() => setExpensePanelModeOverride('read')}>
+                      <Eye className="h-4 w-4" aria-hidden="true" /> View
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg border border-gray-200 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+                    title="Close"
+                    aria-label="Close expenses panel"
+                    onClick={() => setExpensePanelModeOverride('hidden')}
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              {expensePanelMode === 'edit' ? renderExpensesSection() : renderExpenseReadView()}
+            </div>
+          )}
         </div>
         <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
           <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">

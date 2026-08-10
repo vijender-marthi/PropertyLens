@@ -164,9 +164,17 @@ function apiErrorMessage(err, fallback = 'Save failed') {
   return err?.message || fallback
 }
 
+// Parse a date-only string (YYYY-MM-DD) as a plain calendar date in local time,
+// so it is never shifted a day by a UTC→local conversion (e.g. an entered
+// Oct 12 rendering as Oct 11 in PST). Full timestamps fall through to Date().
+function parseDisplayDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? '').trim())
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value)
+}
+
 function documentDisplayDate(value) {
   if (!value) return 'now'
-  const parsed = new Date(value)
+  const parsed = parseDisplayDate(value)
   if (Number.isNaN(parsed.getTime())) return String(value)
   return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
@@ -1072,7 +1080,7 @@ return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August'
 
 function formatTimelineDate(value) {
   if (!value) return 'current'
-  const date = new Date(value)
+  const date = parseDisplayDate(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
@@ -1121,8 +1129,8 @@ function UsageTimelineTab({ propId, onSaved }) {
     setTimelineFormOpen(true)
     setTimelineForm({
       ...emptyTimelineForm,
-      start_date: dates.startDate || '',
-      end_date: dates.endDate || '',
+      start_date: (dates.startDate || '').slice(0, 10),
+      end_date: (dates.endDate || '').slice(0, 10),
     })
   }
 
@@ -1133,8 +1141,8 @@ function UsageTimelineTab({ propId, onSaved }) {
     setTimelineForm({
       period_ref: period.periodRef,
       status: 'occupied',
-      start_date: period.startDate || '',
-      end_date: period.endDate || '',
+      start_date: (period.startDate || '').slice(0, 10),
+      end_date: (period.endDate || '').slice(0, 10),
       monthly_rent: period.monthlyRent || '',
       notes: period.notes || '',
     })
@@ -3322,13 +3330,14 @@ function UnifiedTaxPage({ propId, property }) {
   const headlineYear = selectedYear || headlineRow.year || currentYear - 1
   const rentalCurrent = taxSummary.current || {}
   const rentalLifetime = taxSummary.lifetime || {}
-  const standardDeduction = 29200
-  const interestPaid = inputNumber(headlineRow.interest_paid)
-  const propertyTax = inputNumber(headlineRow.taxes_paid || headlineRow.property_tax)
-  const deductibleInterest = interestPaid
-  const deductibleTax = Math.min(propertyTax, 10000)
-  const primaryDeduction = deductibleInterest + deductibleTax
-  const itemizeVerdict = primaryDeduction > standardDeduction ? 'Likely itemize' : 'Standard likely'
+  // Primary-residence deduction figures are computed by the backend (SALT cap,
+  // standard-deduction comparison, itemize verdict) — the page only renders them.
+  const pd = data.primary_deductions || {}
+  const standardDeduction = pd.standardDeduction
+  const deductibleInterest = pd.deductibleInterest
+  const deductibleTax = pd.deductibleTax
+  const primaryDeduction = pd.estimatedItemizedDeduction
+  const itemizeVerdict = pd.itemizeVerdict
 
   const config = type === 'PRIMARY'
     ? {
@@ -3404,27 +3413,13 @@ hero: { label: 'Net Sch E', value: selectedScheduleRow?.netScheduleE?.display ||
 
   return (
     <div className="space-y-5">
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Taxes</p>
-          <h3 className="mt-1 text-xl font-semibold text-gray-900 dark:text-white">{config.header} - {headlineYear}</h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{config.subtitle}</p>
-          {projectedScheduleRow ? (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-              {projectedScheduleRow.label} is a full-year estimate. Expand it in History to see now vs projected remainder.
-            </p>
-          ) : null}
-        </div>
-        <div className="flex gap-2">
-          <button type="button" onClick={exportCSV} className="btn-secondary flex items-center gap-1.5 text-sm">
-            <Download className="h-3.5 w-3.5" /> Export CSV
-          </button>
-          <button type="button" onClick={() => setShowCompare((value) => !value)} className="btn-secondary text-sm">
-            {showCompare ? 'Hide comparison' : 'Compare'}
-          </button>
-        </div>
-      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={exportCSV} className="btn-secondary flex items-center gap-1.5 text-sm">
+          <Download className="h-3.5 w-3.5" /> Export CSV
+        </button>
+        <button type="button" onClick={() => setShowCompare((value) => !value)} className="btn-secondary text-sm">
+          {showCompare ? 'Hide comparison' : 'Compare'}
+        </button>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-4">
@@ -3606,6 +3601,26 @@ function TaxesTab({ propId }) {
   const historyRows = scheduleE?.history || []
   const availableYears = scheduleE?.availableYears || []
   const currentYearBreakdown = scheduleE?.currentYearBreakdown
+  const exportYearCSV = (row) => {
+    const rows = [
+      ['Schedule E', propertyLabel(property) || `Property ${propId}`, String(row.label || row.year)],
+      [],
+      ['Line', 'Amount'],
+      ['Rental income', row.rentalIncome?.display ?? '—'],
+      ['Operating expenses', row.operatingExpenses?.display ?? '—'],
+      ['Mortgage interest', row.mortgageInterest?.display ?? row.deductibleInterest?.display ?? '—'],
+      ['Depreciation', row.depreciation?.display ?? '—'],
+      ['Property tax', row.propertyTax?.display ?? '—'],
+      ['Net Schedule E', row.netScheduleE?.display ?? '—'],
+    ]
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `schedule_e_${row.year}_${(propertyLabel(property) || propId).toString().replace(/\s+/g, '_')}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
   const statusClass = (status) => {
     if (status === 'Match') return 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
     if (status === 'Delta') return 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300'
@@ -3848,6 +3863,11 @@ function TaxesTab({ propId }) {
             { id: 'propertyTax', header: 'Property tax', align: 'right', sortValue: (row) => row.propertyTax?.value ?? 0, render: (row) => row.propertyTax?.display ?? '—' },
             { id: 'depreciation', header: 'Depreciation', align: 'right', sortValue: (row) => row.depreciation?.value ?? 0, render: (row) => row.depreciation?.display ?? '—' },
             { id: 'netScheduleE', header: 'Net Sch E', align: 'right', sortValue: (row) => row.netScheduleE?.value ?? 0, render: (row) => row.netScheduleE?.display ?? '—' },
+            { id: 'export', header: '', align: 'right', sortable: false, render: (row) => row.kind === 'total' ? null : (
+              <button type="button" onClick={(event) => { event.stopPropagation(); exportYearCSV(row) }} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline dark:text-blue-300">
+                <Download className="h-3 w-3" /> Export
+              </button>
+            ) },
           ]}
           rows={historyRows}
           getRowKey={(row) => row.year}
@@ -3968,7 +3988,6 @@ const monthLabel = (m, y) => (m && y ? `${MONTHS[m - 1]} ${y}` : '')
 
 function RentalTab({ propId }) {
   const [data, setData]         = useState(null)
-  const [taxData, setTaxData]   = useState(null)
   const [loading, setLoading]   = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editPeriod, setEditPeriod] = useState(null)
@@ -3977,11 +3996,8 @@ function RentalTab({ propId }) {
 
   const load = () => {
     setLoading(true)
-    Promise.all([
-      propAPI.rentals(propId),
-      propAPI.rawdata(propId),
-    ])
-      .then(([r, rd]) => { setData(r.data); setTaxData(rd.data) })
+    propAPI.rentals(propId)
+      .then((r) => { setData(r.data) })
       .catch(() => toast.error('Failed to load rental history'))
       .finally(() => setLoading(false))
   }
@@ -4003,17 +4019,6 @@ function RentalTab({ propId }) {
 
   const { periods, yearly, total_collected } = data
 
-  // Tax entry lookup by year (for past rent & days_rented)
-  const taxByYear = Object.fromEntries(
-    (taxData?.tax_entries || []).map(e => [e.tax_year, e])
-  )
-
-  // Merge yearly rows with tax return data
-  // All years present in either source
-  const leaseYearSet = new Set(yearly.map(y => y.year))
-  const taxYearSet   = new Set(Object.keys(taxByYear).map(Number))
-  const allYears     = Array.from(new Set([...leaseYearSet, ...taxYearSet])).sort((a, b) => b - a)
-
   return (
     <div className="space-y-6">
 
@@ -4030,7 +4035,7 @@ function RentalTab({ propId }) {
             Total collected: <span className="font-semibold text-green-600">{fmt(total_collected)}</span>
           </span>
         </div>
-        {allYears.length === 0 ? (
+        {yearly.length === 0 ? (
           <p className="text-sm text-gray-400 dark:text-gray-500 py-6 text-center">
             No rental periods yet. Add a lease below or upload a tax return to track income per year.
           </p>
@@ -4039,32 +4044,21 @@ function RentalTab({ propId }) {
 columns={[
 { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white' },
 { id: 'rent', header: 'Rent Collected', align: 'right', accessor: 'rent', cellClassName: 'font-medium text-green-600', render: (row) => row.rent != null ? fmt(row.rent) : <span className="text-gray-300">—</span> },
-{ id: 'source', header: 'Source', align: 'right', sortable: false, render: (row) => <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${row.rentSource === 'tax_return' ? 'bg-purple-100 text-purple-700' : row.rentSource === 'leases' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400 dark:text-gray-500'}`}>{row.rentSource === 'tax_return' ? 'Sch-E' : row.rentSource === 'leases' ? 'leases' : '—'}</span> },
+{ id: 'source', header: 'Source', align: 'right', sortable: false, render: (row) => <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${row.rentSource === 'leases' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400 dark:text-gray-500'}`}>{row.rentSource === 'leases' ? 'leases' : '—'}</span> },
 { id: 'days_rented', header: 'Days Rented', align: 'right', accessor: 'daysRented', cellClassName: 'font-medium text-blue-700', render: (row) => row.daysRented != null ? `${row.daysRented}d` : <span className="text-gray-300">—</span> },
 { id: 'personal_days', header: 'Personal Days', align: 'right', accessor: 'personalDays', cellClassName: 'text-orange-600', render: (row) => row.personalDays != null && row.personalDays > 0 ? `${row.personalDays}d` : <span className="text-gray-300">—</span> },
 { id: 'occupancy', header: 'Occupancy', align: 'right', accessor: 'occupancyFromDays', cellClassName: 'font-medium', render: (row) => row.occupancyFromDays != null ? fmtPct(row.occupancyFromDays) : '—' },
 { id: 'occupancy_bar', header: '', sortable: false, render: (row) => row.occupancyFromDays != null ? <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${row.occupancyFromDays >= 95 ? 'bg-green-500' : row.occupancyFromDays >= 70 ? 'bg-blue-500' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, row.occupancyFromDays)}%` }} /></div> : null },
 { id: 'lease_summary', header: 'Months / Lease', align: 'right', sortable: false, render: (row) => <div className="text-right text-xs text-gray-500 dark:text-gray-400">{row.leaseSummary}</div> },
 ]}
-rows={allYears.map((yr) => {
-const tax = taxByYear.get(yr)
-const leasePeriods = periodsByYear.get(yr) || []
-const rent = tax?.rents_received ?? leasePeriods.reduce((sum, p) => sum + (p.rent || p.monthly_rent || 0) * (p.months || 0), 0)
-const rentSource = tax?.rents_received != null ? 'tax_return' : leasePeriods.length ? 'leases' : null
-const daysRented = tax?.days_rented ?? tax?.fair_rental_days
-const personalDays = tax?.personal_use_days
-const yearDays = yr % 4 === 0 && (yr % 100 !== 0 || yr % 400 === 0) ? 366 : 365
-const occupancyFromDays = daysRented != null ? Math.round(daysRented / yearDays * 100) : null
-const leaseSummary = leasePeriods.length ? `${leasePeriods.length} period${leasePeriods.length === 1 ? '' : 's'}` : '—'
-return { year: yr, rent, rentSource, daysRented, personalDays, occupancyFromDays, leaseSummary }
-})}
+rows={yearly}
 getRowKey={(row) => row.year}
 defaultSort={{ id: 'year', direction: 'asc' }}
 />
         )}
         <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-400 dark:text-gray-500">
-          <span><span className="inline-block w-2 h-2 rounded bg-purple-400 mr-1" />Sch-E = income / days from uploaded tax return</span>
-          <span><span className="inline-block w-2 h-2 rounded bg-blue-400 mr-1" />Leases = from entered lease periods below</span>
+          <span><span className="inline-block w-2 h-2 rounded bg-blue-400 mr-1" />Leases = rent from entered lease periods below</span>
+          <span><span className="inline-block w-2 h-2 rounded bg-purple-400 mr-1" />Days rented / personal days come from the uploaded tax return</span>
           <span><span className="inline-block w-2 h-2 rounded bg-amber-300 mr-1" />Mixed use = rental + personal days in same year</span>
         </div>
       </div>

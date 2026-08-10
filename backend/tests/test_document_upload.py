@@ -29,11 +29,18 @@ def test_tax_return_upload_reports_import_error(client, db, user, monkeypatch):
             "",
         )
 
-    def fake_import_tax_return(db, owner_id, document_id, filepath):
+    def fake_import_tax_return(db, owner_id, document_id, filepath,
+                               include_addresses=None, property_map=None):
+        raise ValueError("Schedule E rows could not be matched")
+
+    def fake_import_tax_return_from_parsed(db, owner_id, document_id, parsed,
+                                           include_addresses=None, property_map=None):
         raise ValueError("Schedule E rows could not be matched")
 
     monkeypatch.setattr(documents_router, "parse_document", fake_parse_document)
     monkeypatch.setattr(documents_router, "import_tax_return", fake_import_tax_return)
+    monkeypatch.setattr(documents_router, "import_tax_return_from_parsed",
+                        fake_import_tax_return_from_parsed)
 
     resp = client.post(
         "/api/documents/upload",
