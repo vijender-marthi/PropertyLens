@@ -1283,10 +1283,7 @@ function UsageTimelineTab({ propId, onSaved }) {
     </form>
   )
 
-  const historyRows = [
-    ...(timeline?.periods || []),
-    ...(timelineFormOpen ? [{ kind: 'form', periodRef: editingTimeline ? '__edit_form__' : '__add_form__' }] : []),
-  ]
+  const historyRows = timeline?.periods || []
 
   const historyColumns = [
     { id: 'from', header: 'From', render: (period) => formatTimelineDate(period.startDate) },
@@ -1351,6 +1348,7 @@ function UsageTimelineTab({ propId, onSaved }) {
           </div>
           <button type="button" className="btn-primary text-sm" onClick={() => startAddTimelinePeriod()}>+ Add period</button>
         </div>
+        {timelineFormOpen ? renderTimelineForm() : null}
         {(timeline?.timeline || []).length ? (
           <div className="overflow-hidden rounded-lg border border-gray-100 dark:border-gray-700">
             <div className="grid min-h-9 grid-cols-[minmax(360px,0.48fr)_minmax(0,0.52fr)] items-center bg-gray-50 text-xs font-medium text-gray-500 dark:bg-gray-700/80 dark:text-gray-400">
@@ -1430,13 +1428,11 @@ function UsageTimelineTab({ propId, onSaved }) {
             <h4 className="text-base font-semibold text-gray-900 dark:text-white">Occupancy History</h4>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Entered occupied periods plus backend-derived vacancy gaps.</p>
           </div>
-          {editingTimeline ? <button type="button" className="btn-secondary text-sm" onClick={resetTimelineForm}>Cancel editing</button> : null}
         </div>
         <DataTable
           columns={historyColumns}
           rows={historyRows}
           getRowKey={(row) => row.periodRef}
-          renderFullWidthRow={(row) => row.kind === 'form' ? renderTimelineForm() : null}
           emptyMessage="No occupancy history recorded."
         />
       </section>
