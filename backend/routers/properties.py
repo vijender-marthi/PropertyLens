@@ -12127,7 +12127,13 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
     dep_years = float(prop.depreciation_years or 27.5)
     is_primary = str(prop.usage_type or "Rental").lower() == "primary"
 
-    annual_dep = 0.0 if is_primary else float(metrics.get("annual_depreciation", 0.0) or 0.0)
+    # Annual straight-line depreciation from the property's basis. Future accrual
+    # only happens while it's an active rental (0 for a primary residence), but the
+    # per-basis rate is also used below for depreciation captured during any PAST
+    # rental use — even if the property is a primary residence now.
+    _dep_basis = _depreciable_basis(prop)
+    annual_dep_basis = (_dep_basis / dep_years) if (_dep_basis > 0 and dep_years > 0) else 0.0
+    annual_dep = 0.0 if is_primary else annual_dep_basis
     annual_cf = 0.0 if is_primary else float(metrics.get("annual_cash_flow", 0.0) or 0.0)
     annual_opex = float(metrics.get("monthly_expenses", 0.0) or 0.0) * 12.0
     annual_rent = 0.0 if is_primary else float(metrics.get("effective_rent", 0.0) or 0.0) * 12.0
@@ -12150,11 +12156,13 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
     primary_windows = _primary_use_windows(prop, is_primary, purchase_d, rental_start_d, rental_end_d)
     was_primary_then_rental = (not is_primary) and bool(primary_windows)
 
-    # Depreciation accrued to date (rental years only).
-    dep_start = rental_start_d or purchase_d
-    rental_years_elapsed = max(0.0, (today - dep_start).days / 365.25) if (dep_start and annual_dep) else 0.0
-    dep_used_so_far = min(rental_years_elapsed, dep_years)
-    accumulated_so_far = annual_dep * dep_used_so_far
+    # Depreciation captured to date — measured from ACTUAL recorded rental months
+    # (rental periods), so a property that was rented in the past reflects that
+    # depreciation even if it is a primary residence now (e.g. rented one year,
+    # then owner-occupied).
+    _past_rental_months = sum((_rental_months_by_year(prop) or {}).values())
+    dep_used_so_far = min(_past_rental_months / 12.0, dep_years)
+    accumulated_so_far = annual_dep_basis * dep_used_so_far
 
     original_invested = float(prop.down_payment or 0.0) + float(prop.closing_costs or 0.0)
     improvements = max(0.0, float(improvements or 0.0))
