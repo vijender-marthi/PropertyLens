@@ -504,20 +504,20 @@ function WealthChart({ rows, selected, onSelect }) {
     <div>
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
+          <ComposedChart data={data} stackOffset="sign" margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
             onClick={(s) => { const y = s?.activePayload?.[0]?.payload?.year; if (y) onSelect(y) }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.mutedAxis} />
             <XAxis dataKey="label" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
             <YAxis domain={[negMin, posMax]} tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
             <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
             <Tooltip formatter={(v, k) => [formatCurrency(v), LABELS[k] || k]} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
-            <Bar dataKey="principalPaid" name="Principal paydown" stackId="eq" fill={COLORS.principalPaid} cursor="pointer" isAnimationActive={false}>
+            <Bar dataKey="principalPaid" name="Principal paydown" stackId="s" fill={COLORS.principalPaid} cursor="pointer" isAnimationActive={false}>
               {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
             </Bar>
-            <Bar dataKey="appreciation" name="Appreciation" stackId="eq" fill={COLORS.appreciation} cursor="pointer" isAnimationActive={false}>
+            <Bar dataKey="appreciation" name="Appreciation" stackId="s" fill={COLORS.appreciation} cursor="pointer" isAnimationActive={false}>
               {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
             </Bar>
-            <Bar dataKey="cumCashFlow" name="Cumulative cash flow" stackId="cf" fill={COLORS.cumCashFlow} cursor="pointer" isAnimationActive={false}>
+            <Bar dataKey="cumCashFlow" name="Cumulative cash flow" stackId="s" fill={COLORS.cumCashFlow} cursor="pointer" isAnimationActive={false}>
               {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
             </Bar>
             <Line type="monotone" dataKey="lifetimeProfit" stroke="#4a3aa7" strokeWidth={2} dot={<Dot />} isAnimationActive={false} />
