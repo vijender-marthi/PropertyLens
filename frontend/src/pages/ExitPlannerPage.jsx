@@ -388,9 +388,9 @@ function StartingPosition({ sp }) {
         <Stat
           icon={Landmark}
           tint="bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
-          label="Loan remaining"
-          value={sp.hasLoan ? (sp.loanBalance?.display ?? '—') : 'No loan'}
-          sub={sp.hasLoan && sp.interestRate ? `at ${sp.interestRate.display} today` : null}
+          label="Loan at purchase"
+          value={sp.hasLoan ? (sp.loanAtPurchase?.display ?? '—') : 'No loan'}
+          sub={sp.hasLoan && sp.interestRate ? `at ${sp.interestRate.display}` : null}
         />
         <Stat
           icon={TrendingUp}

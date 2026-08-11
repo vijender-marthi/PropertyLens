@@ -12336,8 +12336,27 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         next((l for l in _active_loans if bool(getattr(l, "is_current_servicer", True))), None)
         or (_active_loans[0] if _active_loans else None)
     )
-    _stated_rate = float(getattr(_cur_loan, "interest_rate", 0.0) or 0.0) if _cur_loan else 0.0
     _years_owned = round((today - purchase_d).days / 365.25, 1) if purchase_d else None
+
+    # "Loan at purchase" — the original mortgage taken to BUY the property (fits the
+    # "Where you started" framing better than today's remaining balance). Use the
+    # earliest-originated loan on record (the purchase loan may now be closed after a
+    # refinance) and its original amount + rate; fall back to price − down payment.
+    _all_loans = list(prop.loans or [])
+    _dated_loans = [
+        (l, _parse_iso_date(getattr(l, "origination_date", None)))
+        for l in _all_loans
+    ]
+    _dated_loans = [(l, d) for (l, d) in _dated_loans if d]
+    _purchase_loan = (
+        min(_dated_loans, key=lambda t: t[1])[0] if _dated_loans
+        else (_all_loans[0] if _all_loans else None)
+    )
+    _loan_at_purchase = float(getattr(_purchase_loan, "original_amount", 0.0) or 0.0) if _purchase_loan else 0.0
+    if _loan_at_purchase <= 0:
+        _loan_at_purchase = max(purchase_price - float(prop.down_payment or 0.0), 0.0)
+    _purchase_rate = float(getattr(_purchase_loan, "interest_rate", 0.0) or 0.0) if _purchase_loan else 0.0
+
     starting_position = {
         "purchaseDate": purchase_d.isoformat() if purchase_d else None,
         "purchaseYear": purchase_year,
@@ -12346,11 +12365,12 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         "closingCosts": m(_closing),
         "totalCost": m(purchase_price + _closing),
         "marketValue": m(current_value),
+        "loanAtPurchase": m(_loan_at_purchase),
         "loanBalance": m(_bal_now),
-        "hasLoan": bool(_cur_loan),
+        "hasLoan": _loan_at_purchase > 0,
         "interestRate": (
-            {"value": round(_stated_rate, 3), "display": format_interest_rate(_stated_rate)}
-            if _stated_rate else None
+            {"value": round(_purchase_rate, 3), "display": format_interest_rate(_purchase_rate)}
+            if _purchase_rate else None
         ),
     }
 
