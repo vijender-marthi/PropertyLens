@@ -474,55 +474,56 @@ function ProfitTrend({ rows, selected }) {
 // Composed chart: stacked profit drivers (principal paydown, appreciation, cash
 // flow) that sum to the lifetime-profit line. All values are backend-computed
 // (row.chart.*); this only renders them. Click a column to pick that exit year.
-function WealthChart({ rows, selected, onSelect }) {
-  const data = rows.map((r) => ({
-    year: r.yearNumber,
-    label: `Yr ${r.yearNumber}`,
-    principalPaid: r.chart?.principalPaid?.value ?? 0,
-    appreciation: r.chart?.appreciation?.value ?? 0,
-    cumCashFlow: r.chart?.cumCashFlow?.value ?? 0,
-    lifetimeProfit: r.chart?.lifetimeProfit?.value ?? 0,
-  }))
+// Clean profit-over-time trend: lifetime profit for each sell year, with the
+// break-even year and the best year to sell marked. Composition for the selected
+// year is in the readout below. All values are backend-computed (row.chart.*).
+function WealthChart({ rows, selected, onSelect, breakEvenYear }) {
+  const data = rows.map((r) => ({ year: r.yearNumber, label: `Yr ${r.yearNumber}`, profit: r.chart?.lifetimeProfit?.value ?? 0 }))
   const fmtK = (v) => (v < 0 ? '-' : '') + '$' + Math.round(Math.abs(v) / 1000) + 'K'
-  const COLORS = { principalPaid: '#2a78d6', appreciation: '#1baf7a', cumCashFlow: '#eb6834' }
-  const LABELS = { principalPaid: 'Principal paydown', appreciation: 'Appreciation', cumCashFlow: 'Cumulative cash flow', lifetimeProfit: 'Lifetime profit' }
-  const Dot = (props) => {
-    const on = props?.payload?.year === selected
-    return <circle cx={props.cx} cy={props.cy} r={on ? 5 : 3} fill="#4a3aa7" stroke="#fff" strokeWidth={on ? 2 : 1} />
-  }
-  const posMax = Math.max(1, ...data.map((d) => d.principalPaid + d.appreciation + Math.max(0, d.cumCashFlow)))
-  const negMin = Math.min(0, ...data.map((d) => Math.min(0, d.cumCashFlow)))
+  const bestYear = data.length ? data.reduce((b, d) => (d.profit > b.profit ? d : b), data[0]).year : null
   const selRow = rows.find((r) => r.yearNumber === selected) || rows[0]
   const c = selRow?.chart || {}
   const readout = [
     ['Principal paydown', c.principalPaid?.display, '#2a78d6'],
     ['Appreciation', c.appreciation?.display, '#1baf7a'],
     ['Cumulative cash flow', c.cumCashFlow?.display, '#eb6834'],
-    ['Lifetime profit', c.lifetimeProfit?.display, '#4a3aa7'],
+    ['Lifetime profit', c.lifetimeProfit?.display, '#1D9E75'],
   ]
+  const Dot = (props) => {
+    const y = props?.payload?.year
+    const on = y === selected
+    return (
+      <g>
+        {y === bestYear ? <circle cx={props.cx} cy={props.cy} r={9} fill="none" stroke="#eda100" strokeWidth={2} /> : null}
+        <circle cx={props.cx} cy={props.cy} r={on ? 5 : 3} fill="#1D9E75" stroke="#fff" strokeWidth={on ? 2 : 1} />
+      </g>
+    )
+  }
   return (
     <div>
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} stackOffset="sign" margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
+          <ComposedChart data={data} margin={{ top: 14, right: 12, left: 4, bottom: 0 }}
             onClick={(s) => { const y = s?.activePayload?.[0]?.payload?.year; if (y) onSelect(y) }}>
+            <defs>
+              <linearGradient id="exitProfitFill" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="5%" stopColor="#1D9E75" stopOpacity={0.22} />
+                <stop offset="95%" stopColor="#1D9E75" stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.mutedAxis} />
             <XAxis dataKey="label" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis domain={[negMin, posMax]} tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
+            <YAxis tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
             <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
-            <Tooltip formatter={(v, k) => [formatCurrency(v), LABELS[k] || k]} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
-            <Bar dataKey="principalPaid" name="Principal paydown" stackId="s" fill={COLORS.principalPaid} cursor="pointer" isAnimationActive={false}>
-              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
-            </Bar>
-            <Bar dataKey="appreciation" name="Appreciation" stackId="s" fill={COLORS.appreciation} cursor="pointer" isAnimationActive={false}>
-              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
-            </Bar>
-            <Bar dataKey="cumCashFlow" name="Cumulative cash flow" stackId="s" fill={COLORS.cumCashFlow} cursor="pointer" isAnimationActive={false}>
-              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
-            </Bar>
-            <Line type="monotone" dataKey="lifetimeProfit" stroke="#4a3aa7" strokeWidth={2} dot={<Dot />} isAnimationActive={false} />
+            {breakEvenYear ? <ReferenceLine x={`Yr ${breakEvenYear}`} stroke={chartColors.mutedAxis} strokeDasharray="4 3" label={{ value: 'break-even', position: 'insideTopLeft', fontSize: 10, fill: chartColors.mutedAxis }} /> : null}
+            <Tooltip formatter={(v) => [formatCurrency(v), 'Lifetime profit']} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
+            <Area type="monotone" dataKey="profit" stroke="#1D9E75" strokeWidth={2.5} fill="url(#exitProfitFill)" dot={<Dot />} activeDot={{ r: 5 }} isAnimationActive={false} cursor="pointer" />
           </ComposedChart>
         </ResponsiveContainer>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400">
+        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: '#1D9E75' }} />Lifetime profit</span>
+        {bestYear ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-full border-2" style={{ borderColor: '#eda100' }} />Best year to sell · Yr {bestYear}</span> : null}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {readout.map(([label, val, color]) => (
@@ -743,16 +744,11 @@ export default function ExitPlannerPage() {
               {/* Profit trend + year buttons — the control, up top */}
               <div className="card">
                 <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Where your profit comes from, by sell year</h2>
+                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Lifetime profit by sell year</h2>
                   {breakEvenYear ? <span className="text-xs text-gray-500 dark:text-gray-400">breaks even in year {breakEvenYear}</span> : null}
                 </div>
-                <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#2a78d6' }} />Principal paydown</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#1baf7a' }} />Appreciation</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#eb6834' }} />Cumulative cash flow</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0.5 w-3.5" style={{ background: '#4a3aa7' }} />Lifetime profit</span>
-                </div>
-                <WealthChart rows={selected.sellYears} selected={row.yearNumber} onSelect={setSellYear} />
+                <p className="mb-1 text-xs text-gray-500 dark:text-gray-400">Pre-tax profit if you sell each year. The cards below break down the selected year.</p>
+                <WealthChart rows={selected.sellYears} selected={row.yearNumber} onSelect={setSellYear} breakEvenYear={breakEvenYear} />
                 <div className="mt-3">
                   <div className="mb-1.5 text-[11px] text-gray-500 dark:text-gray-400">Sell in year</div>
                   <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${selected.sellYears.length}, minmax(0, 1fr))` }}>
