@@ -316,11 +316,12 @@ function SetupDetailField({ label, value }) {
   )
 }
 
+const SETUP_SECTION_DL = 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900'
 const SETUP_SECTION_ACCENTS = {
-  emerald: { title: 'text-emerald-700 dark:text-emerald-300', bar: 'bg-emerald-500', dl: 'border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/50 dark:bg-emerald-950/20' },
-  blue: { title: 'text-blue-700 dark:text-blue-300', bar: 'bg-blue-500', dl: 'border-blue-100 bg-blue-50/40 dark:border-blue-900/50 dark:bg-blue-950/20' },
-  violet: { title: 'text-violet-700 dark:text-violet-300', bar: 'bg-violet-500', dl: 'border-violet-100 bg-violet-50/40 dark:border-violet-900/50 dark:bg-violet-950/20' },
-  gray: { title: 'text-gray-500 dark:text-gray-400', bar: 'bg-gray-400', dl: 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900' },
+  emerald: { title: 'text-emerald-700 dark:text-emerald-300', bar: 'bg-emerald-500', dl: SETUP_SECTION_DL },
+  blue: { title: 'text-blue-700 dark:text-blue-300', bar: 'bg-blue-500', dl: SETUP_SECTION_DL },
+  violet: { title: 'text-violet-700 dark:text-violet-300', bar: 'bg-violet-500', dl: SETUP_SECTION_DL },
+  gray: { title: 'text-gray-500 dark:text-gray-400', bar: 'bg-gray-400', dl: SETUP_SECTION_DL },
 }
 
 function SetupDetailsSection({ title, accent = 'gray', children }) {
@@ -374,7 +375,7 @@ function PropertySetupDetailsTab({ prop }) {
           <span className="inline-block h-3.5 w-1 rounded-full bg-amber-500" aria-hidden="true" />
           <h3 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">This property has</h3>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2 rounded-xl border border-amber-100 bg-amber-50/40 p-4 shadow-sm dark:border-amber-900/50 dark:bg-amber-950/20">
+        <div className="mt-3 flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <SetupFlagPill enabled={hasLoan} label="Loan" />
           <SetupFlagPill enabled={hasHoa} label="HOA" />
           <SetupFlagPill enabled={hasSolar} label="Solar" />
