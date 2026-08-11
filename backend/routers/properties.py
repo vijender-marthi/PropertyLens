@@ -12345,6 +12345,7 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         "purchasePrice": m(purchase_price),
         "closingCosts": m(_closing),
         "totalCost": m(purchase_price + _closing),
+        "marketValue": m(current_value),
         "loanBalance": m(_bal_now),
         "hasLoan": bool(_cur_loan),
         "interestRate": (

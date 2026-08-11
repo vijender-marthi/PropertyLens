@@ -370,7 +370,7 @@ function StartingPosition({ sp }) {
   return (
     <div className="card-sm">
       <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Where you started</div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           icon={CalendarDays}
           tint="bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300"
@@ -391,6 +391,12 @@ function StartingPosition({ sp }) {
           label="Loan remaining"
           value={sp.hasLoan ? (sp.loanBalance?.display ?? '—') : 'No loan'}
           sub={sp.hasLoan && sp.interestRate ? `at ${sp.interestRate.display} today` : null}
+        />
+        <Stat
+          icon={TrendingUp}
+          tint="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"
+          label="Market value today"
+          value={sp.marketValue?.display ?? '—'}
         />
       </div>
     </div>
