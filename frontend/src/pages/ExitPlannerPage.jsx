@@ -497,9 +497,12 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
             <Line icon={Landmark} label="Property taxes" node={row.cumPropertyTaxes} indent info="Property taxes paid over the ownership period." />
             <Line icon={Wrench} label="Other expenses" node={asNode((row.cumExpenses?.value || 0) - (row.cumPropertyTaxes?.value || 0))} indent info="Insurance, HOA, management and maintenance over the ownership period." />
           </GroupLine>
-          <GroupLine icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent info="Total principal + interest paid over the ownership period.">
-            <Line icon={Coins} label="Principal paid" node={asNode((row.cumMortgagePayment?.value || 0) - (row.cumMortgageInterest?.value || 0))} indent info="The part of your payments that reduced the loan balance." />
-            <Line icon={Percent} label="Interest paid" node={row.cumMortgageInterest} indent info="The interest portion of your mortgage payments." />
+          <GroupLine icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} op="-" indent info="Total principal + interest that left your account over ownership. The full payment is real cash out — but only the interest is a true cost; the principal builds equity and comes back at sale as a smaller loan payoff (section ①).">
+            <Line icon={Coins} label="Principal paid" node={asNode((row.cumMortgagePayment?.value || 0) - (row.cumMortgageInterest?.value || 0))} indent note="builds equity" info="Not a true cost — it pays down the loan balance. It leaves your account now (so it's in cash flow), but it comes back at sale as a smaller loan payoff, i.e. more 'cash to your account' in section ①. Over the full hold it nets to zero in profit." />
+            <Line icon={Percent} label="Interest paid" node={row.cumMortgageInterest} indent note="true cost" info="The interest portion — the actual cost of borrowing. This money is gone, not recovered." />
+            <p className="pl-5 pt-1 text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+              Principal isn't lost — it converts cash into equity and returns at sale as a smaller loan payoff. Only the interest is a real cost.
+            </p>
           </GroupLine>
         </Block>
       )}
