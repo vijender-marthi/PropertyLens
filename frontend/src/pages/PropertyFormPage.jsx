@@ -722,7 +722,10 @@ function SetupSubsection({ title, actions, children }) {
   return (
     <section className="border-t border-gray-200 pt-4 first:border-t-0 first:pt-0 dark:border-gray-800">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{title}</h4>
+        <h4 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+          <span className="inline-block h-3.5 w-1 rounded-full bg-indigo-500" aria-hidden="true" />
+          {title}
+        </h4>
         {actions}
       </div>
       {children}
