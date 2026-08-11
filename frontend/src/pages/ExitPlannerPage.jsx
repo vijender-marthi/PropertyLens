@@ -324,7 +324,7 @@ function Waterfall({ row }) {
   const scale = (H - topPad - botPad) / span
   const y = (lvl) => (H - botPad) - (lvl - minLvl) * scale
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full text-gray-400 dark:text-gray-500" style={{ height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
+    <svg viewBox={`0 0 ${W} ${H}`} className="mx-auto block text-gray-400 dark:text-gray-500" style={{ width: '100%', maxWidth: 560, height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
       {bars.map((b, i) => {
         const x = i * colW + (colW - bw) / 2
         const yTop = y(b.top), h = Math.max((b.top - b.bot) * scale, 2)
@@ -490,24 +490,42 @@ function WealthChart({ rows, selected, onSelect }) {
     const on = props?.payload?.year === selected
     return <circle cx={props.cx} cy={props.cy} r={on ? 5 : 3} fill="#4a3aa7" stroke="#fff" strokeWidth={on ? 2 : 1} />
   }
+  const selRow = rows.find((r) => r.yearNumber === selected) || rows[0]
+  const c = selRow?.chart || {}
+  const readout = [
+    ['Principal paydown', c.principalPaid?.display, '#2a78d6'],
+    ['Appreciation', c.appreciation?.display, '#1baf7a'],
+    ['Cumulative cash flow', c.cumCashFlow?.display, '#eb6834'],
+    ['Lifetime profit', c.lifetimeProfit?.display, '#4a3aa7'],
+  ]
   return (
-    <div className="h-72">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
-          onClick={(s) => { const y = s?.activePayload?.[0]?.payload?.year; if (y) onSelect(y) }}>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.mutedAxis} />
-          <XAxis dataKey="label" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-          <YAxis tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
-          <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
-          <Tooltip formatter={(v, k) => [formatCurrency(v), LABELS[k] || k]} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
-          {['principalPaid', 'appreciation', 'cumCashFlow'].map((key) => (
-            <Bar key={key} dataKey={key} stackId="s" fill={COLORS[key]} cursor="pointer" isAnimationActive={false}>
-              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.5} />)}
-            </Bar>
-          ))}
-          <Line type="monotone" dataKey="lifetimeProfit" stroke="#4a3aa7" strokeWidth={2} dot={<Dot />} isAnimationActive={false} />
-        </ComposedChart>
-      </ResponsiveContainer>
+    <div>
+      <div className="h-56">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}
+            onClick={(s) => { const y = s?.activePayload?.[0]?.payload?.year; if (y) onSelect(y) }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.mutedAxis} />
+            <XAxis dataKey="label" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+            <YAxis tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
+            <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
+            <Tooltip formatter={(v, k) => [formatCurrency(v), LABELS[k] || k]} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
+            {['principalPaid', 'appreciation', 'cumCashFlow'].map((key) => (
+              <Bar key={key} dataKey={key} stackId="s" fill={COLORS[key]} cursor="pointer" isAnimationActive={false}>
+                {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} stroke={d.year === selected ? '#111827' : 'none'} strokeOpacity={d.year === selected ? 0.25 : 0} strokeWidth={1} />)}
+              </Bar>
+            ))}
+            <Line type="monotone" dataKey="lifetimeProfit" stroke="#4a3aa7" strokeWidth={2} dot={<Dot />} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {readout.map(([label, val, color]) => (
+          <div key={label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+            <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400"><span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: color }} />{label}</div>
+            <div className="mt-0.5 text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{val ?? '—'}</div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
