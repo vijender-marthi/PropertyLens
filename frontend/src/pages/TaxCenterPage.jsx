@@ -227,16 +227,16 @@ function StatusList({ count }) {
   )
 }
 
-function ScheduleELines({ lines }) {
+function ScheduleELines({ lines, showCompare = true }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-neutral-500">
             <th className="px-3 py-2">Line</th>
-            <th className="px-3 py-2 text-right">Filed (return)</th>
+            {showCompare ? <th className="px-3 py-2 text-right">Filed (return)</th> : null}
             <th className="px-3 py-2 text-right">PropertyLens</th>
-            <th className="px-3 py-2 text-right">Variance</th>
+            {showCompare ? <th className="px-3 py-2 text-right">Variance</th> : null}
           </tr>
         </thead>
         <tbody className="tabular-nums">
@@ -253,11 +253,13 @@ function ScheduleELines({ lines }) {
                   <span><span className="text-gray-400">{line.lineNumber}</span> · {line.lineItem}</span>
                 </span>
               </td>
-              <td className="px-3 py-2 text-right">{line.filed?.display ?? '—'}</td>
+              {showCompare ? <td className="px-3 py-2 text-right">{line.filed?.display ?? '—'}</td> : null}
               <td className="px-3 py-2 text-right">{line.computed?.display ?? '—'}</td>
-              <td className={`px-3 py-2 text-right ${!line.filed ? 'text-gray-400 dark:text-neutral-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
-              </td>
+              {showCompare ? (
+                <td className={`px-3 py-2 text-right ${!line.filed ? 'text-gray-400 dark:text-neutral-500' : line.status === 'Match' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  {!line.filed ? '—' : line.status === 'Match' ? '✓ $0' : (line.delta?.display ?? '—')}
+                </td>
+              ) : null}
             </tr>
             )
           })}
@@ -452,7 +454,7 @@ function ScheduleEReconciliation({ properties, year }) {
                   <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
                 </div>
               </button>
-              {open ? <div className="border-t border-gray-100 px-4 py-3 dark:border-neutral-800"><ScheduleELines lines={data?.lines || []} /></div> : null}
+              {open ? <div className="border-t border-gray-100 px-4 py-3 dark:border-neutral-800"><ScheduleELines lines={data?.lines || []} showCompare={selYear < new Date().getFullYear()} /></div> : null}
             </div>
           )
         })
