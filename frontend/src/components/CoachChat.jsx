@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { coachAPI } from '../services/api'
 import toast from 'react-hot-toast'
 import { Send, Trash2, Sparkles } from 'lucide-react'
+import MarkdownMessage from './MarkdownMessage'
 
 const SUGGESTIONS = [
   'Which property has the best cash flow?',
@@ -74,9 +75,15 @@ export default function CoachChat({ compact = false }) {
         ) : null}
         {messages.map((m, i) => (
           <div key={i} className={m.role === 'user' ? 'text-right' : 'text-left'}>
-            <div className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100'}`}>
-              {m.content}
-            </div>
+            {m.role === 'user' ? (
+              <div className="inline-block max-w-[85%] whitespace-pre-wrap rounded-2xl bg-blue-600 px-3 py-2 text-sm text-white">
+                {m.content}
+              </div>
+            ) : (
+              <div className="inline-block max-w-[92%] rounded-2xl border border-gray-100 bg-gray-50 px-3.5 py-2.5 text-left dark:border-gray-700/60 dark:bg-gray-800/60">
+                <MarkdownMessage content={m.content} />
+              </div>
+            )}
           </div>
         ))}
         {sending ? <div className="text-xs text-gray-400 dark:text-gray-500">Coach is thinking…</div> : null}
