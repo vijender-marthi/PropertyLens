@@ -801,7 +801,7 @@ export default function ExitPlannerPage() {
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
             {showAssumptions ? 'Hide assumptions' : 'Show assumptions'}
           </button>
-          {portfolio ? (
+          {isPortfolio && portfolio ? (
             (() => {
               const pos = toneFor(portfolio.finalProfit) === 'positive'
               const box = pos ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40' : 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40'
