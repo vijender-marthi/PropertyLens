@@ -324,7 +324,7 @@ function Waterfall({ row }) {
   const scale = (H - topPad - botPad) / span
   const y = (lvl) => (H - botPad) - (lvl - minLvl) * scale
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="mx-auto block text-gray-400 dark:text-gray-500" style={{ width: '100%', maxWidth: 560, height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
+    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full text-gray-400 dark:text-gray-500" style={{ height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
       {bars.map((b, i) => {
         const x = i * colW + (colW - bw) / 2
         const yTop = y(b.top), h = Math.max((b.top - b.bot) * scale, 2)
@@ -533,6 +533,36 @@ function WealthChart({ rows, selected, onSelect, breakEvenYear }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// Companion to the waterfall: property equity (value − loan) for each sell year.
+function EquityTrend({ rows, selected, onSelect }) {
+  const data = rows.map((r) => ({ year: r.yearNumber, label: `Yr ${r.yearNumber}`, equity: r.chart?.equity?.value ?? 0 }))
+  const fmtK = (v) => '$' + Math.round(v / 1000) + 'K'
+  const Dot = (props) => {
+    const on = props?.payload?.year === selected
+    return <circle cx={props.cx} cy={props.cy} r={on ? 5 : 3} fill="#378ADD" stroke="#fff" strokeWidth={on ? 2 : 1} />
+  }
+  return (
+    <div className="h-56">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 14, right: 8, left: 4, bottom: 0 }}
+          onClick={(s) => { const y = s?.activePayload?.[0]?.payload?.year; if (y && onSelect) onSelect(y) }}>
+          <defs>
+            <linearGradient id="exitEquityFill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="5%" stopColor="#378ADD" stopOpacity={0.22} />
+              <stop offset="95%" stopColor="#378ADD" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.mutedAxis} />
+          <XAxis dataKey="label" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+          <YAxis tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
+          <Tooltip formatter={(v) => [formatCurrency(v), 'Equity']} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
+          <Area type="monotone" dataKey="equity" stroke="#378ADD" strokeWidth={2.5} fill="url(#exitEquityFill)" dot={<Dot />} activeDot={{ r: 5 }} isAnimationActive={false} cursor="pointer" />
+        </ComposedChart>
+      </ResponsiveContainer>
     </div>
   )
 }
@@ -765,13 +795,24 @@ export default function ExitPlannerPage() {
                 </div>
               </div>
 
-              {/* Waterfall — detail for the picked year */}
+              {/* Waterfall + equity — detail for the picked year */}
               <div className="card">
-                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sale price to profit</h2>
-                  <span className="text-xs text-gray-500 dark:text-gray-400">where year {row.yearNumber}&apos;s sale price goes</span>
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <div>
+                    <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                      <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Sale price to profit</h2>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">year {row.yearNumber}</span>
+                    </div>
+                    <Waterfall row={row} maxSale={maxSale} />
+                  </div>
+                  <div>
+                    <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                      <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Equity by sell year</h2>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">value − loan</span>
+                    </div>
+                    <EquityTrend rows={selected.sellYears} selected={row.yearNumber} onSelect={setSellYear} />
+                  </div>
                 </div>
-                <Waterfall row={row} maxSale={maxSale} />
                 <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} isPrimary={selected.isPrimary} />
                 <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {[
