@@ -216,7 +216,7 @@ function SellYearTable({ title, subtitle, rows, columns }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.yearNumber} className="border-t border-gray-100 dark:border-gray-800">
-                {columns.map((c) => <td key={c.key} className={`px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''}`}>{c.render(r)}</td>)}
+                {columns.map((c) => <td key={c.key} className={`px-2 py-1.5 ${c.align === 'right' ? 'text-right' : ''} ${c.cellClass || ''}`}>{c.render(r)}</td>)}
               </tr>
             ))}
           </tbody>
@@ -316,8 +316,8 @@ function Waterfall({ row }) {
     { l: 'Invested', v: invested, sub: true, col: '#888780', bot: af - invested, top: af, end: af - invested },
     { l: 'Profit', v: profit, col: profit < 0 ? '#E24B4A' : '#639922', bot: Math.min(profit, 0), top: Math.max(profit, 0), end: profit },
   ]
-  const W = 700, H = 210, topPad = 24, botPad = 30, n = bars.length
-  const colW = W / n, bw = colW * 0.6
+  const W = 760, H = 300, topPad = 32, botPad = 40, n = bars.length
+  const colW = W / n, bw = colW * 0.62
   const maxLvl = Math.max(...bars.map((b) => b.top))
   const minLvl = Math.min(0, ...bars.map((b) => b.bot))
   const span = (maxLvl - minLvl) || 1
@@ -331,9 +331,9 @@ function Waterfall({ row }) {
         return (
           <g key={i}>
             {i < n - 1 ? <line x1={x + bw} y1={y(b.end)} x2={(i + 1) * colW + (colW - bw) / 2} y2={y(b.end)} stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" /> : null}
-            <rect x={x} y={yTop} width={bw} height={h} rx="2.5" fill={b.col} />
-            <text x={x + bw / 2} y={yTop - 6} textAnchor="middle" fontSize="11" fill="currentColor">{b.sub ? '−' : ''}{formatChartCurrency(b.v)}</text>
-            <text x={x + bw / 2} y={H - 10} textAnchor="middle" fontSize="11" fill="currentColor">{b.l}</text>
+            <rect x={x} y={yTop} width={bw} height={h} rx="3" fill={b.col} />
+            <text x={x + bw / 2} y={yTop - 8} textAnchor="middle" fontSize="14" fontWeight="500" fill="currentColor">{b.sub ? '−' : ''}{formatChartCurrency(b.v)}</text>
+            <text x={x + bw / 2} y={H - 12} textAnchor="middle" fontSize="13" fill="currentColor">{b.l}</text>
           </g>
         )
       })}
@@ -541,11 +541,18 @@ function WealthChart({ rows, selected, onSelect, breakEvenYear }) {
 function EquityTrend({ rows, selected, onSelect }) {
   const data = rows.map((r) => ({ year: r.yearNumber, label: `Yr ${r.yearNumber}`, equity: r.chart?.equity?.value ?? 0 }))
   const fmtK = (v) => '$' + Math.round(v / 1000) + 'K'
+  const selRow = rows.find((r) => r.yearNumber === selected) || rows[0]
+  const readout = [
+    ['Sale value', selRow?.salePrice?.display, '#378ADD'],
+    ['Loan payoff', selRow?.loanPayoff?.display, '#7F77DD'],
+    ['Equity', selRow?.chart?.equity?.display, '#185FA5'],
+  ]
   const Dot = (props) => {
     const on = props?.payload?.year === selected
     return <circle cx={props.cx} cy={props.cy} r={on ? 5 : 3} fill="#378ADD" stroke="#fff" strokeWidth={on ? 2 : 1} />
   }
   return (
+    <>
     <div className="h-56">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data} margin={{ top: 14, right: 8, left: 4, bottom: 0 }}
@@ -564,6 +571,15 @@ function EquityTrend({ rows, selected, onSelect }) {
         </ComposedChart>
       </ResponsiveContainer>
     </div>
+    <div className="mt-3 grid grid-cols-3 gap-2">
+      {readout.map(([label, val, color]) => (
+        <div key={label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400"><span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: color }} />{label}</div>
+          <div className="mt-0.5 text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{val ?? '—'}</div>
+        </div>
+      ))}
+    </div>
+    </>
   )
 }
 
@@ -839,13 +855,13 @@ export default function ExitPlannerPage() {
                     rows={selected.sellYears}
                     columns={[
                       yearCol,
-                      { key: 'salePrice', label: 'Sale price', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => moneyCell(r.salePrice) },
-                      { key: 'sellingCosts', label: 'Selling costs', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => moneyCell(r.sellingCosts) },
-                      { key: 'loanPayoff', label: 'Loan payoff', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => moneyCell(r.loanPayoff) },
-                      { key: 'cash', label: 'Cash to account', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', render: (r) => <span className="font-semibold">{moneyCell(asNode(preCash(r)))}</span> },
-                      { key: 'flow', label: 'Cash flow', align: 'right', headClass: 'text-amber-600 dark:text-amber-300', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
-                      { key: 'invested', label: 'Invested', align: 'right', headClass: 'text-emerald-600 dark:text-emerald-300', render: (r) => moneyCell(r.cashInvested) },
-                      { key: 'profit', label: 'Profit', align: 'right', headClass: 'text-emerald-600 dark:text-emerald-300', render: (r) => <span className="font-semibold">{moneyCell(asNode(preProfit(r)), { signed: true })}</span> },
+                      { key: 'salePrice', label: 'Sale price', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', cellClass: 'text-blue-700 dark:text-blue-300 tabular-nums', render: (r) => moneyCell(r.salePrice) },
+                      { key: 'sellingCosts', label: 'Selling costs', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', cellClass: 'text-gray-500 dark:text-gray-400 tabular-nums', render: (r) => moneyCell(r.sellingCosts) },
+                      { key: 'loanPayoff', label: 'Loan payoff', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', cellClass: 'text-gray-500 dark:text-gray-400 tabular-nums', render: (r) => moneyCell(r.loanPayoff) },
+                      { key: 'cash', label: 'Cash to account', align: 'right', headClass: 'text-blue-600 dark:text-blue-300', cellClass: 'text-blue-700 dark:text-blue-300 tabular-nums', render: (r) => <span className="font-semibold">{moneyCell(asNode(preCash(r)))}</span> },
+                      { key: 'flow', label: 'Cash flow', align: 'right', headClass: 'text-amber-600 dark:text-amber-300', cellClass: 'text-amber-700 dark:text-amber-300 tabular-nums', render: (r) => moneyCell(r.cumCashFlow, { signed: true }) },
+                      { key: 'invested', label: 'Invested', align: 'right', headClass: 'text-emerald-600 dark:text-emerald-300', cellClass: 'text-gray-500 dark:text-gray-400 tabular-nums', render: (r) => moneyCell(r.cashInvested) },
+                      { key: 'profit', label: 'Profit', align: 'right', headClass: 'text-emerald-600 dark:text-emerald-300', cellClass: 'tabular-nums', render: (r) => <span className={`font-semibold ${preProfit(r) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300'}`}>{moneyCell(asNode(preProfit(r)), { signed: true })}</span> },
                     ]}
                   />
                 </div>
