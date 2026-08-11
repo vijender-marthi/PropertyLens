@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight, SlidersHorizontal, CalendarDays } from 'lucide-react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight, ChevronLeft, SlidersHorizontal, CalendarDays } from 'lucide-react'
 import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Table2, BarChart3 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
@@ -926,10 +926,24 @@ export default function ExitPlannerPage() {
           ) : null}
         </div>
 
+        {/* Collapse/expand handle at the boundary (desktop) — mirrors the Payoff
+            planner so it's obvious the assumptions panel can slide away and back. */}
+        <button
+          type="button"
+          onClick={() => setShowAssumptions((v) => !v)}
+          aria-label={showAssumptions ? 'Collapse assumptions panel' : 'Expand assumptions panel'}
+          aria-expanded={showAssumptions}
+          title={showAssumptions ? 'Collapse assumptions' : 'Expand assumptions'}
+          className="hidden shrink-0 self-start rounded-full border border-gray-200 bg-white text-gray-400 shadow-sm transition-colors hover:border-gray-300 hover:text-gray-700 lg:sticky lg:top-4 lg:order-2 lg:flex lg:h-16 lg:w-6 lg:items-center lg:justify-center dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+        >
+          {showAssumptions ? <ChevronRight className="h-4 w-4" aria-hidden="true" /> : <ChevronLeft className="h-4 w-4" aria-hidden="true" />}
+        </button>
+
         {/* Control panel (right, sticky) — property + assumptions */}
-        {showAssumptions ? (
-        <aside className="order-1 lg:order-2 lg:w-80 lg:shrink-0">
-          <div className="space-y-4 lg:sticky lg:top-4">
+        <aside className={`order-1 lg:order-3 lg:shrink-0 lg:transition-[width,opacity] lg:duration-300 lg:ease-in-out ${
+          showAssumptions ? 'lg:w-80 lg:opacity-100' : 'hidden lg:block lg:w-0 lg:overflow-hidden lg:opacity-0'
+        }`}>
+          <div className="space-y-4 lg:sticky lg:top-4 lg:w-80">
             <div className="card space-y-4">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Exit plan</h2>
 
@@ -989,7 +1003,6 @@ export default function ExitPlannerPage() {
             </div>
           </div>
         </aside>
-        ) : null}
       </div>
     </PageContainer>
   )
