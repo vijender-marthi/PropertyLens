@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight } from 'lucide-react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Table2, BarChart3 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
@@ -490,6 +490,8 @@ function WealthChart({ rows, selected, onSelect }) {
     const on = props?.payload?.year === selected
     return <circle cx={props.cx} cy={props.cy} r={on ? 5 : 3} fill="#4a3aa7" stroke="#fff" strokeWidth={on ? 2 : 1} />
   }
+  const posMax = Math.max(1, ...data.map((d) => d.principalPaid + d.appreciation + Math.max(0, d.cumCashFlow)))
+  const negMin = Math.min(0, ...data.map((d) => Math.min(0, d.cumCashFlow)))
   const selRow = rows.find((r) => r.yearNumber === selected) || rows[0]
   const c = selRow?.chart || {}
   const readout = [
@@ -506,14 +508,18 @@ function WealthChart({ rows, selected, onSelect }) {
             onClick={(s) => { const y = s?.activePayload?.[0]?.payload?.year; if (y) onSelect(y) }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.mutedAxis} />
             <XAxis dataKey="label" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
+            <YAxis domain={[negMin, posMax]} tickFormatter={fmtK} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
             <ReferenceLine y={0} stroke={chartColors.mutedAxis} />
             <Tooltip formatter={(v, k) => [formatCurrency(v), LABELS[k] || k]} contentStyle={chartTooltipStyle(false)} labelStyle={{ fontSize: 11 }} />
-            {['principalPaid', 'appreciation', 'cumCashFlow'].map((key) => (
-              <Bar key={key} dataKey={key} stackId="s" fill={COLORS[key]} cursor="pointer" isAnimationActive={false}>
-                {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} stroke={d.year === selected ? '#111827' : 'none'} strokeOpacity={d.year === selected ? 0.25 : 0} strokeWidth={1} />)}
-              </Bar>
-            ))}
+            <Bar dataKey="principalPaid" name="Principal paydown" stackId="eq" fill={COLORS.principalPaid} cursor="pointer" isAnimationActive={false}>
+              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
+            </Bar>
+            <Bar dataKey="appreciation" name="Appreciation" stackId="eq" fill={COLORS.appreciation} cursor="pointer" isAnimationActive={false}>
+              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
+            </Bar>
+            <Bar dataKey="cumCashFlow" name="Cumulative cash flow" stackId="cf" fill={COLORS.cumCashFlow} cursor="pointer" isAnimationActive={false}>
+              {data.map((d) => <Cell key={d.year} fillOpacity={d.year === selected ? 1 : 0.72} />)}
+            </Bar>
             <Line type="monotone" dataKey="lifetimeProfit" stroke="#4a3aa7" strokeWidth={2} dot={<Dot />} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -611,6 +617,7 @@ export default function ExitPlannerPage() {
   const [error, setError] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [sellYear, setSellYear] = useState(null)
+  const [showAssumptions, setShowAssumptions] = useState(true)
   const debounceRef = useRef(null)
 
   const update = (patch) => setInputs((prev) => ({ ...prev, ...patch }))
@@ -678,20 +685,27 @@ export default function ExitPlannerPage() {
                 : 'Project each property forward and see the cash to your account and profit by sell year.'}
           </p>
         </div>
-        {portfolio ? (
-          (() => {
-            const pos = toneFor(portfolio.finalProfit) === 'positive'
-            const box = pos ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40' : 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40'
-            const txt = pos ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
-            return (
-              <div className={`shrink-0 rounded-xl border px-4 py-2 text-right ${box}`}>
-                <div className={`text-[11px] ${txt}`}>Portfolio profit · exit all in year {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
-                <div className={`text-xl font-bold tabular-nums ${txt}`}>{portfolio.finalProfit.display}</div>
-                <div className={`text-[11px] ${txt} opacity-80`}>{portfolio.propertyCount} propert{portfolio.propertyCount === 1 ? 'y' : 'ies'}</div>
-              </div>
-            )
-          })()
-        ) : null}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <button type="button" onClick={() => setShowAssumptions((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:border-blue-300 hover:text-blue-700 dark:border-gray-700 dark:text-gray-300 dark:hover:border-blue-700 dark:hover:text-blue-300">
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            {showAssumptions ? 'Hide assumptions' : 'Show assumptions'}
+          </button>
+          {portfolio ? (
+            (() => {
+              const pos = toneFor(portfolio.finalProfit) === 'positive'
+              const box = pos ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/40' : 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40'
+              const txt = pos ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'
+              return (
+                <div className={`rounded-xl border px-4 py-2 text-right ${box}`}>
+                  <div className={`text-[11px] ${txt}`}>Portfolio profit · exit all in year {data.assumptions.asOfYear + data.assumptions.holdYears}</div>
+                  <div className={`text-xl font-bold tabular-nums ${txt}`}>{portfolio.finalProfit.display}</div>
+                  <div className={`text-[11px] ${txt} opacity-80`}>{portfolio.propertyCount} propert{portfolio.propertyCount === 1 ? 'y' : 'ies'}</div>
+                </div>
+              )
+            })()
+          ) : null}
+        </div>
       </header>
 
       <div className="flex flex-col gap-6 lg:flex-row">
@@ -808,6 +822,7 @@ export default function ExitPlannerPage() {
         </div>
 
         {/* Control panel (right, sticky) — property + assumptions */}
+        {showAssumptions ? (
         <aside className="order-1 lg:order-2 lg:w-80 lg:shrink-0">
           <div className="space-y-4 lg:sticky lg:top-4">
             <div className="card space-y-4">
@@ -869,6 +884,7 @@ export default function ExitPlannerPage() {
             </div>
           </div>
         </aside>
+        ) : null}
       </div>
     </PageContainer>
   )
