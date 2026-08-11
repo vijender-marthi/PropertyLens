@@ -12273,6 +12273,22 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         gain_loss = net_proceeds + cum_cash_flow - cash_invested
         cash_on_cash = (year_ops[today.year]["cf"] / cash_invested * 100.0) if (cash_invested and today.year in year_ops) else None
 
+        # Pre-tax "where your profit comes from" decomposition for the chart. The
+        # three drivers sum exactly to the pre-tax lifetime profit line; the UI
+        # only renders these numbers (no math on the page).
+        pre_cash = value - selling_costs - loan
+        pre_profit = pre_cash + cum_cash_flow - cash_invested
+        principal_paid = cum["payment"] - cum["interest"]
+        appreciation_gain = pre_profit - principal_paid - cum_cash_flow
+        chart_series = {
+            "principalPaid": m(principal_paid),
+            "appreciation": m(appreciation_gain),
+            "cumCashFlow": m(cum_cash_flow),
+            "lifetimeProfit": m(pre_profit),
+            "cashToAccount": m(pre_cash),
+            "equity": m(value - loan),
+        }
+
         sell_years.append({
             "yearNumber": y,
             "year": sale_date.year,
@@ -12292,6 +12308,7 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
             "netProceeds": m(net_proceeds),
             "cashInvested": m(cash_invested),
             "cashOnCash": pct(cash_on_cash),
+            "chart": chart_series,
             "cumRentReceived": m(cum["rent"]),
             "cumMortgagePayment": m(cum["payment"]),
             "cumMortgageInterest": m(cum["interest"]),
