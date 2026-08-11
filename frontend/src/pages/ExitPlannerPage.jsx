@@ -475,6 +475,9 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
 
       {isPrimary ? (
         <Block n="2" accent="amber" title="While you owned it" subtitle="mortgage & costs — not counted in your home's profit">
+          <p className="mb-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+            What you paid to live here. Reference only — a home you live in isn't a business, so these don't reduce the profit in ③.
+          </p>
           <GroupLine icon={Landmark} label="Mortgage payments" node={row.cumMortgagePayment} info="Total principal + interest paid over ownership. Shown for reference — a primary residence's profit isn't reduced by what you paid to live there.">
             <Line icon={Coins} label="Principal paid" node={asNode((row.cumMortgagePayment?.value || 0) - (row.cumMortgageInterest?.value || 0))} indent info="The part of your payments that reduced the loan balance." />
             <Line icon={Percent} label="Interest paid" node={row.cumMortgageInterest} indent info="The interest portion of your mortgage payments." />
@@ -483,6 +486,8 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
             <Line icon={Landmark} label="Property taxes" node={row.cumPropertyTaxes} indent info="Property taxes paid over the ownership period." />
             <Line icon={Wrench} label="Other expenses" node={asNode((row.cumExpenses?.value || 0) - (row.cumPropertyTaxes?.value || 0))} indent info="Insurance, HOA, management and maintenance over the ownership period." />
           </GroupLine>
+          <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+          <Line icon={Wallet} label="Total paid to own it" node={asNode((row.cumMortgagePayment?.value || 0) + (row.cumExpenses?.value || 0))} strong note="reference" info="Mortgage payments + operating expenses over the whole time you owned it. Reference only — not subtracted from profit." formula="Mortgage payments + operating expenses" />
         </Block>
       ) : (
         <Block n="2" accent="amber" title="Cash flow while you owned it" subtitle="rent minus costs over the years">
