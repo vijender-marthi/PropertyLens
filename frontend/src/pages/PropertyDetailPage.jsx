@@ -282,6 +282,17 @@ function setupDetailText(value) {
   return String(value)
 }
 
+const VALUATION_SOURCE_LABELS = {
+  estimated_6pct: 'Automatic · 6% yearly',
+  manual: 'Manual',
+  appraisal: 'Appraisal',
+  imported: 'Imported estimate',
+}
+function valuationSourceLabel(value) {
+  if (value === null || value === undefined || value === '') return 'Not provided'
+  return VALUATION_SOURCE_LABELS[value] || String(value).replace(/_/g, ' ')
+}
+
 function setupDetailMoney(value) {
   if (value === null || value === undefined || value === '') return 'Not provided'
   return fmt(value)
@@ -305,11 +316,22 @@ function SetupDetailField({ label, value }) {
   )
 }
 
-function SetupDetailsSection({ title, children }) {
+const SETUP_SECTION_ACCENTS = {
+  emerald: { title: 'text-emerald-700 dark:text-emerald-300', bar: 'bg-emerald-500', dl: 'border-emerald-100 bg-emerald-50/40 dark:border-emerald-900/50 dark:bg-emerald-950/20' },
+  blue: { title: 'text-blue-700 dark:text-blue-300', bar: 'bg-blue-500', dl: 'border-blue-100 bg-blue-50/40 dark:border-blue-900/50 dark:bg-blue-950/20' },
+  violet: { title: 'text-violet-700 dark:text-violet-300', bar: 'bg-violet-500', dl: 'border-violet-100 bg-violet-50/40 dark:border-violet-900/50 dark:bg-violet-950/20' },
+  gray: { title: 'text-gray-500 dark:text-gray-400', bar: 'bg-gray-400', dl: 'border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900' },
+}
+
+function SetupDetailsSection({ title, accent = 'gray', children }) {
+  const a = SETUP_SECTION_ACCENTS[accent] || SETUP_SECTION_ACCENTS.gray
   return (
     <section className="min-w-0">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{title}</h3>
-      <dl className="mt-3 rounded-xl border border-gray-200 bg-white px-4 dark:border-gray-700 dark:bg-gray-900">
+      <div className="flex items-center gap-2">
+        <span className={`inline-block h-3.5 w-1 rounded-full ${a.bar}`} aria-hidden="true" />
+        <h3 className={`text-xs font-semibold uppercase tracking-wide ${a.title}`}>{title}</h3>
+      </div>
+      <dl className={`mt-3 rounded-xl border px-4 shadow-sm ${a.dl}`}>
         {children}
       </dl>
     </section>
@@ -347,8 +369,20 @@ function PropertySetupDetailsTab({ prop }) {
         </Link>
       </div>
 
-      <div className="mt-5 grid gap-6 lg:grid-cols-2">
-        <SetupDetailsSection title="Basics">
+      <section className="mt-5">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-3.5 w-1 rounded-full bg-amber-500" aria-hidden="true" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">This property has</h3>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 rounded-xl border border-amber-100 bg-amber-50/40 p-4 shadow-sm dark:border-amber-900/50 dark:bg-amber-950/20">
+          <SetupFlagPill enabled={hasLoan} label="Loan" />
+          <SetupFlagPill enabled={hasHoa} label="HOA" />
+          <SetupFlagPill enabled={hasSolar} label="Solar" />
+        </div>
+      </section>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <SetupDetailsSection title="Basics" accent="emerald">
           <SetupDetailField label="Property name" value={setupDetailText(prop?.name)} />
           <SetupDetailField label="Home Type" value={setupDetailText(homeTypeLabel(prop?.property_type, prop?.property_type_raw))} />
           <SetupDetailField label="Original Residency Status" value={setupDetailText(prop?.original_residency_status)} />
@@ -360,7 +394,7 @@ function PropertySetupDetailsTab({ prop }) {
         </SetupDetailsSection>
 
         <div className="grid gap-6">
-          <SetupDetailsSection title="Purchase">
+          <SetupDetailsSection title="Purchase" accent="blue">
             <SetupDetailField label="Purchase date" value={setupDetailDate(prop?.purchase_date)} />
             <SetupDetailField label="Purchase price" value={setupDetailMoney(prop?.purchase_price)} />
             <SetupDetailField label="Down payment" value={setupDetailMoney(prop?.down_payment)} />
@@ -368,20 +402,11 @@ function PropertySetupDetailsTab({ prop }) {
             <SetupDetailField label="Final settlement total" value={setupDetailMoney(prop?.settlement_total_amount)} />
           </SetupDetailsSection>
 
-          <SetupDetailsSection title="Valuation">
+          <SetupDetailsSection title="Valuation" accent="violet">
             <SetupDetailField label="Market Price" value={setupDetailMoney(prop?.market_value)} />
-            <SetupDetailField label="Valuation source" value={setupDetailText(prop?.market_value_source)} />
+            <SetupDetailField label="Valuation source" value={valuationSourceLabel(prop?.market_value_source)} />
             <SetupDetailField label="Valuation date" value={setupDetailDate(prop?.market_value_updated)} />
           </SetupDetailsSection>
-
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">This property has</h3>
-            <div className="mt-3 flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-              <SetupFlagPill enabled={hasLoan} label="Loan" />
-              <SetupFlagPill enabled={hasHoa} label="HOA" />
-              <SetupFlagPill enabled={hasSolar} label="Solar" />
-            </div>
-          </section>
         </div>
       </div>
     </section>

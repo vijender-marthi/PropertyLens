@@ -830,19 +830,6 @@ export default function ExitPlannerPage() {
                   </div>
                 </div>
                 <Breakdown row={row} sellingCostsPct={data.assumptions.sellingCosts} isPrimary={selected.isPrimary} />
-                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {[
-                    { label: 'Rent received', v: row.cumRentReceived.display },
-                    { label: 'Mortgage interest', v: row.cumMortgageInterest.display },
-                    { label: 'Operating expenses', v: row.cumExpenses.display },
-                    { label: 'Cash-on-cash', v: row.cashOnCash?.display ?? '—' },
-                  ].map((c) => (
-                    <div key={c.label} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800/60">
-                      <div className="text-[11px] text-gray-500 dark:text-gray-400">{c.label}</div>
-                      <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{c.v}</div>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               {/* Year-by-year table — all sell years */}
