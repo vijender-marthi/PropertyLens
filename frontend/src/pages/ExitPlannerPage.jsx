@@ -515,11 +515,16 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
       </Block>
 
       {(row.accumulatedDepreciation?.value || 0) > 0 ? (
-        <Block n="4" accent="purple" title="Tax assets" subtitle="depreciation benefit and your pre-tax cash">
-          <Line icon={FileText} label="Depreciation captured" node={row.accumulatedDepreciation} strong info="Total depreciation deducted over ownership — it lowered your taxable rental income each year. This is the full amount; recapture tax is shown separately below." />
-          <Line icon={Percent} label="Depreciation recapture at sale (25%)" node={row.recaptureTax} op="-" indent info="Tax owed on the captured depreciation when you sell — 25% of the amount above. A future cost, not subtracted from the asset." />
+        <Block n="4" accent="purple" title="Depreciation & recapture tax" subtitle="the depreciation you claimed and the tax due when you sell">
+          <Line icon={FileText} label="Depreciation captured" node={row.accumulatedDepreciation} strong note="taxable at sale" info="Total depreciation you deducted over the years — it lowered your taxable rental income. When you sell, this whole amount is 'recaptured' and taxed. This is the taxable amount." />
+          <p className="-mt-0.5 pb-1 pl-6 text-[11px] text-gray-500 dark:text-gray-400">
+            The full {row.accumulatedDepreciation?.display ?? '—'} is taxable — the 25% recapture tax below is charged on all of it.
+          </p>
           <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-          <Line icon={Wallet} label="Total cash into your pocket (before taxes)" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)))} strong info="Sale cash plus cumulative rental cash flow over ownership, before capital-gains or depreciation-recapture tax." formula={isPrimary ? "Cash to your account" : "Cash to your account + cumulative cash flow"} />
+          <Line icon={Wallet} label="Cash into your pocket (before any tax)" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)))} strong info="Sale cash plus cumulative rental cash flow over ownership — before any capital-gains or depreciation-recapture tax." formula={isPrimary ? "Cash to your account" : "Cash to your account + cumulative cash flow"} />
+          <Line icon={Percent} label="Depreciation recapture tax (25%)" node={row.recaptureTax} op="-" indent info="Yes — this is subtracted from your cash. It's 25% of the depreciation captured above, owed when you sell." formula={`25% × ${row.accumulatedDepreciation?.display ?? '—'} captured`} />
+          <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+          <Line icon={Coins} label="Cash after recapture tax" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)) - (row.recaptureTax?.value || 0))} strong info="Cash before tax minus the 25% recapture tax. Capital-gains tax, if any, is separate and not included here." formula="cash before tax − recapture tax" />
         </Block>
       ) : null}
     </div>
