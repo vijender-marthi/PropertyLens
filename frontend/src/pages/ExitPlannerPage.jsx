@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight, SlidersHorizontal } from 'lucide-react'
+import { AlertCircle, DoorOpen, TrendingUp, Landmark, PiggyBank, Info, Home, Receipt, Wallet, Coins, Percent, Repeat, Wrench, FileText, Tag, ChevronRight, SlidersHorizontal, CalendarDays } from 'lucide-react'
 import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Table2, BarChart3 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
@@ -341,22 +341,81 @@ function Waterfall({ row }) {
   )
 }
 
+// Compact "where you started" facts: what the property cost, how long it's been
+// held, and the current loan position. All values are backend-computed (selected
+// .startingPosition); this only renders them.
+function StartingPosition({ sp }) {
+  if (!sp) return null
+  const purchasedText = (() => {
+    if (sp.purchaseDate) {
+      const [y, m] = sp.purchaseDate.split('-').map(Number)
+      const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][(m || 1) - 1]
+      return `${mon} ${y}`
+    }
+    return sp.purchaseYear ? String(sp.purchaseYear) : '—'
+  })()
+  const heldText = sp.yearsOwned != null ? `${sp.yearsOwned} yrs held` : null
+  const Stat = ({ icon: Icon, tint, label, value, sub }) => (
+    <div className="flex items-start gap-2">
+      <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${tint}`}>
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</div>
+        <div className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{value}</div>
+        {sub ? <div className="text-[11px] text-gray-500 dark:text-gray-400">{sub}</div> : null}
+      </div>
+    </div>
+  )
+  return (
+    <div className="card-sm">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Where you started</div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Stat
+          icon={CalendarDays}
+          tint="bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300"
+          label="Purchased"
+          value={purchasedText}
+          sub={heldText}
+        />
+        <Stat
+          icon={Tag}
+          tint="bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
+          label="Purchase cost"
+          value={sp.totalCost?.display ?? '—'}
+          sub={`${sp.purchasePrice?.display ?? '—'} price + ${sp.closingCosts?.display ?? '—'} closing`}
+        />
+        <Stat
+          icon={Landmark}
+          tint="bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
+          label="Loan remaining"
+          value={sp.hasLoan ? (sp.loanBalance?.display ?? '—') : 'No loan'}
+          sub={sp.hasLoan && sp.interestRate ? `at ${sp.interestRate.display} today` : null}
+        />
+      </div>
+    </div>
+  )
+}
+
 function Breakdown({ row, sellingCostsPct, isPrimary }) {
   const cash = asNode(preCash(row))
   const profit = asNode(preProfit(row))
-  const Line = ({ icon: Icon, label, node, op, strong, indent, note, info }) => {
+  const Line = ({ icon: Icon, label, node, op, strong, indent, note, info, formula }) => {
     const v = Number(node?.value) || 0
     let prefix = '', cls = 'text-gray-900 dark:text-white'
     if (op === '-') { prefix = '− '; cls = 'text-red-600 dark:text-red-400' }
     else if (op === '+') { if (v < 0) { prefix = ''; cls = 'text-red-600 dark:text-red-400' } else { prefix = '+ '; cls = 'text-emerald-600 dark:text-emerald-400' } }
     return (
-      <div className={`flex items-center gap-2 py-1 ${indent ? 'pl-5 text-[13px]' : 'text-sm'}`}>
-        <Icon className={`${indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
-        <span className={strong ? 'font-medium text-blue-700 dark:text-blue-300' : indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{label}</span>
-        {note ? <span className="hidden text-[11px] text-gray-400 dark:text-gray-500 sm:inline">· {note}</span> : null}
-        <MetricHint text={info} label={label} />
-        <span className={`ml-auto tabular-nums ${strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{node?.display ?? '—'}</span>
-      </div>
+      <>
+        <div className={`flex items-center gap-2 py-1 ${indent ? 'pl-5 text-[13px]' : 'text-sm'} ${strong ? 'rounded-md bg-gray-50/80 px-1.5 dark:bg-gray-800/50' : ''}`}>
+          <Icon className={`${indent ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 text-blue-500 dark:text-blue-400`} aria-hidden="true" />
+          <span className={strong ? 'font-medium text-blue-700 dark:text-blue-300' : indent ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'}>{label}</span>
+          {note ? <span className="hidden rounded bg-gray-100 px-1 text-[10px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400 sm:inline">{note}</span> : null}
+          <MetricHint text={info} label={label} />
+          <span className={`ml-auto tabular-nums ${strong ? 'font-semibold text-gray-900 dark:text-white' : cls}`}>{prefix}{node?.display ?? '—'}</span>
+        </div>
+        {formula ? <div className={`-mt-1 pb-1 text-[11px] italic text-gray-400 dark:text-gray-500 ${indent ? 'pl-11' : 'pl-6'}`}>= {formula}</div> : null}
+      </>
     )
   }
   // Expandable parent line: click to reveal indented sub-items below it.
@@ -405,7 +464,7 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
         <Line icon={Receipt} label={`Selling costs (${Math.round(sellingCostsPct)}%)`} node={row.sellingCosts} op="-" info={`Agent commissions, closing costs and fees — about ${Math.round(sellingCostsPct)}% of the sale price.`} />
         <Line icon={Landmark} label="Loan payoff" node={row.loanPayoff} op="-" info="The remaining mortgage balance you pay off at closing." />
         <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-        <Line icon={Wallet} label="Cash to your account" node={cash} strong info="Sale price − selling costs − loan payoff." />
+        <Line icon={Wallet} label="Cash to your account" node={cash} strong info="Sale price − selling costs − loan payoff." formula="Sale price − selling costs − loan payoff" />
       </Block>
 
       {isPrimary ? (
@@ -435,9 +494,13 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
       )}
 
       <Block n="3" accent="emerald" title="Your return" subtitle="profit after the capital you put in">
+        <Line icon={Wallet} label="Cash to your account" node={cash} op="+" note="from ①" info="Carried from section ① — sale price minus selling costs and loan payoff." />
+        {isPrimary ? null : (
+          <Line icon={Repeat} label="Cumulative cash flow" node={row.cumCashFlow} op="+" note="from ②" info="Carried from section ② — net rental cash (rent − expenses − mortgage) over ownership." />
+        )}
         <Line icon={Coins} label="Cash invested" node={row.cashInvested} op="-" info="Your original down payment + closing costs (plus any improvements) — the capital you put in." />
         <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-        <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info={isPrimary ? "Cash to your account − cash invested. Pre-tax. Mortgage and running costs aren't subtracted for a home you live in." : "Cash to your account + cumulative cash flow − cash invested. Pre-tax."} />
+        <Line icon={DoorOpen} label="Lifetime profit" node={profit} strong info={isPrimary ? "Cash to your account − cash invested. Pre-tax. Mortgage and running costs aren't subtracted for a home you live in." : "Cash to your account + cumulative cash flow − cash invested. Pre-tax."} formula={isPrimary ? "Cash to your account − cash invested" : "Cash to your account + cumulative cash flow − cash invested"} />
       </Block>
 
       {(row.accumulatedDepreciation?.value || 0) > 0 ? (
@@ -445,7 +508,7 @@ function Breakdown({ row, sellingCostsPct, isPrimary }) {
           <Line icon={FileText} label="Depreciation captured" node={row.accumulatedDepreciation} strong info="Total depreciation deducted over ownership — it lowered your taxable rental income each year. This is the full amount; recapture tax is shown separately below." />
           <Line icon={Percent} label="Depreciation recapture at sale (25%)" node={row.recaptureTax} op="-" indent info="Tax owed on the captured depreciation when you sell — 25% of the amount above. A future cost, not subtracted from the asset." />
           <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-          <Line icon={Wallet} label="Total cash into your pocket (before taxes)" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)))} strong info="Sale cash plus cumulative rental cash flow over ownership, before capital-gains or depreciation-recapture tax." />
+          <Line icon={Wallet} label="Total cash into your pocket (before taxes)" node={asNode(preCash(row) + (isPrimary ? 0 : (row.cumCashFlow?.value || 0)))} strong info="Sale cash plus cumulative rental cash flow over ownership, before capital-gains or depreciation-recapture tax." formula={isPrimary ? "Cash to your account" : "Cash to your account + cumulative cash flow"} />
         </Block>
       ) : null}
     </div>
@@ -786,6 +849,8 @@ export default function ExitPlannerPage() {
                   <div className={`text-xl font-bold tabular-nums ${preProfit(row) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatCurrency(preProfit(row))}</div>
                 </div>
               </div>
+
+              <StartingPosition sp={selected.startingPosition} />
 
               {/* Profit trend + year buttons — the control, up top */}
               <div className="card">

@@ -12327,6 +12327,32 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         else "Was primary, now rental" if was_primary_then_rental
         else "Rental"
     )
+
+    # "Where you started" snapshot for the plan header — what the property cost,
+    # how long it's been held, and the current loan position.
+    _closing = float(prop.closing_costs or 0.0)
+    _active_loans = [l for l in (prop.loans or []) if not _is_closed_loan_status(getattr(l, "status", None))]
+    _cur_loan = (
+        next((l for l in _active_loans if bool(getattr(l, "is_current_servicer", True))), None)
+        or (_active_loans[0] if _active_loans else None)
+    )
+    _stated_rate = float(getattr(_cur_loan, "interest_rate", 0.0) or 0.0) if _cur_loan else 0.0
+    _years_owned = round((today - purchase_d).days / 365.25, 1) if purchase_d else None
+    starting_position = {
+        "purchaseDate": purchase_d.isoformat() if purchase_d else None,
+        "purchaseYear": purchase_year,
+        "yearsOwned": _years_owned,
+        "purchasePrice": m(purchase_price),
+        "closingCosts": m(_closing),
+        "totalCost": m(purchase_price + _closing),
+        "loanBalance": m(_bal_now),
+        "hasLoan": bool(_cur_loan),
+        "interestRate": (
+            {"value": round(_stated_rate, 3), "display": format_interest_rate(_stated_rate)}
+            if _stated_rate else None
+        ),
+    }
+
     return {
         "id": prop.id,
         "name": prop.name or _default_property_name(prop.address, prop.id),
@@ -12335,6 +12361,7 @@ def _exit_projection(prop, *, appreciation, cap_gains, selling_costs_pct, hold_y
         "wasPrimaryThenRental": was_primary_then_rental,
         "purchasePrice": m(purchase_price),
         "cashInvested": m(cash_invested),
+        "startingPosition": starting_position,
         "sellYears": sell_years,
         "breakEvenYear": breakeven,
         "exclusionCap": m(exclusion_cap),
