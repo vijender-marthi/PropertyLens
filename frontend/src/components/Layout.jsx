@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut, Home, Plus,
-  BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark, Scale,
+  TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark, Scale,
   Sun, Moon, DoorOpen, FileBarChart, Sparkles, MessageCircle,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -12,7 +12,7 @@ import CoachChat from './CoachChat'
 import { propAPI } from '../services/api'
 
 const DASHBOARDS_NAV = [
-  { to: '/dashboard',  icon: BarChart3,  label: 'Portfolio' },
+  // Old Portfolio dashboard (/dashboard) is hidden from nav; route still exists.
   { to: '/portfolio-equity', icon: Scale, label: 'Equity & Cashflow' },
   { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
   { to: '/loans',      icon: Landmark,   label: 'Loans' },
