@@ -555,16 +555,13 @@ export default function PortfolioEquityPage() {
       { label: 'Total equity', display: fullMoney(m.equity) },
       { label: '% of value', display: pct1(m.equityPct) },
     ]),
-    totalDebt: mk('Debt = Σ Loan Balance  ·  Paid off = (Σ Original − Σ Balance) ÷ Σ Original', [
+    totalDebt: mk('Debt = Σ Loan Balance  ·  LTV = Loan ÷ Value  ·  Paid off = (Σ Original − Σ Balance) ÷ Σ Original', [
       { label: 'Σ Original loan', display: fullMoney(m.origLoan) },
-      { label: 'Σ Loan balance', display: fullMoney(m.loan) },
-      { label: 'Paid off', display: pct1(m.paidOff) },
-    ]),
-    ltv: mk('LTV = Σ Loan ÷ Σ Value  ·  Cushion = 1 − (Loan ÷ 0.80) ÷ Value', [
       { label: 'Σ Loan balance', display: fullMoney(m.loan) },
       { label: 'Σ Current value', display: fullMoney(m.value) },
       { label: 'Portfolio LTV', display: pct1(m.ltv) },
       { label: 'Price cushion', display: pct1(Math.max(0, m.priceCushion)) },
+      { label: 'Paid off', display: pct1(m.paidOff) },
     ]),
     weightedRate: mk('Weighted Rate = Σ(Balance × Rate) ÷ Σ Balance', [
       { label: 'Σ Loan balance', display: fullMoney(m.loan) },
@@ -625,7 +622,7 @@ export default function PortfolioEquityPage() {
       </header>
 
       {/* ── Band 1: Equity KPI tiles ── */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Equity metrics">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5" aria-label="Equity metrics">
         <KpiTile label="Portfolio Value" value={compactMoney(m.value)} valueClass={TONE.blue} metric={metrics.portfolioValue}>
           <Delta>{pct1(m.growth)} growth</Delta>
         </KpiTile>
@@ -633,11 +630,9 @@ export default function PortfolioEquityPage() {
           <Delta>{pct1(m.equityPct)} of value</Delta>
         </KpiTile>
         <KpiTile label="Total Debt" value={compactMoney(m.loan)} valueClass={TONE.red} metric={metrics.totalDebt}>
-          <Delta>{pct1(m.paidOff)} paid off</Delta>
-        </KpiTile>
-        <KpiTile label="Portfolio LTV" value={pct1(m.ltv)} valueClass={band.tone} metric={metrics.ltv}>
           <LtvMeter ltv={m.ltv} />
-          <span className={`mt-1 block ${band.tone}`}>{band.label} · ~{pct1(Math.max(0, m.priceCushion))} price cushion</span>
+          <span className={`mt-1 block ${band.tone}`}>{pct1(m.ltv)} of value · {band.label}</span>
+          <Delta>{pct1(m.paidOff)} paid off</Delta>
         </KpiTile>
         <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={capRateFlag ? TONE.amber : TONE.blue} metric={metrics.weightedRate}>
           <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
