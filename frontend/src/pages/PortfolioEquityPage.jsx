@@ -189,9 +189,11 @@ function WaterfallLegend() {
 // ── Acquisition timeline: a home icon at each purchase year ──────────────────
 // The line runs from the first purchase to the current year, so homes spread
 // evenly (payoff years, which can be decades out, don't stretch the scale).
-function HomeTimeline({ rows, onSelect }) {
+function HomeTimeline({ rows, onSelect, selectedIds }) {
   const withYear = rows.filter((p) => p.buyYear)
   if (!withYear.length) return null
+  // Only dim/highlight when the view is filtered to a subset (not "all selected").
+  const isolating = selectedIds && selectedIds.size > 0 && selectedIds.size < withYear.length
 
   // Month-precision position: fractional year = year + (month-1)/12.
   const frac = (p) => p.buyYear + (((p.buyMonth || 1) - 1) / 12)
@@ -211,17 +213,18 @@ function HomeTimeline({ rows, onSelect }) {
         {/* home markers */}
         {withYear.map((p) => {
           const primary = p.type === 'primary'
+          const active = !isolating || (selectedIds && selectedIds.has(p.id))
           return (
             <button
               key={p.id}
               type="button"
               onClick={() => onSelect(p)}
-              className="group absolute top-[22px] z-10 -translate-x-1/2 -translate-y-1/2 focus:outline-none"
+              className={`group absolute top-[22px] z-10 -translate-x-1/2 -translate-y-1/2 transition-opacity focus:outline-none ${active ? '' : 'opacity-35'}`}
               style={{ left: `${leftPct(frac(p))}%` }}
               title={`${p.name} · purchased ${monthLabel(p)}`}
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
-              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'}`}>
+              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
                 {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <span className="absolute left-1/2 top-[26px] -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
@@ -571,9 +574,10 @@ export default function PortfolioEquityPage() {
         </KpiTile>
       </section>
 
-      {/* ── Acquisition timeline (click a home to filter; click again to reset) ── */}
+      {/* ── Acquisition timeline (always shows all homes; click to filter/reset) ── */}
       <HomeTimeline
-        rows={rows}
+        rows={available}
+        selectedIds={selectedIds}
         onSelect={(home) => setSelectedIds((cur) => (
           cur.size === 1 && cur.has(home.id)
             ? new Set(available.map((p) => p.id))   // already isolated → reset to all

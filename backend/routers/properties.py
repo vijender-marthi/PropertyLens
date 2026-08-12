@@ -13033,17 +13033,23 @@ def portfolio_equity_cashflow(
 
     today = date.today()
     rows = [_equity_cashflow_row(prop, now_year=today.year) for prop in props]
+
+    def _available_entry(prop):
+        _pd = _parse_iso_date(prop.purchase_date) if prop.purchase_date else None
+        is_primary = str(prop.usage_type or "Rental").lower() == "primary"
+        return {
+            "id": prop.id,
+            "name": prop.name or _default_property_name(prop.address, prop.id),
+            "address": prop.address,
+            "isPrimary": is_primary,
+            "type": "primary" if is_primary else "rental",
+            "buyYear": _pd.year if _pd else None,
+            "buyMonth": _pd.month if _pd else None,
+        }
+
     return {
         "asOf": today.isoformat(),
         "properties": rows,
         "totals": _equity_cashflow_totals(rows, now_year=today.year, months_elapsed=today.month),
-        "availableProperties": [
-            {
-                "id": prop.id,
-                "name": prop.name or _default_property_name(prop.address, prop.id),
-                "address": prop.address,
-                "isPrimary": str(prop.usage_type or "Rental").lower() == "primary",
-            }
-            for prop in all_props
-        ],
+        "availableProperties": [_available_entry(prop) for prop in all_props],
     }
