@@ -596,16 +596,16 @@ export default function PortfolioEquityPage() {
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
         <SummaryCard title="Equity Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
-          <SummaryRow label="Portfolio value" value={fullMoney(m.value)} tone="text-sky-600 dark:text-sky-400" />
-          <SummaryRow label="Loan balance" value={fullMoney(m.loan)} tone="text-red-600 dark:text-red-400" />
-          <SummaryRow label="Total equity" value={fullMoney(m.equity)} strong tone="text-emerald-600 dark:text-emerald-400" />
+          <SummaryRow label="Portfolio value" value={compactMoney(m.value)} tone="text-sky-600 dark:text-sky-400" />
+          <SummaryRow label="Loan balance" value={compactMoney(m.loan)} tone="text-red-600 dark:text-red-400" />
+          <SummaryRow label="Total equity" value={compactMoney(m.equity)} strong tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Equity % of value" value={pct1(m.equityPct)} />
           <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="↳ Down payment" value={fullMoney(m.waterfall.downPayment)} indent />
-          <SummaryRow label="↳ Principal paid" value={fullMoney(m.waterfall.principalReduction)} indent />
-          <SummaryRow label="↳ Appreciation" value={fullMoney(m.waterfall.appreciation)} indent />
+          <SummaryRow label="↳ Down payment" value={compactMoney(m.waterfall.downPayment)} indent />
+          <SummaryRow label="↳ Principal paid" value={compactMoney(m.waterfall.principalReduction)} indent />
+          <SummaryRow label="↳ Appreciation" value={compactMoney(m.waterfall.appreciation)} indent />
           <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="Total appreciation" value={fullMoney(m.value - m.purchase)} tone="text-emerald-600 dark:text-emerald-400" />
+          <SummaryRow label="Total appreciation" value={compactMoney(m.value - m.purchase)} tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Total growth" value={pct1(m.growth)} />
           <SummaryRow label="Annualized growth" value={pct1(m.annualizedWeighted)} strong tone="text-emerald-600 dark:text-emerald-400" />
         </SummaryCard>
@@ -626,16 +626,16 @@ export default function PortfolioEquityPage() {
         </div>
 
         <SummaryCard title="Loan &amp; Debt Summary" onExpand={() => setModal({ kind: 'loans' })}>
-          <SummaryRow label="Original loan" value={fullMoney(m.origLoan)} />
-          <SummaryRow label="Loan balance" value={fullMoney(m.loan)} />
-          <SummaryRow label="Principal paid to date" value={fullMoney(m.origLoan - m.loan)} tone="text-emerald-600 dark:text-emerald-400" />
+          <SummaryRow label="Original loan" value={compactMoney(m.origLoan)} />
+          <SummaryRow label="Loan balance" value={compactMoney(m.loan)} />
+          <SummaryRow label="Principal paid to date" value={compactMoney(m.origLoan - m.loan)} tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Weighted rate" value={ratePct(m.weightedRate)} />
-          <SummaryRow label="Monthly payment" value={fullMoney(m.payment)} strong />
-          <SummaryRow label="↳ Interest" value={fullMoney(m.monthlyInterest)} indent />
-          <SummaryRow label="↳ Principal" value={fullMoney(m.monthlyPrincipal)} indent />
+          <SummaryRow label="Monthly payment" value={compactMoney(m.payment)} strong />
+          <SummaryRow label="↳ Interest" value={compactMoney(m.monthlyInterest)} indent />
+          <SummaryRow label="↳ Principal" value={compactMoney(m.monthlyPrincipal)} indent />
           <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="Annual interest" value={fullMoney(m.monthlyInterest * 12)} />
-          <SummaryRow label="Annual principal" value={fullMoney(m.monthlyPrincipal * 12)} />
+          <SummaryRow label="Annual interest" value={compactMoney(m.monthlyInterest * 12)} />
+          <SummaryRow label="Annual principal" value={compactMoney(m.monthlyPrincipal * 12)} />
         </SummaryCard>
       </section>
 
@@ -684,13 +684,13 @@ export default function PortfolioEquityPage() {
         <div className="grid gap-3 lg:grid-cols-2">
           {/* Cashflow summary (click to expand into per-property table) */}
           <SummaryCard title={`Cashflow Summary${per}`} onExpand={() => setModal({ kind: 'cashflow' })}>
-            <SummaryRow label="Gross rent" value={fullMoney(m.rent * factor)} tone="text-emerald-600 dark:text-emerald-400" />
+            <SummaryRow label="Gross rent" value={compactMoney(m.rent * factor)} tone="text-emerald-600 dark:text-emerald-400" />
             <SummaryRow label="Vacancy rate" value={pct1(m.rent ? -m.vacancy / m.rent : 0)} tone="text-red-600 dark:text-red-400" />
-            <SummaryRow label="Operating expenses" value={fullMoney(m.opex * factor)} tone="text-red-600 dark:text-red-400" />
-            <SummaryRow label="Net operating income" value={fullMoney(m.noi * factor)} strong tone={m.noi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
-            <SummaryRow label="Debt service (P&I)" value={fullMoney(m.debtService * factor)} tone="text-red-600 dark:text-red-400" />
+            <SummaryRow label="Operating expenses" value={compactMoney(m.opex * factor)} tone="text-red-600 dark:text-red-400" />
+            <SummaryRow label="Net operating income" value={compactMoney(m.noi * factor)} strong tone={m.noi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
+            <SummaryRow label="Debt service (P&I)" value={compactMoney(m.debtService * factor)} tone="text-red-600 dark:text-red-400" />
             <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-            <SummaryRow label="Net cash flow" value={fullMoney(m.netCashFlow * factor)} strong tone={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
+            <SummaryRow label="Net cash flow" value={compactMoney(m.netCashFlow * factor)} strong tone={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
           </SummaryCard>
 
           {/* Cashflow waterfall: rental income → opex → NOI → debt service → net cash flow */}
