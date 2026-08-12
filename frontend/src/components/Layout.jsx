@@ -11,13 +11,16 @@ import BrandLogo from './BrandLogo'
 import CoachChat from './CoachChat'
 import { propAPI } from '../services/api'
 
-const MAIN_NAV = [
+const DASHBOARDS_NAV = [
   { to: '/dashboard',  icon: BarChart3,  label: 'Portfolio' },
-  { to: '/properties', icon: Building2,  label: 'Properties' },
   { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
   { to: '/loans',      icon: Landmark,   label: 'Loans' },
   { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },
   { to: '/tax-center', icon: ReceiptText, label: 'Tax Center' },
+]
+
+const MAIN_NAV = [
+  { to: '/properties', icon: Building2,  label: 'Properties' },
   { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
 ]
 
@@ -126,7 +129,7 @@ function SidebarPropertyList({ onClose }) {
             >
               {primary ? <Home className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300" /> : <Building2 className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
               <span className="min-w-0 flex-1 truncate">{label}</span>
-              {primary ? <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">Home</span> : null}
+              {primary ? <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">Primary</span> : null}
             </Link>
           )
         })}
@@ -158,7 +161,13 @@ const isAdmin = ['admin', 'superuser'].includes((user?.role || '').toLowerCase()
 
       {/* Scrollable main nav */}
       <div className="flex-1 overflow-y-auto py-2.5 px-2">
-        <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5">Main</p>
+        <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5">Dashboards</p>
+        <div className="flex flex-col gap-0.5">
+          {DASHBOARDS_NAV.map(({ to, icon, label }) => (
+            <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />
+          ))}
+        </div>
+        <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-600 uppercase tracking-widest px-2 py-1.5 mt-3">Main</p>
         <div className="flex flex-col gap-0.5">
           {MAIN_NAV.map(({ to, icon, label }) => (
             <NavItem key={to} to={to} icon={icon} label={label} active={isActive(to)} />

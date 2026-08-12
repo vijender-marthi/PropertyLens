@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
@@ -115,12 +115,19 @@ function KpiCard({ config, metric, trendSeries }) {
   )
 }
 
-function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedIds, reportHref }) {
+function PortfolioFilters({ context, selectedIds, setSelectedIds, reportHref }) {
   const [open, setOpen] = useState(false)
   const available = context?.availableProperties || []
 
+  // Primary residence first, then the rest alphabetically by name.
+  const orderedProperties = useMemo(() => {
+    return [...available].sort((left, right) => {
+      if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1
+      return (left.name || left.address || '').localeCompare(right.name || right.address || '')
+    })
+  }, [available])
+
   const toggleProperty = (id) => {
-    setScope('custom')
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(id)) next.delete(id)
@@ -128,22 +135,17 @@ function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedId
       return next
     })
   }
-  const selectAll = () => { setScope('all'); setSelectedIds(new Set()) }
-  const selectRentals = () => { setScope('rentals'); setSelectedIds(new Set()) }
-  const clearSelection = () => { setScope('all'); setSelectedIds(new Set()) }
 
-  const firstName = available.find((property) => selectedIds.has(property.id))?.name
+  const total = available.length
+  const selectedCount = available.filter((property) => selectedIds.has(property.id)).length
+  const allSelected = total > 0 && selectedCount === total
+  const firstName = orderedProperties.find((property) => selectedIds.has(property.id))?.name
   const label =
-    scope === 'all' ? `All properties (${available.length})`
-      : scope === 'rentals' ? 'Rentals only'
-        : selectedIds.size === 0 ? 'Select properties'
-          : selectedIds.size === 1 ? (firstName || '1 property')
-            : `${selectedIds.size} properties selected`
-
-  const quickOptions = [
-    { key: 'all', label: 'All properties', hint: String(available.length), onSelect: selectAll },
-    { key: 'rentals', label: 'Rentals only', hint: '', onSelect: selectRentals },
-  ]
+    total === 0 ? 'No properties'
+      : allSelected ? `All properties (${total})`
+        : selectedCount === 0 ? 'No properties selected'
+          : selectedCount === 1 ? (firstName || '1 property')
+            : `${selectedCount} of ${total} selected`
 
   return (
     <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
@@ -162,44 +164,22 @@ function PortfolioFilters({ context, scope, setScope, selectedIds, setSelectedId
           <>
             <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden="true" />
             <div className="absolute right-0 z-30 mt-2 w-72 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900" role="listbox" aria-label="Select properties">
-              <div className="p-1.5">
-                {quickOptions.map((option) => {
-                  const active = scope === option.key
-                  return (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={option.onSelect}
-                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm ${active ? 'bg-blue-50 font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' : 'text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800'}`}
-                    >
-                      <span>{option.label}</span>
-                      <span className="flex items-center gap-2">
-                        {option.hint ? <span className="text-xs text-gray-400">{option.hint}</span> : null}
-                        {active ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="flex items-center justify-between border-t border-gray-100 px-3 py-2 dark:border-gray-800">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Or pick individually</span>
-                {scope === 'custom' && selectedIds.size > 0 ? (
-                  <button type="button" onClick={clearSelection} className="text-xs font-medium text-blue-600 hover:underline">Clear</button>
-                ) : null}
-              </div>
-              <div className="max-h-56 overflow-y-auto px-1.5 pb-1.5">
-                {available.length ? available.map((property) => {
-                  const checked = scope === 'custom' && selectedIds.has(property.id)
+              <div className="max-h-72 overflow-y-auto p-1.5">
+                {orderedProperties.length ? orderedProperties.map((property) => {
+                  const checked = selectedIds.has(property.id)
                   return (
                     <label key={property.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
                       <input type="checkbox" checked={checked} onChange={() => toggleProperty(property.id)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                       <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200">{property.name || property.address}</span>
+                      <span className={`flex shrink-0 items-center gap-1 text-[11px] font-medium ${property.isPrimary ? 'text-red-500' : 'text-gray-400'}`}>
+                        {property.isPrimary
+                          ? <Home className="h-3.5 w-3.5" aria-hidden="true" />
+                          : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                        {property.isPrimary ? 'Primary' : 'Rental'}
+                      </span>
                     </label>
                   )
                 }) : <p className="px-3 py-4 text-center text-xs text-gray-400">No properties available</p>}
-              </div>
-              <div className="border-t border-gray-100 p-2 dark:border-gray-800">
-                <button type="button" onClick={() => setOpen(false)} className="btn-primary h-9 w-full text-sm">Done</button>
               </div>
             </div>
           </>
@@ -510,30 +490,41 @@ export default function DashboardPage() {
   const today = new Date().toISOString().slice(0, 10)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [scope, setScope] = useState('all')
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const initializedRef = useRef(false)
   const [startDate, setStartDate] = useState(`${today.slice(0, 4)}-01-01`)
   const [endDate, setEndDate] = useState(today)
+
+  // On first load the request is the implicit "all properties" view. Once the
+  // available list arrives, seed the checkbox selection with every property so
+  // the dropdown defaults to all selected; later toggles drive an explicit set.
+  useEffect(() => {
+    const available = data?.filterContext?.availableProperties
+    if (!initializedRef.current && available && available.length) {
+      initializedRef.current = true
+      setSelectedIds(new Set(available.map((property) => property.id)))
+    }
+  }, [data])
 
   const selectedKey = useMemo(() => Array.from(selectedIds).sort((a, b) => a - b).join(','), [selectedIds])
   const reportHref = useMemo(() => {
     const params = new URLSearchParams({
-      selected_property_ids: scope === 'custom' ? selectedKey : '',
-      selection_explicit: String(scope === 'custom'),
-      include_primary_residence: String(scope !== 'rentals'),
+      selected_property_ids: initializedRef.current ? selectedKey : '',
+      selection_explicit: String(initializedRef.current),
+      include_primary_residence: 'true',
       start_date: startDate,
       end_date: endDate,
     })
     return `/reports?${params.toString()}`
-  }, [scope, selectedKey, startDate, endDate])
+  }, [selectedKey, startDate, endDate])
 
   useEffect(() => {
     const controller = new AbortController()
     let active = true
     const request = {
-      selected_property_ids: scope === 'custom' ? selectedKey : '',
-      selection_explicit: scope === 'custom',
-      include_primary_residence: scope !== 'rentals',
+      selected_property_ids: initializedRef.current ? selectedKey : '',
+      selection_explicit: initializedRef.current,
+      include_primary_residence: true,
       start_date: startDate || undefined,
       end_date: endDate || undefined,
     }
@@ -552,7 +543,7 @@ export default function DashboardPage() {
       active = false
       controller.abort()
     }
-  }, [scope, selectedKey, startDate, endDate])
+  }, [selectedKey, startDate, endDate])
 
   const analytics = data?.analytics
   const dashboard = analytics?.dashboard
@@ -574,7 +565,7 @@ export default function DashboardPage() {
       <div className="space-y-4" data-testid="portfolio-dashboard">
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
           <div><h1 className="text-2xl font-bold text-gray-950">{dashboard.header.title}</h1><p className="mt-1 text-sm text-gray-500">{dashboard.header.subtitle}</p></div>
-          <PortfolioFilters context={data.filterContext} scope={scope} setScope={setScope} selectedIds={selectedIds} setSelectedIds={setSelectedIds} reportHref={reportHref} />
+          <PortfolioFilters context={data.filterContext} selectedIds={selectedIds} setSelectedIds={setSelectedIds} reportHref={reportHref} />
         </header>
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Portfolio metrics">{dashboard.topMetrics.map((config) => <KpiCard key={config.metricKey} config={config} metric={resolveMetric('analytics', config.metricKey)} trendSeries={dashboard.cashFlowTrend.series} />)}</section>
