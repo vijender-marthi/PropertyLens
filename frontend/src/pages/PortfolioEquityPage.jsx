@@ -211,6 +211,103 @@ function WaterfallLegend() {
   )
 }
 
+// ── Acquisition timeline: a home icon at each purchase year ──────────────────
+function HomeTimeline({ rows }) {
+  const [openId, setOpenId] = useState(null)
+  const withYear = rows.filter((p) => p.buyYear)
+  if (!withYear.length) return null
+
+  const nowYear = new Date().getFullYear()
+  const startYear = Math.min(...withYear.map((p) => p.buyYear))
+  const endYear = Math.max(nowYear, ...withYear.map((p) => p.payoffYear || nowYear))
+  const span = Math.max(1, endYear - startYear)
+  const leftPct = (year) => 4 + ((year - startYear) / span) * 92
+
+  const step = Math.max(1, Math.round(span / 6))
+  const tickYears = []
+  for (let yr = startYear; yr <= endYear; yr += step) tickYears.push(yr)
+  if (tickYears[tickYears.length - 1] !== endYear) tickYears.push(endYear)
+
+  const open = withYear.find((p) => p.id === openId)
+  const cleared = open ? open.origLoan - open.loan : 0
+  const clearedPct = open && open.origLoan ? cleared / open.origLoan : 0
+
+  const Row = ({ label, value, tone }) => (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-gray-500 dark:text-gray-400">{label}</span>
+      <span className={`tabular-nums font-semibold ${tone || 'text-gray-900 dark:text-white'}`}>{value}</span>
+    </div>
+  )
+
+  return (
+    <section className="relative rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900" aria-label="Acquisition timeline">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Acquisition Timeline</h3>
+        <span className="text-xs text-gray-400">{startYear} – {endYear} · click a home for details</span>
+      </div>
+
+      <div className="relative mx-1 mt-9 mb-3 h-12">
+        {/* base line */}
+        <div className="absolute inset-x-[4%] top-5 h-0.5 rounded bg-gray-200 dark:bg-gray-700" />
+        {/* year ticks */}
+        {tickYears.map((yr) => (
+          <div key={yr} className="absolute top-5 -translate-x-1/2" style={{ left: `${leftPct(yr)}%` }}>
+            <div className="mx-auto h-2 w-px bg-gray-300 dark:bg-gray-600" />
+            <div className="mt-1 whitespace-nowrap text-center text-[10px] text-gray-400">{yr}</div>
+          </div>
+        ))}
+        {/* home markers */}
+        {withYear.map((p) => {
+          const primary = p.type === 'primary'
+          const active = openId === p.id
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setOpenId(active ? null : p.id)}
+              className="group absolute top-5 z-10 -translate-x-1/2 -translate-y-1/2 focus:outline-none"
+              style={{ left: `${leftPct(p.buyYear)}%` }}
+              title={`${p.name} · purchased ${p.buyYear}`}
+              aria-label={`${p.name}, purchased ${p.buyYear}`}
+            >
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-blue-400 text-blue-500'} ${active ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
+                <Home className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {open ? (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpenId(null)} aria-hidden="true" />
+          <div className="relative z-20 mt-2 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Home className={`h-4 w-4 ${open.type === 'primary' ? 'text-red-500' : 'text-blue-500'}`} aria-hidden="true" />
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{open.name}</h4>
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${open.type === 'primary' ? 'bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300' : 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'}`}>{open.type === 'primary' ? 'Primary' : 'Rental'}</span>
+              </div>
+              <button type="button" onClick={() => setOpenId(null)} className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700" aria-label="Close"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+              <Row label="Purchased" value={open.buyYear} />
+              <Row label="Purchase price" value={fullMoney(open.purchase)} />
+              <Row label="Current value" value={fullMoney(open.value)} />
+              <Row label="Loan balance" value={fullMoney(open.loan)} />
+              <Row label="Equity" value={fullMoney(open.equity)} tone="text-emerald-600 dark:text-emerald-400" />
+              <Row label="Interest rate" value={ratePct(open.rate)} />
+              <Row label="Payoff year" value={open.payoffYear || '—'} />
+              <Row label="Principal cleared" value={`${fullMoney(cleared)} · ${pct1(clearedPct)}`} tone="text-emerald-600 dark:text-emerald-400" />
+              <Row label="Original loan" value={fullMoney(open.origLoan)} />
+            </div>
+          </div>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
 // ── Cashflow bridge waterfall (income → expenses → NOI → debt → net) ──────────
 const CF_UP = '#0ca30c'      // rental income (increase)
 const CF_DOWN = '#d63a3a'    // expenses / debt service (decrease)
@@ -545,6 +642,9 @@ export default function PortfolioEquityPage() {
           <span className="text-gray-500 dark:text-gray-400">cashflow + paydown</span>
         </KpiTile>
       </section>
+
+      {/* ── Acquisition timeline ── */}
+      <HomeTimeline rows={rows} />
 
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
