@@ -610,6 +610,15 @@ class AnnualExpense(Base):
     utilities = Column(Float, default=0.0)
     vacancy_allowance = Column(Float, default=0.0)
     capex_reserve = Column(Float, default=0.0)
+    # Additional Schedule E expense lines (5–15) enterable per year.
+    advertising = Column(Float, default=0.0)              # Sch E line 5
+    auto_travel = Column(Float, default=0.0)              # Sch E line 6
+    cleaning_maintenance = Column(Float, default=0.0)     # Sch E line 7
+    commissions = Column(Float, default=0.0)              # Sch E line 8
+    legal_professional = Column(Float, default=0.0)       # Sch E line 10
+    other_interest = Column(Float, default=0.0)           # Sch E line 13
+    supplies = Column(Float, default=0.0)                 # Sch E line 15
+    home_warranty = Column(Float, default=0.0)            # rolls into "Other" (line 19)
     other = Column(Float, default=0.0)
     property_tax_source = Column(String, default="manual")
     insurance_source = Column(String, default="manual")

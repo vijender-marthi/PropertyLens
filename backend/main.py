@@ -205,6 +205,14 @@ MIGRATIONS = {
     "annual_expenses": {
         "property_tax_source": "VARCHAR DEFAULT 'manual'",
         "insurance_source": "VARCHAR DEFAULT 'manual'",
+        "advertising": "FLOAT DEFAULT 0.0",
+        "auto_travel": "FLOAT DEFAULT 0.0",
+        "cleaning_maintenance": "FLOAT DEFAULT 0.0",
+        "commissions": "FLOAT DEFAULT 0.0",
+        "legal_professional": "FLOAT DEFAULT 0.0",
+        "other_interest": "FLOAT DEFAULT 0.0",
+        "supplies": "FLOAT DEFAULT 0.0",
+        "home_warranty": "FLOAT DEFAULT 0.0",
     },
     "escrow_payments": {
         "servicer": "VARCHAR",

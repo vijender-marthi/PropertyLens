@@ -330,6 +330,14 @@ class AnnualExpenseBase(BaseModel):
     utilities: float = 0.0
     vacancy_allowance: float = 0.0
     capex_reserve: float = 0.0
+    advertising: float = 0.0
+    auto_travel: float = 0.0
+    cleaning_maintenance: float = 0.0
+    commissions: float = 0.0
+    legal_professional: float = 0.0
+    other_interest: float = 0.0
+    supplies: float = 0.0
+    home_warranty: float = 0.0
     other: float = 0.0
     property_tax_source: str = "manual"
     insurance_source: str = "manual"
@@ -967,6 +975,14 @@ ANNUAL_EXPENSE_FIELDS = [
     "utilities",
     "vacancy_allowance",
     "capex_reserve",
+    "advertising",
+    "auto_travel",
+    "cleaning_maintenance",
+    "commissions",
+    "legal_professional",
+    "other_interest",
+    "supplies",
+    "home_warranty",
     "other",
 ]
 
@@ -1066,6 +1082,14 @@ def _annual_expense_out(row: models.AnnualExpense) -> Dict[str, Any]:
         "utilities": row.utilities or 0,
         "vacancy_allowance": row.vacancy_allowance or 0,
         "capex_reserve": row.capex_reserve or 0,
+        "advertising": getattr(row, "advertising", 0) or 0,
+        "auto_travel": getattr(row, "auto_travel", 0) or 0,
+        "cleaning_maintenance": getattr(row, "cleaning_maintenance", 0) or 0,
+        "commissions": getattr(row, "commissions", 0) or 0,
+        "legal_professional": getattr(row, "legal_professional", 0) or 0,
+        "other_interest": getattr(row, "other_interest", 0) or 0,
+        "supplies": getattr(row, "supplies", 0) or 0,
+        "home_warranty": getattr(row, "home_warranty", 0) or 0,
         "other": row.other or 0,
         "property_tax_source": annual_expense_source_key(row.property_tax_source),
         "insurance_source": annual_expense_source_key(row.insurance_source),
@@ -1410,6 +1434,14 @@ def resolve_annual_operating_expenses(prop: models.Property, year: Optional[int]
             "utilities": annual_expense.utilities or 0,
             "vacancy_allowance": annual_expense.vacancy_allowance or 0,
             "capex_reserve": annual_expense.capex_reserve or 0,
+            "advertising": getattr(annual_expense, "advertising", 0) or 0,
+            "auto_travel": getattr(annual_expense, "auto_travel", 0) or 0,
+            "cleaning_maintenance": getattr(annual_expense, "cleaning_maintenance", 0) or 0,
+            "commissions": getattr(annual_expense, "commissions", 0) or 0,
+            "legal_professional": getattr(annual_expense, "legal_professional", 0) or 0,
+            "other_interest": getattr(annual_expense, "other_interest", 0) or 0,
+            "supplies": getattr(annual_expense, "supplies", 0) or 0,
+            "home_warranty": getattr(annual_expense, "home_warranty", 0) or 0,
             "other": annual_expense.other or 0,
         }
         return {
@@ -8893,22 +8925,38 @@ def _schedule_e_annual_expense_components(prop: models.Property, year: int) -> D
     row = _annual_expense_for_year(prop, year)
     if row and _annual_expense_entered(row):
         return {
+            "advertising": _schedule_e_number(getattr(row, "advertising", 0)),
+            "auto_travel": _schedule_e_number(getattr(row, "auto_travel", 0)),
+            "cleaning_maintenance": _schedule_e_number(getattr(row, "cleaning_maintenance", 0)),
+            "commissions": _schedule_e_number(getattr(row, "commissions", 0)),
             "insurance": _schedule_e_number(row.insurance),
+            "legal_professional": _schedule_e_number(getattr(row, "legal_professional", 0)),
             "management_fees": _schedule_e_number(row.property_management),
+            "other_interest": _schedule_e_number(getattr(row, "other_interest", 0)),
             "repairs": _schedule_e_number(row.repairs_maintenance),
+            "supplies": _schedule_e_number(getattr(row, "supplies", 0)),
             "taxes": _schedule_e_number(row.property_tax),
             "utilities": _schedule_e_number(row.utilities),
+            # Home warranty has no dedicated Schedule E line — it rolls into "Other".
             "other_expenses": _schedule_e_number(
                 (row.hoa or 0)
                 + (row.vacancy_allowance or 0)
                 + (row.capex_reserve or 0)
+                + (getattr(row, "home_warranty", 0) or 0)
                 + (row.other or 0)
             ),
         }
     return {
+        "advertising": 0.0,
+        "auto_travel": 0.0,
+        "cleaning_maintenance": 0.0,
+        "commissions": 0.0,
         "insurance": _schedule_e_number(prop.insurance),
+        "legal_professional": 0.0,
         "management_fees": _schedule_e_number((prop.property_management_fee or 0) * 12),
+        "other_interest": 0.0,
         "repairs": _schedule_e_number((prop.maintenance or 0) * 12),
+        "supplies": 0.0,
         "taxes": _schedule_e_number(prop.property_tax),
         "utilities": _schedule_e_number((prop.utilities or 0) * 12),
         "other_expenses": _schedule_e_number(
@@ -8941,17 +8989,17 @@ def _computed_schedule_e_components(prop: models.Property, year: int, lifetime_r
     expense_components = _schedule_e_annual_expense_components(prop, year)
     computed = {
         "rents_received": _schedule_e_number(row.get("rental_income")),
-        "advertising": 0.0,
-        "auto_travel": 0.0,
-        "cleaning_maintenance": 0.0,
-        "commissions": 0.0,
+        "advertising": expense_components.get("advertising", 0.0),
+        "auto_travel": expense_components.get("auto_travel", 0.0),
+        "cleaning_maintenance": expense_components.get("cleaning_maintenance", 0.0),
+        "commissions": expense_components.get("commissions", 0.0),
         "insurance": expense_components["insurance"],
-        "legal_professional": 0.0,
+        "legal_professional": expense_components.get("legal_professional", 0.0),
         "management_fees": expense_components["management_fees"],
         "mortgage_interest": _schedule_e_number(row.get("interest_paid") or row.get("mortgage_interest")),
-        "other_interest": 0.0,
+        "other_interest": expense_components.get("other_interest", 0.0),
         "repairs": expense_components["repairs"],
-        "supplies": 0.0,
+        "supplies": expense_components.get("supplies", 0.0),
         "taxes": _schedule_e_number(row.get("property_tax") or row.get("taxes_paid") or expense_components["taxes"]),
         "utilities": expense_components["utilities"],
         "depreciation": _schedule_e_depreciation(prop, year),
