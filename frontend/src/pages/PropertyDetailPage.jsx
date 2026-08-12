@@ -2138,7 +2138,6 @@ function ExpensesTab({ propId }) {
     setEditorVisibleKeys([])
     setEditorAddKey('')
     setAddressReview(null)
-    setUploadTarget(null)
     if (collapse && yearToCollapse) setExpandedYear(null)
   }
   const updateEditorField = (key, value) => {
