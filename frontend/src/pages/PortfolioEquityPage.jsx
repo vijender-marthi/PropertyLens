@@ -581,10 +581,8 @@ export default function PortfolioEquityPage() {
       { label: `Vacancy loss${per}`, display: fullMoney(m.vacancy * factor) },
       { label: `Effective (EGI)${per}`, display: fullMoney(m.egi * factor) },
     ]),
-    operatingExpenses: mk(`Operating Expenses = −Σ OpEx  ·  Expense ratio = |OpEx| ÷ EGI`, [
+    operatingExpenses: mk(`Operating Expenses = Σ monthly operating costs (taxes, insurance, mgmt, maintenance, HOA, capex reserve) for rentals`, [
       { label: `Operating expenses${per}`, display: fullMoney(-m.opex * factor) },
-      { label: `Effective gross income${per}`, display: fullMoney(m.egi * factor) },
-      { label: 'Expense ratio', display: pct1(m.expenseRatio) },
     ]),
     noi: mk('Net Operating Income = EGI + OpEx  (before debt service)', [
       { label: `Effective gross income${per}`, display: fullMoney(m.egi * factor) },
@@ -631,8 +629,7 @@ export default function PortfolioEquityPage() {
         </KpiTile>
         <KpiTile label="Total Debt" value={compactMoney(m.loan)} valueClass={TONE.red} metric={metrics.totalDebt}>
           <LtvMeter ltv={m.ltv} />
-          <span className={`mt-1 block ${band.tone}`}>{pct1(m.ltv)} of value · {band.label}</span>
-          <Delta>{pct1(m.paidOff)} paid off</Delta>
+          <span className={`mt-1 block ${band.tone}`}>{pct1(m.ltv)} of value</span>
         </KpiTile>
         <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={capRateFlag ? TONE.amber : TONE.blue} metric={metrics.weightedRate}>
           <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
@@ -649,10 +646,17 @@ export default function PortfolioEquityPage() {
 
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
-        <SummaryCard title="Appreciation Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
+        <SummaryCard title="Equity Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
           <SummaryRow label="Portfolio value" value={fullMoney(m.value)} tone="text-sky-600 dark:text-sky-400" />
-          <SummaryRow label="Purchase price" value={fullMoney(m.purchase)} />
-          <SummaryRow label="Total appreciation" value={fullMoney(m.value - m.purchase)} strong tone="text-emerald-600 dark:text-emerald-400" />
+          <SummaryRow label="Loan balance" value={fullMoney(m.loan)} tone="text-red-600 dark:text-red-400" />
+          <SummaryRow label="Total equity" value={fullMoney(m.equity)} strong tone="text-emerald-600 dark:text-emerald-400" />
+          <SummaryRow label="Equity % of value" value={pct1(m.equityPct)} />
+          <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+          <SummaryRow label="↳ Down payment" value={fullMoney(m.waterfall.downPayment)} indent />
+          <SummaryRow label="↳ Principal paid" value={fullMoney(m.waterfall.principalReduction)} indent />
+          <SummaryRow label="↳ Appreciation" value={fullMoney(m.waterfall.appreciation)} indent />
+          <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+          <SummaryRow label="Total appreciation" value={fullMoney(m.value - m.purchase)} tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Total growth" value={pct1(m.growth)} />
           <SummaryRow label="Annualized growth" value={pct1(m.annualizedWeighted)} strong tone="text-emerald-600 dark:text-emerald-400" />
         </SummaryCard>
@@ -712,7 +716,7 @@ export default function PortfolioEquityPage() {
             <span className="text-gray-500 dark:text-gray-400">scheduled rent</span>
           </KpiTile>
           <KpiTile label={`Operating Expenses${per}`} value={compactMoney(-m.opex * factor)} valueClass={TONE.red} metric={metrics.operatingExpenses}>
-            <span className="text-gray-500 dark:text-gray-400">{pct1(m.expenseRatio)} of EGI</span>
+            <span className="text-gray-500 dark:text-gray-400">taxes · ins · mgmt · maint</span>
           </KpiTile>
           <KpiTile label={`Net Operating Income${per}`} value={compactMoney(m.noi * factor)} valueClass={m.noi >= 0 ? TONE.green : TONE.red} metric={metrics.noi}>
             <span className="text-gray-500 dark:text-gray-400">before debt service</span>
