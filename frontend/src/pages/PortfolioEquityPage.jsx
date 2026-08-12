@@ -259,27 +259,54 @@ function HomeTimeline({ rows, onSelect }) {
   )
 }
 
-// Per-home details rendered inside the shared modal (compact font).
+// Per-home details rendered inside the shared modal (compact font), grouped
+// into Acquisition → Today → Loan with value coloring.
 function HomeDetails({ home }) {
+  const GREEN = 'text-emerald-600 dark:text-emerald-400'
+  const RED = 'text-red-600 dark:text-red-400'
+  const BLUE = 'text-blue-600 dark:text-blue-400'
+
+  const downPayment = home.purchase - home.origLoan
+  const loanToPurchase = home.purchase ? home.origLoan / home.purchase : 0
+  const ltv = home.value ? home.loan / home.value : (home.ltv || 0)
   const cleared = home.origLoan - home.loan
   const clearedPct = home.origLoan ? cleared / home.origLoan : 0
+  const purchased = home.buyMonth ? `${MONTHS[home.buyMonth - 1]} ${home.buyYear}` : home.buyYear
+
   const Row = ({ label, value, tone }) => (
     <div className="flex items-center justify-between gap-4">
       <span className="text-gray-500 dark:text-gray-400">{label}</span>
       <span className={`tabular-nums font-semibold ${tone || 'text-gray-900 dark:text-white'}`}>{value}</span>
     </div>
   )
+  const Section = ({ title, children }) => (
+    <div>
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{title}</p>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  )
+
   return (
-    <div className="grid gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2">
-      <Row label="Purchased" value={home.buyMonth ? `${MONTHS[home.buyMonth - 1]} ${home.buyYear}` : home.buyYear} />
-      <Row label="Purchase price" value={fullMoney(home.purchase)} />
-      <Row label="Current value" value={fullMoney(home.value)} />
-      <Row label="Loan balance" value={fullMoney(home.loan)} />
-      <Row label="Original loan" value={fullMoney(home.origLoan)} />
-      <Row label="Equity" value={fullMoney(home.equity)} tone="text-emerald-600 dark:text-emerald-400" />
-      <Row label="Interest rate" value={ratePct(home.rate)} />
-      <Row label="Payoff year" value={home.payoffYear || '—'} />
-      <Row label="Principal cleared" value={`${fullMoney(cleared)} · ${pct1(clearedPct)}`} tone="text-emerald-600 dark:text-emerald-400" />
+    <div className="grid gap-5 text-[13px] sm:grid-cols-3">
+      <Section title="Acquisition">
+        <Row label="Purchased" value={purchased} />
+        <Row label="Purchase price" value={fullMoney(home.purchase)} tone={BLUE} />
+        <Row label="Down payment" value={fullMoney(downPayment)} tone={GREEN} />
+        <Row label="Original loan" value={fullMoney(home.origLoan)} tone={RED} />
+        <Row label="Loan / purchase" value={pct1(loanToPurchase)} />
+      </Section>
+      <Section title="Today">
+        <Row label="Current value" value={fullMoney(home.value)} tone={BLUE} />
+        <Row label="Loan balance" value={fullMoney(home.loan)} tone={RED} />
+        <Row label="Equity" value={fullMoney(home.equity)} tone={GREEN} />
+        <Row label="LTV" value={pct1(ltv)} tone={ltvBand(ltv).tone} />
+      </Section>
+      <Section title="Loan">
+        <Row label="Interest rate" value={ratePct(home.rate)} tone={BLUE} />
+        <Row label="Payoff year" value={home.payoffYear || '—'} />
+        <Row label="Principal cleared" value={fullMoney(cleared)} tone={GREEN} />
+        <Row label="% cleared" value={pct1(clearedPct)} tone={GREEN} />
+      </Section>
     </div>
   )
 }
@@ -765,7 +792,7 @@ export default function PortfolioEquityPage() {
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
       </Modal>
 
-      <Modal open={modal?.kind === 'home'} title={modal?.home?.name || 'Property'} onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'home'} title={modal?.home?.name || 'Property'} wide onClose={() => setModal(null)}>
         {modal?.home ? (
           <>
             <div className="mb-3 flex items-center gap-2">
