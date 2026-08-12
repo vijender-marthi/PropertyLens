@@ -248,7 +248,7 @@ function HomeTimeline({ rows, onSelect }) {
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
               <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'}`}>
-                <Home className="h-3.5 w-3.5" aria-hidden="true" />
+                {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <span className="absolute left-1/2 top-[26px] -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
             </button>
@@ -794,7 +794,9 @@ export default function PortfolioEquityPage() {
         {modal?.home ? (
           <>
             <div className="mb-3 flex items-center gap-2">
-              <Home className={`h-4 w-4 ${modal.home.type === 'primary' ? 'text-red-500' : 'text-blue-500'}`} aria-hidden="true" />
+              {modal.home.type === 'primary'
+                ? <Home className="h-4 w-4 text-red-500" aria-hidden="true" />
+                : <Building2 className="h-4 w-4 text-sky-500" aria-hidden="true" />}
               <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${modal.home.type === 'primary' ? 'bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300' : 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'}`}>{modal.home.type === 'primary' ? 'Primary' : 'Rental'}</span>
             </div>
             <HomeDetails home={modal.home} />

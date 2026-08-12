@@ -12759,7 +12759,26 @@ def portfolio_analysis(
 
 def _year_of(value: Optional[str]) -> Optional[int]:
     parsed = _parse_iso_date(value) if value else None
-    return parsed.year if parsed else None
+    if parsed:
+        return parsed.year
+    # Accept non-ISO strings (e.g. "10/2051", "Oct 2051") by pulling a 4-digit year.
+    if value:
+        match = re.search(r"(19|20)\d{2}", str(value))
+        if match:
+            return int(match.group(0))
+    return None
+
+
+def _loan_payoff_year(loan) -> Optional[int]:
+    """Best available payoff year for a loan: maturity date, else origination + term."""
+    year = _year_of(getattr(loan, "maturity_date", None))
+    if year:
+        return year
+    orig_year = _year_of(getattr(loan, "origination_date", None))
+    term = int(getattr(loan, "loan_term_years", 0) or 0)
+    if orig_year and term:
+        return orig_year + term
+    return None
 
 
 def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, Any]:
@@ -12784,7 +12803,7 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
     # Loan type + payoff year come from the largest active loan by balance.
     primary_loan = max(active_loans, key=current_loan_balance, default=None)
     loan_type = str(getattr(primary_loan, "loan_type", "") or "") if primary_loan else ""
-    payoff_years = [y for y in (_year_of(getattr(loan, "maturity_date", None)) for loan in active_loans) if y]
+    payoff_years = [y for y in (_loan_payoff_year(loan) for loan in active_loans) if y]
 
     metrics = compute_property_metrics(prop)
     value = float(prop.market_value or 0)
