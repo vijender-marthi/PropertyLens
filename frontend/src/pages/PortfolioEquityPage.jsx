@@ -267,7 +267,6 @@ function HomeDetails({ home }) {
   const BLUE = 'text-blue-600 dark:text-blue-400'
 
   const downPayment = home.purchase - home.origLoan
-  const loanToPurchase = home.purchase ? home.origLoan / home.purchase : 0
   const ltv = home.value ? home.loan / home.value : (home.ltv || 0)
   const cleared = home.origLoan - home.loan
   const clearedPct = home.origLoan ? cleared / home.origLoan : 0
@@ -293,7 +292,6 @@ function HomeDetails({ home }) {
         <Row label="Purchase price" value={fullMoney(home.purchase)} tone={BLUE} />
         <Row label="Down payment" value={fullMoney(downPayment)} tone={GREEN} />
         <Row label="Original loan" value={fullMoney(home.origLoan)} tone={RED} />
-        <Row label="Loan / purchase" value={pct1(loanToPurchase)} />
       </Section>
       <Section title="Today">
         <Row label="Current value" value={fullMoney(home.value)} tone={BLUE} />
