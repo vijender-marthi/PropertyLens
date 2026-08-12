@@ -549,7 +549,15 @@ export default function PortfolioEquityPage() {
           <h1 className="text-2xl font-bold text-gray-950 dark:text-white">Portfolio Equity &amp; Cashflow</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{m.counts.total} properties · {m.counts.rentals} rentals · as of {m.nowYear}</p>
         </div>
-        <PropertyFilter properties={available} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
+        <div className="flex flex-col items-start gap-1.5 lg:items-end">
+          <PropertyFilter properties={available} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
+          {(() => {
+            const names = available.filter((p) => selectedIds.has(p.id)).map((p) => p.name)
+            const allSelected = available.length > 0 && names.length === available.length
+            if (!names.length || allSelected) return null
+            return <p className="max-w-xs text-xs text-gray-500 dark:text-gray-400 lg:max-w-md lg:text-right">{names.join(', ')}</p>
+          })()}
+        </div>
       </header>
 
       {/* ── Band 1: Equity KPI tiles ── */}
