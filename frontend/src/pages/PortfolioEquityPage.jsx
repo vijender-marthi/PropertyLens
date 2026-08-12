@@ -546,7 +546,7 @@ export default function PortfolioEquityPage() {
       {/* Header + property filter */}
       <header className="flex flex-col gap-4 border-b border-gray-200 pb-4 dark:border-gray-700 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-950 dark:text-white">Portfolio Equity &amp; Cashflow</h1>
+          <h1 className="text-2xl font-bold text-gray-950 dark:text-white">Portfolio</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{m.counts.total} properties · {m.counts.rentals} rentals · as of {m.nowYear}</p>
         </div>
         <div className="flex flex-col items-start gap-1.5 lg:items-end">
