@@ -207,6 +207,7 @@ function HomeTimeline({ rows, onSelect, selectedIds }) {
 
   return (
     <div className="relative px-2 py-1" aria-label="Acquisition timeline">
+      <p className="mb-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">Click a home to filter · ⌘/Ctrl-click to select multiple</p>
       <div className="relative h-12">
         {/* timeline line */}
         <div className="absolute inset-x-[5%] top-[22px] h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
@@ -218,10 +219,10 @@ function HomeTimeline({ rows, onSelect, selectedIds }) {
             <button
               key={p.id}
               type="button"
-              onClick={() => onSelect(p)}
+              onClick={(e) => onSelect(p, e.metaKey || e.ctrlKey || e.shiftKey)}
               className={`group absolute top-[22px] z-10 -translate-x-1/2 -translate-y-1/2 transition-opacity focus:outline-none ${active ? '' : 'opacity-35'}`}
               style={{ left: `${leftPct(frac(p))}%` }}
-              title={`${p.name} · purchased ${monthLabel(p)}`}
+              title={`${p.name} · purchased ${monthLabel(p)} · ⌘/Ctrl-click to multi-select`}
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
               <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
@@ -586,11 +587,18 @@ export default function PortfolioEquityPage() {
       <HomeTimeline
         rows={available}
         selectedIds={selectedIds}
-        onSelect={(home) => setSelectedIds((cur) => (
-          cur.size === 1 && cur.has(home.id)
-            ? new Set(available.map((p) => p.id))   // already isolated → reset to all
-            : new Set([home.id])                    // filter to just this home
-        ))}
+        onSelect={(home, additive) => setSelectedIds((cur) => {
+          if (additive) {
+            // ⌘/Ctrl/Shift-click: toggle this home in/out of the current selection.
+            const next = new Set(cur)
+            if (next.has(home.id)) next.delete(home.id); else next.add(home.id)
+            return next.size ? next : new Set(available.map((p) => p.id)) // never empty
+          }
+          // Plain click: isolate to this home, or reset to all if already isolated to it.
+          return cur.size === 1 && cur.has(home.id)
+            ? new Set(available.map((p) => p.id))
+            : new Set([home.id])
+        })}
       />
 
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
