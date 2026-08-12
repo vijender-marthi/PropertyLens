@@ -232,8 +232,8 @@ function HomeTimeline({ rows, onSelect }) {
   return (
     <div className="relative px-2 py-1" aria-label="Acquisition timeline">
       <div className="relative h-12">
-        {/* colored timeline line */}
-        <div className="absolute inset-x-[5%] top-[22px] h-[3px] -translate-y-1/2 rounded-full bg-gradient-to-r from-sky-400 via-emerald-400 to-amber-400 opacity-80 dark:from-sky-500 dark:via-emerald-500 dark:to-amber-500" />
+        {/* timeline line */}
+        <div className="absolute inset-x-[5%] top-[22px] h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
         {/* home markers */}
         {withYear.map((p) => {
           const primary = p.type === 'primary'
