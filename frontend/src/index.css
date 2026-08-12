@@ -36,6 +36,19 @@ body {
   svg *, [style*="transform"], [style*="transition"], .recharts-wrapper * {
     transition: none !important;
   }
+
+  /* Remove the up/down spinner on every numeric input, app-wide. The spinners
+     are unusable in dense tables and on mobile; fields still accept numbers
+     with decimals via the keyboard. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
 }
 
 @layer components {
