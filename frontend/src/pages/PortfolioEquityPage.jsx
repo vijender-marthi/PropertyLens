@@ -545,8 +545,8 @@ export default function PortfolioEquityPage() {
     weightedRate: mk('Weighted Rate = Σ(Balance × Rate) ÷ Σ Balance', [
       { label: 'Σ Loan balance', display: fullMoney(m.loan) },
       { label: 'Weighted rate', display: ratePct(m.weightedRate) },
-      { label: 'Monthly interest', display: fullMoney(m.monthlyInterest) },
-      { label: 'Portfolio cap rate', display: pct1(m.capRate) },
+      { label: 'Interest range', display: `${ratePct(m.rateMin)} – ${ratePct(m.rateMax)}` },
+      { label: 'Loan types', display: `${m.fixedLoans} fixed · ${m.armLoans} ARM` },
     ]),
     roe: mk('ROE = (Annual Net Cash Flow + Annual Principal Paydown) ÷ Equity', [
       { label: 'Annual net cash flow', display: fullMoney(m.netCashFlow * 12) },

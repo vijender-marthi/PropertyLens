@@ -12769,6 +12769,12 @@ def _year_of(value: Optional[str]) -> Optional[int]:
     return None
 
 
+def _is_arm_loan(loan) -> bool:
+    """True when a loan is adjustable-rate (ARM), else treated as fixed."""
+    label = str(getattr(loan, "loan_type", "") or "").lower()
+    return "arm" in label or "adjust" in label
+
+
 def _loan_payoff_year(loan) -> Optional[int]:
     """Best available payoff year for a loan: maturity date, else origination + term."""
     year = _year_of(getattr(loan, "maturity_date", None))
@@ -12804,6 +12810,12 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
     primary_loan = max(active_loans, key=current_loan_balance, default=None)
     loan_type = str(getattr(primary_loan, "loan_type", "") or "") if primary_loan else ""
     payoff_years = [y for y in (_loan_payoff_year(loan) for loan in active_loans) if y]
+    # Rate range + fixed/ARM mix across this property's active loans.
+    _loan_rates = [float(loan.interest_rate or 0) for loan in active_loans if (loan.interest_rate or 0) > 0]
+    rate_min = min(_loan_rates) if _loan_rates else 0.0
+    rate_max = max(_loan_rates) if _loan_rates else 0.0
+    arm_loans = sum(1 for loan in active_loans if _is_arm_loan(loan))
+    fixed_loans = len(active_loans) - arm_loans
 
     metrics = compute_property_metrics(prop)
     value = float(prop.market_value or 0)
@@ -12848,6 +12860,10 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
         "origLoan": round(orig_loan, 2),
         "loan": round(balance, 2),
         "rate": round(weighted_rate, 3),
+        "rateMin": round(rate_min, 3),
+        "rateMax": round(rate_max, 3),
+        "fixedLoans": fixed_loans,
+        "armLoans": arm_loans,
         "loanType": loan_type or "—",
         "payment": round(payment, 2),
         "payoffYear": max(payoff_years) if payoff_years else None,
@@ -12892,6 +12908,14 @@ def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months
     monthly_interest = sum(r["loan"] * r["rate"] / 100 / 12 for r in rows)
     monthly_principal = payment - monthly_interest
 
+    # Interest-rate range + fixed/ARM mix across the selection.
+    _rate_mins = [r["rateMin"] for r in rows if r.get("rateMin")]
+    _rate_maxs = [r["rateMax"] for r in rows if r.get("rateMax")]
+    rate_min = min(_rate_mins) if _rate_mins else 0.0
+    rate_max = max(_rate_maxs) if _rate_maxs else 0.0
+    fixed_loans = sum(int(r.get("fixedLoans") or 0) for r in rows)
+    arm_loans = sum(int(r.get("armLoans") or 0) for r in rows)
+
     annualized_weighted = (
         sum(r["value"] * r["annualized"] for r in rows) / value if value else 0.0
     )
@@ -12932,6 +12956,10 @@ def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months
         "paidOff": round(paid_off, 4),
         "priceCushion": round(price_cushion, 4),
         "weightedRate": round(weighted_rate, 3),
+        "rateMin": round(rate_min, 3),
+        "rateMax": round(rate_max, 3),
+        "fixedLoans": fixed_loans,
+        "armLoans": arm_loans,
         "monthlyInterest": round(monthly_interest, 2),
         "monthlyPrincipal": round(monthly_principal, 2),
         "annualizedWeighted": round(annualized_weighted, 4),
