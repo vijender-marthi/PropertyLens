@@ -12789,7 +12789,9 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
     metrics = compute_property_metrics(prop)
     value = float(prop.market_value or 0)
     purchase = float(prop.purchase_price or 0)
-    buy_year = _year_of(prop.purchase_date)
+    _buy_date = _parse_iso_date(prop.purchase_date) if prop.purchase_date else None
+    buy_year = _buy_date.year if _buy_date else None
+    buy_month = _buy_date.month if _buy_date else None
     # Scheduled rent uses the shared resolver: active lease-period rent first,
     # then the property-details "rent per month" fallback. Reading prop.monthly_rent
     # alone shows 0 for properties whose rent is tracked via lease periods.
@@ -12823,6 +12825,7 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
         "value": round(value, 2),
         "purchase": round(purchase, 2),
         "buyYear": buy_year,
+        "buyMonth": buy_month,
         "origLoan": round(orig_loan, 2),
         "loan": round(balance, 2),
         "rate": round(weighted_rate, 3),

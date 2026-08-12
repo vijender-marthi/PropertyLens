@@ -25,6 +25,7 @@ const compactMoney = (value) => {
   if (abs >= 1e3) return `${sign}$${Math.round(abs / 1e3)}K`
   return `${sign}$${abs.toFixed(0)}`
 }
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const fullMoney = (value) => formatCurrency(value)
 const pct1 = (fraction) => `${(Number(fraction || 0) * 100).toFixed(1)}%`
 // Interest rates carry more precision than other percentages — show 3 decimals.
@@ -218,34 +219,21 @@ function HomeTimeline({ rows, onSelect }) {
   const withYear = rows.filter((p) => p.buyYear)
   if (!withYear.length) return null
 
-  const nowYear = new Date().getFullYear()
-  const startYear = Math.min(...withYear.map((p) => p.buyYear))
-  const endYear = Math.max(nowYear, ...withYear.map((p) => p.buyYear))
-  const span = Math.max(1, endYear - startYear)
-  const leftPct = (year) => 4 + ((year - startYear) / span) * 92
-
-  const step = Math.max(1, Math.round(span / 6))
-  const tickYears = []
-  for (let yr = startYear; yr <= endYear; yr += step) tickYears.push(yr)
-  if (tickYears[tickYears.length - 1] !== endYear) tickYears.push(endYear)
+  // Month-precision position: fractional year = year + (month-1)/12.
+  const frac = (p) => p.buyYear + (((p.buyMonth || 1) - 1) / 12)
+  const startFrac = Math.min(...withYear.map(frac))
+  const domainStart = Math.floor(startFrac)
+  // End the line one year past the last purchase.
+  const domainEnd = Math.max(...withYear.map((p) => p.buyYear)) + 1
+  const span = Math.max(1, domainEnd - domainStart)
+  const leftPct = (f) => 5 + ((f - domainStart) / span) * 90
+  const monthLabel = (p) => `${MONTHS[(p.buyMonth || 1) - 1]} ${p.buyYear}`
 
   return (
-    <section className="relative rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900" aria-label="Acquisition timeline">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Acquisition Timeline</h3>
-        <span className="text-xs text-gray-400">{startYear} – {endYear} · click a home for details</span>
-      </div>
-
-      <div className="relative mx-1 mt-9 mb-3 h-12">
-        {/* base line */}
-        <div className="absolute inset-x-[4%] top-5 h-0.5 rounded bg-gray-200 dark:bg-gray-700" />
-        {/* year ticks */}
-        {tickYears.map((yr) => (
-          <div key={yr} className="absolute top-5 -translate-x-1/2" style={{ left: `${leftPct(yr)}%` }}>
-            <div className="mx-auto h-2 w-px bg-gray-300 dark:bg-gray-600" />
-            <div className="mt-1 whitespace-nowrap text-center text-[10px] text-gray-400">{yr}</div>
-          </div>
-        ))}
+    <div className="relative px-2 py-1" aria-label="Acquisition timeline">
+      <div className="relative h-12">
+        {/* colored timeline line */}
+        <div className="absolute inset-x-[5%] top-[22px] h-[3px] -translate-y-1/2 rounded-full bg-gradient-to-r from-sky-400 via-emerald-400 to-amber-400 opacity-80 dark:from-sky-500 dark:via-emerald-500 dark:to-amber-500" />
         {/* home markers */}
         {withYear.map((p) => {
           const primary = p.type === 'primary'
@@ -254,19 +242,20 @@ function HomeTimeline({ rows, onSelect }) {
               key={p.id}
               type="button"
               onClick={() => onSelect(p)}
-              className="group absolute top-5 z-10 -translate-x-1/2 -translate-y-1/2 focus:outline-none"
-              style={{ left: `${leftPct(p.buyYear)}%` }}
-              title={`${p.name} · purchased ${p.buyYear}`}
-              aria-label={`${p.name}, purchased ${p.buyYear}`}
+              className="group absolute top-[22px] z-10 -translate-x-1/2 -translate-y-1/2 focus:outline-none"
+              style={{ left: `${leftPct(frac(p))}%` }}
+              title={`${p.name} · purchased ${monthLabel(p)}`}
+              aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
-              <span className={`flex h-8 w-8 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-blue-400 text-blue-500'}`}>
-                <Home className="h-4 w-4" aria-hidden="true" />
+              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'}`}>
+                <Home className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
+              <span className="absolute left-1/2 top-[26px] -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
             </button>
           )
         })}
       </div>
-    </section>
+    </div>
   )
 }
 
@@ -282,7 +271,7 @@ function HomeDetails({ home }) {
   )
   return (
     <div className="grid gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2">
-      <Row label="Purchased" value={home.buyYear} />
+      <Row label="Purchased" value={home.buyMonth ? `${MONTHS[home.buyMonth - 1]} ${home.buyYear}` : home.buyYear} />
       <Row label="Purchase price" value={fullMoney(home.purchase)} />
       <Row label="Current value" value={fullMoney(home.value)} />
       <Row label="Loan balance" value={fullMoney(home.loan)} />
