@@ -94,6 +94,19 @@ export function RentalPropertySummaryHeader({ prop, presentation, metrics, expan
   const purchaseDate = prop?.purchase_date || header.purchaseDate
   const status = header.currentStatus || header.status || prop?.current_residency_status || prop?.usage_type || '—'
 
+  // "As of" reflects the most recent loan statement/balance date, falling back to
+  // the presentation's date when no statement date is on file.
+  const lastStatementDate = (() => {
+    const dated = (prop?.loans || [])
+      .map((l) => l.statement_date || l.current_balance_as_of || l.balance_as_of)
+      .filter(Boolean)
+      .map((s) => ({ s, t: new Date(String(s).slice(0, 10)).getTime() }))
+      .filter((d) => !Number.isNaN(d.t))
+    if (!dated.length) return null
+    return dated.sort((a, b) => b.t - a.t)[0].s
+  })()
+  const asOfDate = lastStatementDate || header.asOfDate
+
   return (
     <header className="rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:px-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -115,7 +128,7 @@ export function RentalPropertySummaryHeader({ prop, presentation, metrics, expan
         </div>
         <div className="flex shrink-0 items-center">
           <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2.5 text-[11px] font-medium text-orange-700">
-            As of {header.asOfDate ? formatDate(header.asOfDate) : '—'}
+            As of {asOfDate ? formatDate(asOfDate) : '—'}
             <CalendarDays className="h-3.5 w-3.5 text-orange-500" aria-hidden="true" />
           </span>
         </div>
