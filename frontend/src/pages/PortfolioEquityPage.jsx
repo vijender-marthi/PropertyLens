@@ -27,7 +27,8 @@ const compactMoney = (value) => {
 }
 const fullMoney = (value) => formatCurrency(value)
 const pct1 = (fraction) => `${(Number(fraction || 0) * 100).toFixed(1)}%`
-const rate1 = (percentValue) => `${(Number(percentValue || 0)).toFixed(1)}%`
+// Interest rates carry more precision than other percentages — show 3 decimals.
+const ratePct = (percentValue) => `${(Number(percentValue || 0)).toFixed(3)}%`
 
 // All financial calculations (roll-ups, KPIs, waterfall, per-property equity /
 // appreciation / cashflow) are computed by the backend. This page only renders.
@@ -369,7 +370,7 @@ export default function PortfolioEquityPage() {
           <LtvMeter ltv={m.ltv} />
           <span className={`mt-1 block ${band.tone}`}>{band.label} · ~{pct1(Math.max(0, m.priceCushion))} price cushion</span>
         </KpiTile>
-        <KpiTile label="Weighted Interest Rate" value={rate1(m.weightedRate)}>
+        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)}>
           <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
             {capRateFlag ? '▲ above' : 'vs'} {pct1(m.capRate)} cap rate
           </span>
@@ -408,7 +409,7 @@ export default function PortfolioEquityPage() {
           <SummaryRow label="Original loans" value={fullMoney(m.origLoan)} />
           <SummaryRow label="Current balance" value={fullMoney(m.loan)} />
           <SummaryRow label="Principal paid to date" value={fullMoney(m.origLoan - m.loan)} tone="text-emerald-600 dark:text-emerald-400" />
-          <SummaryRow label="Weighted rate" value={rate1(m.weightedRate)} />
+          <SummaryRow label="Weighted rate" value={ratePct(m.weightedRate)} />
           <SummaryRow label="Monthly payment" value={fullMoney(m.payment)} strong />
           <SummaryRow label="↳ Interest" value={fullMoney(m.monthlyInterest)} indent />
           <SummaryRow label="↳ Principal" value={fullMoney(m.monthlyPrincipal)} indent />
@@ -612,7 +613,7 @@ export default function PortfolioEquityPage() {
                   <td className="py-2 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.origLoan)}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.loan)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{rate1(p.rate)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{ratePct(p.rate)}</td>
                   <td className="px-2 py-2 text-left text-gray-500 dark:text-gray-400">{p.loanType}</td>
                   <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.payment)}</td>
                   <td className="py-2 pl-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{p.payoffYear || '—'}</td>
@@ -624,7 +625,7 @@ export default function PortfolioEquityPage() {
                 <td className="py-2 pr-3 text-gray-900 dark:text-white">Total</td>
                 <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.origLoan)}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.loan)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{rate1(m.weightedRate)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{ratePct(m.weightedRate)}</td>
                 <td className="px-2 py-2" />
                 <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.payment)}</td>
                 <td className="py-2 pl-2" />
