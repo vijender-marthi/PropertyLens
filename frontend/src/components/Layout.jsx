@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut, Home, Plus,
-  BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark,
+  BarChart3, TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark, Scale,
   Sun, Moon, DoorOpen, FileBarChart, Sparkles, MessageCircle,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -13,6 +13,7 @@ import { propAPI } from '../services/api'
 
 const DASHBOARDS_NAV = [
   { to: '/dashboard',  icon: BarChart3,  label: 'Portfolio' },
+  { to: '/portfolio-equity', icon: Scale, label: 'Equity & Cashflow' },
   { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
   { to: '/loans',      icon: Landmark,   label: 'Loans' },
   { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },

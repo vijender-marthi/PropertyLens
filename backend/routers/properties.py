@@ -12755,3 +12755,234 @@ def portfolio_analysis(
         filter_context=filter_context,
         occupancy_by_year=occupancy_by_year,
     )
+
+
+def _year_of(value: Optional[str]) -> Optional[int]:
+    parsed = _parse_iso_date(value) if value else None
+    return parsed.year if parsed else None
+
+
+def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, Any]:
+    """One property rendered as the Equity & Cashflow dashboard data model.
+
+    Both the raw data model *and* every per-property derived figure are computed
+    here so the front end stays purely presentational — it renders numbers, it
+    does not compute them.
+    """
+    is_primary = str(prop.usage_type or "Rental").lower() == "primary"
+    active_loans = [
+        loan for loan in (prop.loans or [])
+        if not _is_closed_loan_status(getattr(loan, "status", None))
+    ]
+    orig_loan = sum(float(loan.original_amount or 0) for loan in active_loans)
+    balance = sum(current_loan_balance(loan) for loan in active_loans)
+    payment = sum(loan_monthly_pi(loan) for loan in active_loans)
+    weighted_rate = (
+        sum(current_loan_balance(loan) * float(loan.interest_rate or 0) for loan in active_loans) / balance
+        if balance else 0.0
+    )
+    # Loan type + payoff year come from the largest active loan by balance.
+    primary_loan = max(active_loans, key=current_loan_balance, default=None)
+    loan_type = str(getattr(primary_loan, "loan_type", "") or "") if primary_loan else ""
+    payoff_years = [y for y in (_year_of(getattr(loan, "maturity_date", None)) for loan in active_loans) if y]
+
+    metrics = compute_property_metrics(prop)
+    value = float(prop.market_value or 0)
+    purchase = float(prop.purchase_price or 0)
+    buy_year = _year_of(prop.purchase_date)
+    monthly_rent = 0.0 if is_primary else float(prop.monthly_rent or 0)
+    effective_rent = 0.0 if is_primary else float(metrics.get("effective_rent") or 0)  # occupancy-adjusted
+    monthly_opex = 0.0 if is_primary else float(metrics.get("monthly_expenses") or 0)
+    vacancy = effective_rent - monthly_rent  # negative loss
+    opex = -monthly_opex
+    debt_service = 0.0 if is_primary else -payment
+    net_cash_flow = monthly_rent + vacancy + opex + debt_service
+
+    # Per-property derived equity/appreciation figures.
+    equity = value - balance
+    ltv = balance / value if value else 0.0
+    growth = (value - purchase) / purchase if purchase else 0.0
+    years_held = max(now_year - (buy_year or now_year), 1)
+    annualized = (
+        (value / purchase) ** (1.0 / years_held) - 1.0
+        if purchase > 0 and value > 0 else 0.0
+    )
+
+    return {
+        "id": prop.id,
+        "name": prop.name or _default_property_name(prop.address, prop.id),
+        "type": "primary" if is_primary else "rental",
+        "value": round(value, 2),
+        "purchase": round(purchase, 2),
+        "buyYear": buy_year,
+        "origLoan": round(orig_loan, 2),
+        "loan": round(balance, 2),
+        "rate": round(weighted_rate, 3),
+        "loanType": loan_type or "—",
+        "payment": round(payment, 2),
+        "payoffYear": max(payoff_years) if payoff_years else None,
+        "rent": round(monthly_rent, 2),
+        "vacancy": round(vacancy, 2),
+        "opex": round(opex, 2),
+        "debtService": round(debt_service, 2),
+        # Derived (per property)
+        "equity": round(equity, 2),
+        "ltv": round(ltv, 4),
+        "growth": round(growth, 4),
+        "annualized": round(annualized, 4),
+        "netCashFlow": round(net_cash_flow, 2),
+        "appreciation": round(value - purchase, 2),
+    }
+
+
+def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months_elapsed: int) -> Dict[str, Any]:
+    """Portfolio-level roll-ups + KPIs for the selected properties.
+
+    Mirrors the formula appendix exactly; the front end renders these directly.
+    """
+    def s(key, source=None):
+        return sum(float(r.get(key) or 0) for r in (source if source is not None else rows))
+
+    rentals = [r for r in rows if r.get("type") == "rental"]
+
+    value = s("value")
+    purchase = s("purchase")
+    loan = s("loan")
+    orig_loan = s("origLoan")
+    payment = s("payment")
+
+    equity = value - loan
+    ltv = loan / value if value else 0.0
+    growth = (value - purchase) / purchase if purchase else 0.0
+    equity_pct = equity / value if value else 0.0
+    paid_off = (orig_loan - loan) / orig_loan if orig_loan else 0.0
+    price_cushion = 1 - (loan / 0.80) / value if value else 0.0
+    weighted_rate = sum(r["loan"] * r["rate"] for r in rows) / loan if loan else 0.0
+
+    monthly_interest = sum(r["loan"] * r["rate"] / 100 / 12 for r in rows)
+    monthly_principal = payment - monthly_interest
+
+    annualized_weighted = (
+        sum(r["value"] * r["annualized"] for r in rows) / value if value else 0.0
+    )
+
+    # Cashflow (rentals only)
+    rent = s("rent", rentals)
+    vacancy = s("vacancy", rentals)
+    opex = s("opex", rentals)
+    debt_service = s("debtService", rentals)
+    egi = rent + vacancy
+    noi = egi + opex
+    net_cash_flow = noi + debt_service
+    rental_value = s("value", rentals)
+    cap_rate = (noi * 12) / rental_value if rental_value else 0.0
+    dscr = noi / -debt_service if debt_service else 0.0
+    expense_ratio = -opex / egi if egi else 0.0
+
+    annual_net_cash_flow = net_cash_flow * 12
+    annual_principal_paydown = monthly_principal * 12
+    roe = (annual_net_cash_flow + annual_principal_paydown) / equity if equity else 0.0
+
+    return {
+        "counts": {"total": len(rows), "rentals": len(rentals)},
+        "nowYear": now_year,
+        "monthsElapsed": months_elapsed,
+        "annualFactor": 12,
+        "value": round(value, 2),
+        "purchase": round(purchase, 2),
+        "loan": round(loan, 2),
+        "origLoan": round(orig_loan, 2),
+        "payment": round(payment, 2),
+        "equity": round(equity, 2),
+        "ltv": round(ltv, 4),
+        "growth": round(growth, 4),
+        "equityPct": round(equity_pct, 4),
+        "paidOff": round(paid_off, 4),
+        "priceCushion": round(price_cushion, 4),
+        "weightedRate": round(weighted_rate, 3),
+        "monthlyInterest": round(monthly_interest, 2),
+        "monthlyPrincipal": round(monthly_principal, 2),
+        "annualizedWeighted": round(annualized_weighted, 4),
+        "ytdInterest": round(monthly_interest * months_elapsed, 2),
+        "ytdPrincipal": round(monthly_principal * months_elapsed, 2),
+        # Cashflow (monthly basis; annualFactor scales for the annual toggle)
+        "rent": round(rent, 2),
+        "vacancy": round(vacancy, 2),
+        "opex": round(opex, 2),
+        "debtService": round(debt_service, 2),
+        "egi": round(egi, 2),
+        "noi": round(noi, 2),
+        "netCashFlow": round(net_cash_flow, 2),
+        "rentalValue": round(rental_value, 2),
+        "capRate": round(cap_rate, 4),
+        "dscr": round(dscr, 3),
+        "expenseRatio": round(expense_ratio, 4),
+        "roe": round(roe, 4),
+        "waterfall": {
+            "downPayment": round(purchase - orig_loan, 2),
+            "principalReduction": round(orig_loan - loan, 2),
+            "appreciation": round(value - purchase, 2),
+            "remainingDebt": round(loan, 2),
+            "currentValue": round(value, 2),
+            "totalEquity": round(equity, 2),
+            "owed": round(loan, 2),
+        },
+    }
+
+
+@router.get("/analysis/portfolio/equity-cashflow")
+def portfolio_equity_cashflow(
+    selected_property_ids: str = "",
+    selection_explicit: bool = False,
+    include_primary_residence: bool = True,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Per-property data model for the Portfolio Equity & Cashflow dashboard.
+
+    Honors the same property-selection contract as ``portfolio_analysis``:
+    an explicit selection overrides the primary-residence toggle.
+    """
+    own_props = db.query(models.Property).filter(models.Property.owner_id == current_user.id).all()
+    shared_owner_ids = [
+        share.owner_id
+        for share in db.query(models.UserSharing).filter(
+            models.UserSharing.shared_with_id == current_user.id
+        ).all()
+    ]
+    shared_props = (
+        db.query(models.Property).filter(models.Property.owner_id.in_(shared_owner_ids)).all()
+        if shared_owner_ids else []
+    )
+    all_props = own_props + shared_props
+    requested_ids = {
+        int(item) for item in (selected_property_ids or "").split(",")
+        if item.strip().isdigit()
+    }
+    explicit_selection = bool(requested_ids) or selection_explicit
+    if explicit_selection:
+        props = [prop for prop in all_props if prop.id in requested_ids]
+    elif include_primary_residence:
+        props = list(all_props)
+    else:
+        props = [
+            prop for prop in all_props
+            if str(prop.usage_type or "Rental").lower() != "primary"
+        ]
+
+    today = date.today()
+    rows = [_equity_cashflow_row(prop, now_year=today.year) for prop in props]
+    return {
+        "asOf": today.isoformat(),
+        "properties": rows,
+        "totals": _equity_cashflow_totals(rows, now_year=today.year, months_elapsed=today.month),
+        "availableProperties": [
+            {
+                "id": prop.id,
+                "name": prop.name or _default_property_name(prop.address, prop.id),
+                "address": prop.address,
+                "isPrimary": str(prop.usage_type or "Rental").lower() == "primary",
+            }
+            for prop in all_props
+        ],
+    }

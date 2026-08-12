@@ -7,6 +7,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import LandingPage from './pages/LandingPage'
 import DashboardPage from './pages/DashboardPage'
+import PortfolioEquityPage from './pages/PortfolioEquityPage'
 import PropertiesPage from './pages/PropertiesPage'
 import PropertyDetailPage from './pages/PropertyDetailPage'
 import PropertyFormPage from './pages/PropertyFormPage'
@@ -50,6 +51,7 @@ function AppRoutes() {
             <Layout>
               <Routes>
                 <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/portfolio-equity" element={<PortfolioEquityPage />} />
                 <Route path="/properties" element={<PropertiesPage />} />
                 <Route path="/properties/new" element={<PropertyFormPage />} />
                 <Route path="/properties/:id" element={<PropertyDetailPage />} />

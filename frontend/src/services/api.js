@@ -82,6 +82,7 @@ export const propAPI = {
   updateNotes: (id, note) => api.patch(`/properties/${id}/notes`, null, { params: { note } }),
   dashboard: (excludeIds = '') => api.get('/properties/dashboard/summary', { params: { exclude_ids: excludeIds } }),
   portfolioAnalysis: (params = {}, config = {}) => api.get('/properties/analysis/portfolio', { ...config, params }),
+  portfolioEquityCashflow: (params = {}, config = {}) => api.get('/properties/analysis/portfolio/equity-cashflow', { ...config, params }),
   payoffPlanner: (params = {}, config = {}) => api.get('/properties/analysis/payoff-planner', { ...config, params }),
   exitPlanner: (params = {}, config = {}) => api.get('/properties/analysis/exit-planner', { ...config, params }),
   // Saved payoff scenarios (per user)
