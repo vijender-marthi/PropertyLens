@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
-import { formatCurrency } from '../utils/formatters'
+import { formatCurrency, formatMetricCurrency } from '../utils/formatters'
 
 // ── Visual system (dataviz palette) ─────────────────────────────────────────
 const SERIES = {
@@ -17,14 +17,9 @@ const SERIES = {
 }
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
-const compactMoney = (value) => {
-  const n = Number(value) || 0
-  const abs = Math.abs(n)
-  const sign = n < 0 ? '-' : ''
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`
-  if (abs >= 1e3) return `${sign}$${Math.round(abs / 1e3)}K`
-  return `${sign}$${abs.toFixed(0)}`
-}
+// Per UI_DESIGN_STANDARDS §5, display formatting goes through the shared
+// formatter module. Compact metric currency renders e.g. $4.73M / $876.5K.
+const compactMoney = (value) => formatMetricCurrency(value)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const fullMoney = (value) => formatCurrency(value)
 const pct1 = (fraction) => `${(Number(fraction || 0) * 100).toFixed(1)}%`
@@ -238,56 +233,6 @@ function HomeTimeline({ rows, onSelect }) {
   )
 }
 
-// Per-home details rendered inside the shared modal (compact font), grouped
-// into Acquisition → Today → Loan with value coloring.
-function HomeDetails({ home }) {
-  const GREEN = 'text-emerald-600 dark:text-emerald-400'
-  const RED = 'text-red-600 dark:text-red-400'
-  const BLUE = 'text-blue-600 dark:text-blue-400'
-
-  const downPayment = home.purchase - home.origLoan
-  const ltv = home.value ? home.loan / home.value : (home.ltv || 0)
-  const cleared = home.origLoan - home.loan
-  const clearedPct = home.origLoan ? cleared / home.origLoan : 0
-  const purchased = home.buyMonth ? `${MONTHS[home.buyMonth - 1]} ${home.buyYear}` : home.buyYear
-
-  const Row = ({ label, value, tone }) => (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-gray-500 dark:text-gray-400">{label}</span>
-      <span className={`tabular-nums font-semibold ${tone || 'text-gray-900 dark:text-white'}`}>{value}</span>
-    </div>
-  )
-  const Section = ({ title, children }) => (
-    <div>
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{title}</p>
-      <div className="space-y-1.5">{children}</div>
-    </div>
-  )
-
-  return (
-    <div className="grid gap-5 text-[13px] sm:grid-cols-3">
-      <Section title="Acquisition">
-        <Row label="Purchased" value={purchased} />
-        <Row label="Purchase price" value={fullMoney(home.purchase)} tone={BLUE} />
-        <Row label="Down payment" value={fullMoney(downPayment)} tone={GREEN} />
-        <Row label="Original loan" value={fullMoney(home.origLoan)} tone={RED} />
-      </Section>
-      <Section title="Today">
-        <Row label="Current value" value={fullMoney(home.value)} tone={BLUE} />
-        <Row label="Loan balance" value={fullMoney(home.loan)} tone={RED} />
-        <Row label="Equity" value={fullMoney(home.equity)} tone={GREEN} />
-        <Row label="LTV" value={pct1(ltv)} tone={ltvBand(ltv).tone} />
-      </Section>
-      <Section title="Loan">
-        <Row label="Interest rate" value={ratePct(home.rate)} tone={BLUE} />
-        <Row label="Payoff year" value={home.payoffYear || '—'} />
-        <Row label="Principal cleared" value={fullMoney(cleared)} tone={GREEN} />
-        <Row label="% cleared" value={pct1(clearedPct)} tone={GREEN} />
-      </Section>
-    </div>
-  )
-}
-
 // ── Cashflow bridge waterfall (income → expenses → NOI → debt → net) ──────────
 const CF_UP = '#0ca30c'      // rental income (increase)
 const CF_DOWN = '#d63a3a'    // expenses / debt service (decrease)
@@ -398,6 +343,8 @@ function PropertyFilter({ properties, selectedIds, setSelectedIds }) {
     if (next.has(id)) next.delete(id); else next.add(id)
     return next
   })
+  const selectAll = () => setSelectedIds(new Set(properties.map((p) => p.id)))
+  const clearAll = () => setSelectedIds(new Set())
 
   return (
     <div className="relative">
@@ -415,6 +362,10 @@ function PropertyFilter({ properties, selectedIds, setSelectedIds }) {
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden="true" />
           <div className="absolute right-0 z-30 mt-2 w-72 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900" role="listbox" aria-label="Select properties">
+            <div className="flex items-center justify-between border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+              <button type="button" onClick={selectAll} disabled={allSelected} className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-default disabled:text-gray-300 dark:text-blue-400 dark:disabled:text-gray-600">Select all</button>
+              <button type="button" onClick={clearAll} disabled={selectedCount === 0} className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-default disabled:text-gray-300 dark:text-blue-400 dark:disabled:text-gray-600">Deselect all</button>
+            </div>
             <div className="max-h-72 overflow-y-auto p-1.5">
               {ordered.length ? ordered.map((p) => {
                 const primary = !!p.isPrimary
@@ -619,8 +570,8 @@ export default function PortfolioEquityPage() {
         </KpiTile>
       </section>
 
-      {/* ── Acquisition timeline ── */}
-      <HomeTimeline rows={rows} onSelect={(home) => setModal({ kind: 'home', home })} />
+      {/* ── Acquisition timeline (click a home to filter the dashboard to it) ── */}
+      <HomeTimeline rows={rows} onSelect={(home) => setSelectedIds(new Set([home.id]))} />
 
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
@@ -655,8 +606,8 @@ export default function PortfolioEquityPage() {
         </div>
 
         <SummaryCard title="Loan &amp; Debt Summary" onExpand={() => setModal({ kind: 'loans' })}>
-          <SummaryRow label="Original loans" value={fullMoney(m.origLoan)} />
-          <SummaryRow label="Current balance" value={fullMoney(m.loan)} />
+          <SummaryRow label="Original loan" value={fullMoney(m.origLoan)} />
+          <SummaryRow label="Loan balance" value={fullMoney(m.loan)} />
           <SummaryRow label="Principal paid to date" value={fullMoney(m.origLoan - m.loan)} tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Weighted rate" value={ratePct(m.weightedRate)} />
           <SummaryRow label="Monthly payment" value={fullMoney(m.payment)} strong />
@@ -765,20 +716,6 @@ export default function PortfolioEquityPage() {
           }}
         />
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
-      </Modal>
-
-      <Modal open={modal?.kind === 'home'} title={modal?.home?.name || 'Property'} wide onClose={() => setModal(null)}>
-        {modal?.home ? (
-          <>
-            <div className="mb-3 flex items-center gap-2">
-              {modal.home.type === 'primary'
-                ? <Home className="h-4 w-4 text-red-500" aria-hidden="true" />
-                : <Building2 className="h-4 w-4 text-sky-500" aria-hidden="true" />}
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${modal.home.type === 'primary' ? 'bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300' : 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'}`}>{modal.home.type === 'primary' ? 'Primary' : 'Rental'}</span>
-            </div>
-            <HomeDetails home={modal.home} />
-          </>
-        ) : null}
       </Modal>
 
       <Modal open={modal?.kind === 'cashflow'} title={`Cashflow by property${per}`} wide onClose={() => setModal(null)}>
