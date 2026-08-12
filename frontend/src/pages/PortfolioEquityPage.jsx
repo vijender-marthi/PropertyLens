@@ -581,6 +581,11 @@ export default function PortfolioEquityPage() {
       { label: 'Rental market value', display: fullMoney(m.rentalValue) },
       { label: 'Portfolio cap rate', display: pct1(m.capRate) },
     ]),
+    equityYield: mk('Equity Yield = Annual Net Cash Flow ÷ Current Equity', [
+      { label: 'Annual net cash flow', display: fullMoney(m.netCashFlow * 12) },
+      { label: 'Current equity', display: fullMoney(m.equity) },
+      { label: 'Equity yield', display: pct1(m.equityYield) },
+    ]),
   }
 
   return (
@@ -682,7 +687,7 @@ export default function PortfolioEquityPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           <KpiTile label={`Rental Income${per}`} value={compactMoney(m.rent * factor)} valueClass={TONE.green} metric={metrics.rentalIncome}>
             <span className="text-gray-500 dark:text-gray-400">scheduled rent</span>
           </KpiTile>
@@ -698,13 +703,16 @@ export default function PortfolioEquityPage() {
           <KpiTile label="Portfolio Cap Rate" value={pct1(m.capRate)} valueClass={TONE.blue} metric={metrics.capRate}>
             <span className="text-gray-500 dark:text-gray-400">annual NOI / rental value</span>
           </KpiTile>
+          <KpiTile label="Equity Yield" value={pct1(m.equityYield)} valueClass={m.equityYield >= 0 ? TONE.green : TONE.red} metric={metrics.equityYield}>
+            <span className="text-gray-500 dark:text-gray-400">cash flow / equity</span>
+          </KpiTile>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
           {/* Cashflow summary (click to expand into per-property table) */}
           <SummaryCard title={`Cashflow Summary${per}`} onExpand={() => setModal({ kind: 'cashflow' })}>
             <SummaryRow label="Gross rent" value={fullMoney(m.rent * factor)} />
-            <SummaryRow label="Vacancy" value={fullMoney(m.vacancy * factor)} tone="text-red-600 dark:text-red-400" />
+            <SummaryRow label="Vacancy rate" value={pct1(m.rent ? -m.vacancy / m.rent : 0)} tone="text-red-600 dark:text-red-400" />
             <SummaryRow label="Operating expenses" value={fullMoney(m.opex * factor)} tone="text-red-600 dark:text-red-400" />
             <SummaryRow label="Net operating income" value={fullMoney(m.noi * factor)} strong />
             <SummaryRow label="Debt service (P&I)" value={fullMoney(m.debtService * factor)} tone="text-red-600 dark:text-red-400" />
@@ -776,7 +784,7 @@ export default function PortfolioEquityPage() {
               <tr className="border-b border-gray-100 dark:border-gray-800">
                 <th className="py-2.5 pr-3 text-left font-medium">Property</th>
                 <th className="px-3 py-2.5 text-right font-medium">Rent</th>
-                <th className="px-3 py-2.5 text-right font-medium">Vacancy</th>
+                <th className="px-3 py-2.5 text-right font-medium">Vacancy %</th>
                 <th className="px-3 py-2.5 text-right font-medium">OpEx</th>
                 <th className="px-3 py-2.5 text-right font-medium">Debt (P&amp;I)</th>
                 <th className="py-2.5 pl-3 text-right font-medium">Net CF</th>
@@ -789,7 +797,7 @@ export default function PortfolioEquityPage() {
                   <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
                     <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
                     <td className="px-3 py-2.5 text-right">{signedMoney(p.rent * factor)}</td>
-                    <td className="px-3 py-2.5 text-right">{signedMoney(p.vacancy * factor)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-red-600 dark:text-red-400">{pct1(p.rent ? -p.vacancy / p.rent : 0)}</td>
                     <td className="px-3 py-2.5 text-right">{signedMoney(p.opex * factor)}</td>
                     <td className="px-3 py-2.5 text-right">{signedMoney(p.debtService * factor)}</td>
                     <td className={`py-2.5 pl-3 text-right font-semibold tabular-nums ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(net)}</td>
@@ -803,7 +811,7 @@ export default function PortfolioEquityPage() {
                 <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
                   <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
                   <td className="px-3 py-2.5 text-right">{signedMoney(m.rent * factor)}</td>
-                  <td className="px-3 py-2.5 text-right">{signedMoney(m.vacancy * factor)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-red-600 dark:text-red-400">{pct1(m.rent ? -m.vacancy / m.rent : 0)}</td>
                   <td className="px-3 py-2.5 text-right">{signedMoney(m.opex * factor)}</td>
                   <td className="px-3 py-2.5 text-right">{signedMoney(m.debtService * factor)}</td>
                   <td className={`py-2.5 pl-3 text-right tabular-nums ${m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(m.netCashFlow * factor)}</td>

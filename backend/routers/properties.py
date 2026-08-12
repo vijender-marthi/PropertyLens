@@ -12893,6 +12893,8 @@ def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months
     annual_net_cash_flow = net_cash_flow * 12
     annual_principal_paydown = monthly_principal * 12
     roe = (annual_net_cash_flow + annual_principal_paydown) / equity if equity else 0.0
+    # Equity yield: the cash return on current equity (excludes principal paydown).
+    equity_yield = annual_net_cash_flow / equity if equity else 0.0
 
     return {
         "counts": {"total": len(rows), "rentals": len(rentals)},
@@ -12929,6 +12931,7 @@ def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months
         "dscr": round(dscr, 3),
         "expenseRatio": round(expense_ratio, 4),
         "roe": round(roe, 4),
+        "equityYield": round(equity_yield, 4),
         "waterfall": {
             "downPayment": round(purchase - orig_loan, 2),
             "principalReduction": round(orig_loan - loan, 2),

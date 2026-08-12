@@ -1061,6 +1061,16 @@ FORMULA_DEFINITIONS: List[Dict[str, Any]] = [
         display_format="percentage",
     ),
     _formula(
+        "portfolio.equity_yield", "portfolio", "equity-cashflow", "Equity Yield",
+        "Cash return on current equity (excludes principal paydown).",
+        ["Annual Net Cash Flow ÷ Current Equity", "= Equity Yield"],
+        [_input("annual_net_cash_flow", "Annual Net Cash Flow", "Rental net cash flow × 12."), _input("equity", "Current Equity", "Portfolio value − loan balance.")],
+        source_type="calculated",
+        related=["portfolio.return_on_equity"],
+        display_format="percentage",
+        search_terms=["equity yield", "cash yield", "cash on equity"],
+    ),
+    _formula(
         "portfolio.tappable_equity", "portfolio", "equity-cashflow", "Tappable Equity",
         "Equity accessible before reaching 80% loan-to-value.",
         ["Σ Current Value × 0.80 − Σ Loan Balance", "= Tappable Equity"],
