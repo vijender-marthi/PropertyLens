@@ -2107,12 +2107,6 @@ function ExpensesTab({ propId }) {
   }
 
   const rowForYear = (year) => annualRows.find((row) => Number(row.year) === Number(year)) || blankAnnualExpense(year)
-  const toggleExpandedYear = (year) => {
-    const nextYear = Number(year)
-    const isClosing = Number(expandedYear) === nextYear
-    if (editingYear) closeEditor(false)
-    setExpandedYear(isClosing ? null : nextYear)
-  }
   const openEditor = (year = data?.currentYear || CURRENT_YEAR) => {
     const nextYear = Number(year)
     const nextRow = rowForYear(nextYear)
@@ -2276,114 +2270,101 @@ function ExpensesTab({ propId }) {
       ? <span className="text-gray-400 dark:text-gray-500">—</span>
       : component.display
   )
-  const renderExpenseEditor = (row) => {
-    if (Number(editingYear) !== Number(row.year)) return null
-    return (
-      <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-4 dark:border-blue-900/50 dark:bg-blue-950/10">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h4 className="font-semibold text-gray-900 dark:text-white">Edit {editingYear} expenses</h4>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Save updates this year and refreshes the expense engine.</p>
+  const renderExpenseEditorModal = () => {
+    if (!editingYear) return null
+    return createPortal(
+      <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="expense-editor-title" onMouseDown={() => (saving ? null : closeEditor())}>
+        <div className="my-8 w-full max-w-xl rounded-2xl bg-white shadow-xl dark:bg-gray-900" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
+            <div>
+              <h4 id="expense-editor-title" className="font-semibold text-gray-900 dark:text-white">Edit {editingYear} expenses</h4>
+              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">Add an expense type and amount, then save for this year.</p>
+            </div>
+            <button type="button" onClick={() => closeEditor()} disabled={saving} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200" aria-label="Close">
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="detail-expense-year" className="text-xs font-medium text-gray-500 dark:text-gray-400">Year</label>
-            <select id="detail-expense-year" className="input h-9 max-w-32 text-sm" value={editingYear} onChange={(event) => changeEditorYear(event.target.value)}>
-              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
-            </select>
-            <button type="button" className="btn-secondary text-sm" onClick={copyPriorYear}>Copy prior year</button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          {editorVisibleKeys.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-              No expenses yet. Add a line below to start entering {editingYear} expenses.
-            </p>
-          ) : (
-            editorVisibleKeys.map((key) => {
-              const field = OVERVIEW_EDITOR_FIELDS.find((f) => f.key === key)
-              if (!field) return null
-              const source = annualExpenseSourceBadge(selectedEditorRow, field.key)
-              return (
-                <div key={field.key} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900/60">
-                  <label className="min-w-0 flex-1 text-sm text-gray-700 dark:text-gray-200" htmlFor={`expense-${field.key}`}>
-                    {field.label}
-                    <div className="mt-0.5"><ExpenseFieldSourceBadge source={source} /></div>
-                  </label>
-                  <div className="relative w-40 shrink-0">
-                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-sm text-gray-400">$</span>
-                    <input
-                      id={`expense-${field.key}`}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={selectedEditorRow[field.key] || ''}
-                      onChange={(event) => updateEditorField(field.key, event.target.value)}
-                      className="input pl-5 pr-2 text-right tabular-nums"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeEditorExpense(field.key)}
-                    className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
-                    aria-label={`Remove ${field.label}`}
-                    title={`Remove ${field.label}`}
-                  >
-                    <X className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-              )
-            })
-          )}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <select
-            value={editorAddKey}
-            onChange={(event) => setEditorAddKey(event.target.value)}
-            disabled={editorAddable.length === 0}
-            aria-label="Add expense category"
-            className="input h-9 max-w-64 text-sm disabled:opacity-50"
-          >
-            <option value="">{editorAddable.length === 0 ? 'All categories added' : 'Add an expense…'}</option>
-            {editorAddable.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
-          </select>
-          <button type="button" onClick={addEditorExpense} disabled={!editorAddKey} className="btn-secondary inline-flex items-center gap-1.5 text-sm disabled:opacity-50">
-            <Plus className="h-3.5 w-3.5" /> Add
-          </button>
-        </div>
-        <div className="mt-5 flex items-center justify-end gap-2 border-t border-blue-100 pt-4 dark:border-blue-900/40">
-          <button type="button" className="btn-secondary text-sm" onClick={() => closeEditor()} disabled={saving}>Cancel</button>
-          <button type="button" className="btn-primary text-sm" onClick={saveExpense} disabled={saving}>
-            {saving ? 'Saving...' : 'Save expenses'}
-          </button>
-        </div>
-      </div>
-    )
-  }
-  const renderExpenseBreakdown = (row) => (
-    <div>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{row.year} category breakdown</p>
-        <button
-          type="button"
-          className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
-          onClick={() => openEditor(row.year)}
-        >
-          Edit
-        </button>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {(row.components || []).map((component) => (
-          <div key={`${row.year}-${component.key}`} className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900/60">
-            <span className="text-gray-500 dark:text-gray-400">{component.label}</span>
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-gray-900 dark:text-white">{renderExpenseValue(component)}</span>
-              <ExpenseSourceBadge source={component.source} />
+
+          <div className="max-h-[65vh] overflow-y-auto px-5 py-4">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <label htmlFor="detail-expense-year" className="text-xs font-medium text-gray-500 dark:text-gray-400">Year</label>
+              <select id="detail-expense-year" className="input h-9 max-w-32 text-sm" value={editingYear} onChange={(event) => changeEditorYear(event.target.value)}>
+                {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+              <button type="button" className="btn-secondary text-sm" onClick={copyPriorYear}>Copy prior year</button>
+            </div>
+
+            <div className="space-y-2">
+              {editorVisibleKeys.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  No expenses yet. Add a line below to start entering {editingYear} expenses.
+                </p>
+              ) : (
+                editorVisibleKeys.map((key) => {
+                  const field = OVERVIEW_EDITOR_FIELDS.find((f) => f.key === key)
+                  if (!field) return null
+                  const source = annualExpenseSourceBadge(selectedEditorRow, field.key)
+                  return (
+                    <div key={field.key} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900/60">
+                      <label className="min-w-0 flex-1 text-sm text-gray-700 dark:text-gray-200" htmlFor={`expense-${field.key}`}>
+                        {field.label}
+                        <div className="mt-0.5"><ExpenseFieldSourceBadge source={source} /></div>
+                      </label>
+                      <div className="relative w-40 shrink-0">
+                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-sm text-gray-400">$</span>
+                        <input
+                          id={`expense-${field.key}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={selectedEditorRow[field.key] || ''}
+                          onChange={(event) => updateEditorField(field.key, event.target.value)}
+                          className="input pl-5 pr-2 text-right tabular-nums"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeEditorExpense(field.key)}
+                        className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                        aria-label={`Remove ${field.label}`}
+                        title={`Remove ${field.label}`}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={editorAddKey}
+                onChange={(event) => setEditorAddKey(event.target.value)}
+                disabled={editorAddable.length === 0}
+                aria-label="Add expense type"
+                className="input h-9 max-w-64 text-sm disabled:opacity-50"
+              >
+                <option value="">{editorAddable.length === 0 ? 'All types added' : 'Add an expense type…'}</option>
+                {editorAddable.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
+              </select>
+              <button type="button" onClick={addEditorExpense} disabled={!editorAddKey} className="btn-secondary inline-flex items-center gap-1.5 text-sm disabled:opacity-50">
+                <Plus className="h-3.5 w-3.5" /> Add
+              </button>
             </div>
           </div>
-        ))}
-      </div>
-    </div>
-  )
+
+          <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-4 dark:border-gray-800">
+            <button type="button" className="btn-secondary text-sm" onClick={() => closeEditor()} disabled={saving}>Cancel</button>
+            <button type="button" className="btn-primary text-sm" onClick={saveExpense} disabled={saving}>
+              {saving ? 'Saving...' : `Save ${editingYear}`}
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )
+  }
 
   if (loading) {
     return (
@@ -2484,54 +2465,13 @@ function ExpensesTab({ propId }) {
         <DataTable
           rows={data?.rows || []}
           columns={[
-            {
-              id: 'expand',
-              header: '',
-              sortable: false,
-              render: (row) => {
-                const isOpen = Number(expandedYear) === Number(row.year)
-                const Icon = isOpen ? ChevronDown : ChevronRight
-                return (
-                  <button
-                    type="button"
-                    className="inline-flex rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-                    aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${row.year} expenses`}
-                    aria-expanded={isOpen}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      toggleExpandedYear(row.year)
-                    }}
-                  >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                )
-              },
-            },
             { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.isCurrent ? `${row.year} · current` : row.year },
-            { id: 'property_tax', header: 'Prop. tax', align: 'right', render: (row) => renderExpenseValue(row.propertyTax) },
-            { id: 'insurance', header: 'Insurance', align: 'right', render: (row) => renderExpenseValue(row.insurance) },
-            { id: 'hoa', header: 'HOA', align: 'right', render: (row) => renderExpenseValue(row.hoa) },
-            { id: 'repairs', header: 'Repairs & maintenance', align: 'right', render: (row) => renderExpenseValue(row.repairs) },
-            { id: 'otherOperating', header: 'Other operating', align: 'right', render: (row) => renderExpenseValue(row.otherOperatingExpenses) },
-            { id: 'total', header: 'Total', align: 'right', accessor: 'total', cellClassName: 'font-semibold text-gray-900 dark:text-white', render: (row) => row.total == null ? <span className="text-gray-400 dark:text-gray-500">—</span> : row.totalDisplay },
-            {
-              id: 'status',
-              header: 'Status',
-              align: 'right',
-              accessor: 'status',
-              render: (row) => (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    toggleExpandedYear(row.year)
-                  }}
-                  className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
-                >
-                  {row.status}
-                </button>
-              ),
-            },
+            { id: 'property_tax', header: 'Prop. tax', align: 'right', headerClassName: 'text-amber-700 dark:text-amber-300', cellClassName: 'tabular-nums text-amber-700 dark:text-amber-300', render: (row) => renderExpenseValue(row.propertyTax) },
+            { id: 'insurance', header: 'Insurance', align: 'right', headerClassName: 'text-blue-700 dark:text-blue-300', cellClassName: 'tabular-nums text-blue-700 dark:text-blue-300', render: (row) => renderExpenseValue(row.insurance) },
+            { id: 'hoa', header: 'HOA', align: 'right', headerClassName: 'text-violet-700 dark:text-violet-300', cellClassName: 'tabular-nums text-violet-700 dark:text-violet-300', render: (row) => renderExpenseValue(row.hoa) },
+            { id: 'repairs', header: 'Repairs & maint.', align: 'right', headerClassName: 'text-emerald-700 dark:text-emerald-300', cellClassName: 'tabular-nums text-emerald-700 dark:text-emerald-300', render: (row) => renderExpenseValue(row.repairs) },
+            { id: 'otherOperating', header: 'Other operating', align: 'right', headerClassName: 'text-slate-600 dark:text-slate-300', cellClassName: 'tabular-nums text-slate-600 dark:text-slate-300', render: (row) => renderExpenseValue(row.otherOperatingExpenses) },
+            { id: 'total', header: 'Total', align: 'right', accessor: 'total', headerClassName: 'text-gray-900 dark:text-white', cellClassName: 'font-semibold tabular-nums text-gray-900 dark:text-white', render: (row) => row.total == null ? <span className="text-gray-400 dark:text-gray-500">—</span> : row.totalDisplay },
             {
               id: 'source',
               header: 'Source',
@@ -2553,45 +2493,32 @@ function ExpensesTab({ propId }) {
             },
             {
               id: 'actions',
-              header: 'Actions',
+              header: '',
               align: 'right',
               sortable: false,
-              render: (row) => Number(editingYear) === Number(row.year) ? (
-                <span className="text-xs font-semibold text-blue-700 dark:text-blue-300">Editing</span>
-              ) : (
+              render: (row) => (
                 <button
                   type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    openEditor(row.year)
-                  }}
-                  className="text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
+                  onClick={(event) => { event.stopPropagation(); openEditor(row.year) }}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-gray-700 dark:text-gray-200 dark:hover:border-blue-700 dark:hover:bg-blue-950/30 dark:hover:text-blue-300"
                 >
-                  Edit
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
                 </button>
               ),
             },
           ]}
           getRowKey={(row) => row.year}
           defaultSort={{ id: 'year', direction: 'asc' }}
-          getRowProps={(row) => {
-            const baseClass = Number(editingYear) === Number(row.year)
-              ? 'bg-blue-100/70 hover:bg-blue-100/70 dark:bg-blue-950/30 dark:hover:bg-blue-950/30'
-              : row.isCurrent
-                ? 'bg-blue-50/60 hover:bg-blue-50/80 dark:bg-blue-950/20 dark:hover:bg-blue-950/30'
-                : 'odd:bg-white even:bg-gray-50/40 hover:bg-gray-50 dark:odd:bg-transparent dark:even:bg-gray-800/20 dark:hover:bg-gray-700/40'
-            return {
-              className: `${baseClass} cursor-pointer`,
-              onClick: () => toggleExpandedYear(row.year),
-            }
-          }}
-          renderExpandedRow={(row) => expandedYear === row.year ? (
-            Number(editingYear) === Number(row.year) ? renderExpenseEditor(row) : renderExpenseBreakdown(row)
-          ) : null}
+          getRowProps={(row) => ({
+            className: row.isCurrent
+              ? 'bg-blue-50/60 hover:bg-blue-50/80 dark:bg-blue-950/20 dark:hover:bg-blue-950/30'
+              : 'odd:bg-white even:bg-gray-50/40 hover:bg-gray-50 dark:odd:bg-transparent dark:even:bg-gray-800/20 dark:hover:bg-gray-700/40',
+          })}
           emptyMessage="No expense years available."
         />
       </section>
       )}
+      {renderExpenseEditorModal()}
       <ExpenseSourceDialog row={sourceRow} onClose={() => setSourceRow(null)} />
     </div>
   )

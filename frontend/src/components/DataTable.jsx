@@ -137,7 +137,7 @@ export default function DataTable({
                 const active = sort?.id === column.id
                 const indicator = active ? (sort.direction === 'asc' ? '▲' : '▼') : ''
                 return (
-                  <th key={column.id} className={`px-3 py-2 font-medium ${align}`}>
+                  <th key={column.id} className={`px-3 py-2 font-medium ${align} ${column.headerClassName || ''}`}>
                     <button
                       type="button"
                       onClick={() => onSort(column)}
