@@ -523,7 +523,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       {/* ── Band 1: Equity KPI tiles ── */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5" aria-label="Equity metrics">
         <KpiTile label="Portfolio Value" value={compactMoney(m.value)} valueClass={TONE.blue} metric={metrics.portfolioValue}>
-          <Delta>{pct1(m.growth)} growth</Delta>
+          <Delta>{compactMoney(m.value - m.purchase)} · {pct1(m.growth)} since purchase</Delta>
         </KpiTile>
         <KpiTile label="Total Equity" value={compactMoney(m.equity)} valueClass={m.equity >= 0 ? TONE.green : TONE.red} metric={metrics.totalEquity}>
           <Delta>{pct1(m.equityPct)} of value</Delta>
