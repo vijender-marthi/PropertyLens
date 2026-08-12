@@ -15,7 +15,7 @@ const preCash = (r) => r.salePrice.value - r.sellingCosts.value - r.loanPayoff.v
 const preProfit = (r) => preCash(r) + r.cumCashFlow.value - r.cashInvested.value
 const asNode = (v) => ({ value: v, display: formatCurrency(v) })
 
-const DEFAULTS = { appreciation: 4, holdYears: 10, capitalGains: 15, sellingCosts: 6, improvements: 0, rentGrowth: 3, filingStatus: 'married_joint', includePrimary: true }
+const DEFAULTS = { appreciation: 4, holdYears: 5, capitalGains: 15, sellingCosts: 6, improvements: 0, rentGrowth: 3, filingStatus: 'married_joint', includePrimary: true }
 
 function clampNum(v, min, max) {
   const n = Number(v)
