@@ -117,7 +117,7 @@ function SummaryCard({ title, onExpand, children }) {
 const SummaryRow = ({ label, value, strong, indent, tone }) => (
   <div className={`flex items-center justify-between text-sm ${indent ? 'pl-4' : ''}`}>
     <span className={`${indent ? 'text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}>{label}</span>
-    <span className={`tabular-nums ${strong ? 'font-semibold text-gray-950 dark:text-white' : tone || 'text-gray-700 dark:text-gray-200'}`}>{value}</span>
+    <span className={`tabular-nums ${strong ? 'font-semibold ' : ''}${tone || (strong ? 'text-gray-950 dark:text-white' : 'text-gray-700 dark:text-gray-200')}`}>{value}</span>
   </div>
 )
 
@@ -537,7 +537,7 @@ export default function PortfolioEquityPage() {
   const TONE = {
     green: 'text-emerald-600 dark:text-emerald-400',
     red: 'text-red-600 dark:text-red-400',
-    blue: 'text-blue-600 dark:text-blue-400',
+    blue: 'text-sky-600 dark:text-sky-400',
     amber: 'text-amber-600 dark:text-amber-400',
   }
 
@@ -736,10 +736,10 @@ export default function PortfolioEquityPage() {
         <div className="grid gap-3 lg:grid-cols-2">
           {/* Cashflow summary (click to expand into per-property table) */}
           <SummaryCard title={`Cashflow Summary${per}`} onExpand={() => setModal({ kind: 'cashflow' })}>
-            <SummaryRow label="Gross rent" value={fullMoney(m.rent * factor)} />
+            <SummaryRow label="Gross rent" value={fullMoney(m.rent * factor)} tone="text-emerald-600 dark:text-emerald-400" />
             <SummaryRow label="Vacancy rate" value={pct1(m.rent ? -m.vacancy / m.rent : 0)} tone="text-red-600 dark:text-red-400" />
             <SummaryRow label="Operating expenses" value={fullMoney(m.opex * factor)} tone="text-red-600 dark:text-red-400" />
-            <SummaryRow label="Net operating income" value={fullMoney(m.noi * factor)} strong />
+            <SummaryRow label="Net operating income" value={fullMoney(m.noi * factor)} strong tone={m.noi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
             <SummaryRow label="Debt service (P&I)" value={fullMoney(m.debtService * factor)} tone="text-red-600 dark:text-red-400" />
             <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
             <SummaryRow label="Net cash flow" value={fullMoney(m.netCashFlow * factor)} strong tone={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
