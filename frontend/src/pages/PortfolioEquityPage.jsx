@@ -212,14 +212,15 @@ function WaterfallLegend() {
 }
 
 // ── Acquisition timeline: a home icon at each purchase year ──────────────────
-function HomeTimeline({ rows }) {
-  const [openId, setOpenId] = useState(null)
+// The line runs from the first purchase to the current year, so homes spread
+// evenly (payoff years, which can be decades out, don't stretch the scale).
+function HomeTimeline({ rows, onSelect }) {
   const withYear = rows.filter((p) => p.buyYear)
   if (!withYear.length) return null
 
   const nowYear = new Date().getFullYear()
   const startYear = Math.min(...withYear.map((p) => p.buyYear))
-  const endYear = Math.max(nowYear, ...withYear.map((p) => p.payoffYear || nowYear))
+  const endYear = Math.max(nowYear, ...withYear.map((p) => p.buyYear))
   const span = Math.max(1, endYear - startYear)
   const leftPct = (year) => 4 + ((year - startYear) / span) * 92
 
@@ -227,17 +228,6 @@ function HomeTimeline({ rows }) {
   const tickYears = []
   for (let yr = startYear; yr <= endYear; yr += step) tickYears.push(yr)
   if (tickYears[tickYears.length - 1] !== endYear) tickYears.push(endYear)
-
-  const open = withYear.find((p) => p.id === openId)
-  const cleared = open ? open.origLoan - open.loan : 0
-  const clearedPct = open && open.origLoan ? cleared / open.origLoan : 0
-
-  const Row = ({ label, value, tone }) => (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-gray-500 dark:text-gray-400">{label}</span>
-      <span className={`tabular-nums font-semibold ${tone || 'text-gray-900 dark:text-white'}`}>{value}</span>
-    </div>
-  )
 
   return (
     <section className="relative rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900" aria-label="Acquisition timeline">
@@ -259,52 +249,49 @@ function HomeTimeline({ rows }) {
         {/* home markers */}
         {withYear.map((p) => {
           const primary = p.type === 'primary'
-          const active = openId === p.id
           return (
             <button
               key={p.id}
               type="button"
-              onClick={() => setOpenId(active ? null : p.id)}
+              onClick={() => onSelect(p)}
               className="group absolute top-5 z-10 -translate-x-1/2 -translate-y-1/2 focus:outline-none"
               style={{ left: `${leftPct(p.buyYear)}%` }}
               title={`${p.name} · purchased ${p.buyYear}`}
               aria-label={`${p.name}, purchased ${p.buyYear}`}
             >
-              <span className={`flex h-8 w-8 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-blue-400 text-blue-500'} ${active ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-blue-400 text-blue-500'}`}>
                 <Home className="h-4 w-4" aria-hidden="true" />
               </span>
             </button>
           )
         })}
       </div>
-
-      {open ? (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpenId(null)} aria-hidden="true" />
-          <div className="relative z-20 mt-2 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
-            <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Home className={`h-4 w-4 ${open.type === 'primary' ? 'text-red-500' : 'text-blue-500'}`} aria-hidden="true" />
-                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{open.name}</h4>
-                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${open.type === 'primary' ? 'bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300' : 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'}`}>{open.type === 'primary' ? 'Primary' : 'Rental'}</span>
-              </div>
-              <button type="button" onClick={() => setOpenId(null)} className="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700" aria-label="Close"><X className="h-4 w-4" /></button>
-            </div>
-            <div className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
-              <Row label="Purchased" value={open.buyYear} />
-              <Row label="Purchase price" value={fullMoney(open.purchase)} />
-              <Row label="Current value" value={fullMoney(open.value)} />
-              <Row label="Loan balance" value={fullMoney(open.loan)} />
-              <Row label="Equity" value={fullMoney(open.equity)} tone="text-emerald-600 dark:text-emerald-400" />
-              <Row label="Interest rate" value={ratePct(open.rate)} />
-              <Row label="Payoff year" value={open.payoffYear || '—'} />
-              <Row label="Principal cleared" value={`${fullMoney(cleared)} · ${pct1(clearedPct)}`} tone="text-emerald-600 dark:text-emerald-400" />
-              <Row label="Original loan" value={fullMoney(open.origLoan)} />
-            </div>
-          </div>
-        </>
-      ) : null}
     </section>
+  )
+}
+
+// Per-home details rendered inside the shared modal (compact font).
+function HomeDetails({ home }) {
+  const cleared = home.origLoan - home.loan
+  const clearedPct = home.origLoan ? cleared / home.origLoan : 0
+  const Row = ({ label, value, tone }) => (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-gray-500 dark:text-gray-400">{label}</span>
+      <span className={`tabular-nums font-semibold ${tone || 'text-gray-900 dark:text-white'}`}>{value}</span>
+    </div>
+  )
+  return (
+    <div className="grid gap-x-8 gap-y-2 text-[13px] sm:grid-cols-2">
+      <Row label="Purchased" value={home.buyYear} />
+      <Row label="Purchase price" value={fullMoney(home.purchase)} />
+      <Row label="Current value" value={fullMoney(home.value)} />
+      <Row label="Loan balance" value={fullMoney(home.loan)} />
+      <Row label="Original loan" value={fullMoney(home.origLoan)} />
+      <Row label="Equity" value={fullMoney(home.equity)} tone="text-emerald-600 dark:text-emerald-400" />
+      <Row label="Interest rate" value={ratePct(home.rate)} />
+      <Row label="Payoff year" value={home.payoffYear || '—'} />
+      <Row label="Principal cleared" value={`${fullMoney(cleared)} · ${pct1(clearedPct)}`} tone="text-emerald-600 dark:text-emerald-400" />
+    </div>
   )
 }
 
@@ -644,7 +631,7 @@ export default function PortfolioEquityPage() {
       </section>
 
       {/* ── Acquisition timeline ── */}
-      <HomeTimeline rows={rows} />
+      <HomeTimeline rows={rows} onSelect={(home) => setModal({ kind: 'home', home })} />
 
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
@@ -779,6 +766,18 @@ export default function PortfolioEquityPage() {
           }}
         />
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
+      </Modal>
+
+      <Modal open={modal?.kind === 'home'} title={modal?.home?.name || 'Property'} onClose={() => setModal(null)}>
+        {modal?.home ? (
+          <>
+            <div className="mb-3 flex items-center gap-2">
+              <Home className={`h-4 w-4 ${modal.home.type === 'primary' ? 'text-red-500' : 'text-blue-500'}`} aria-hidden="true" />
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${modal.home.type === 'primary' ? 'bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-300' : 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300'}`}>{modal.home.type === 'primary' ? 'Primary' : 'Rental'}</span>
+            </div>
+            <HomeDetails home={modal.home} />
+          </>
+        ) : null}
       </Modal>
 
       <Modal open={modal?.kind === 'cashflow'} title={`Cashflow by property${per}`} wide onClose={() => setModal(null)}>
