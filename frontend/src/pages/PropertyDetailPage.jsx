@@ -2107,6 +2107,10 @@ function ExpensesTab({ propId }) {
   }
 
   const rowForYear = (year) => annualRows.find((row) => Number(row.year) === Number(year)) || blankAnnualExpense(year)
+  const toggleExpandedYear = (year) => {
+    const nextYear = Number(year)
+    setExpandedYear((current) => (Number(current) === nextYear ? null : nextYear))
+  }
   const openEditor = (year = data?.currentYear || CURRENT_YEAR) => {
     const nextYear = Number(year)
     const nextRow = rowForYear(nextYear)
@@ -2270,6 +2274,44 @@ function ExpensesTab({ propId }) {
       ? <span className="text-gray-400 dark:text-gray-500">—</span>
       : component.display
   )
+  const renderExpenseBreakdown = (row) => {
+    const entries = (row.components || []).filter((component) => component)
+    return (
+      <div className="rounded-lg border border-gray-100 bg-white dark:border-gray-700 dark:bg-gray-900/60">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-2 dark:border-gray-800">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{row.year} expenses</p>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 dark:text-blue-300"
+            onClick={(event) => { event.stopPropagation(); openEditor(row.year) }}
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+          </button>
+        </div>
+        {entries.length === 0 ? (
+          <p className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">No expenses entered for {row.year}.</p>
+        ) : (
+          <dl className="divide-y divide-gray-50 dark:divide-gray-800">
+            {entries.map((component) => (
+              <div key={`${row.year}-${component.key}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                <dt className="text-sm text-gray-600 dark:text-gray-300">{component.label}</dt>
+                <dd className="flex items-center gap-2">
+                  <span className="text-sm font-medium tabular-nums text-gray-900 dark:text-white">{renderExpenseValue(component)}</span>
+                  <ExpenseSourceBadge source={component.source} />
+                </dd>
+              </div>
+            ))}
+            {row.total != null ? (
+              <div className="flex items-center justify-between gap-3 bg-gray-50/70 px-3 py-2 dark:bg-gray-800/40">
+                <dt className="text-sm font-semibold text-gray-800 dark:text-gray-100">Total</dt>
+                <dd className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">{row.totalDisplay}</dd>
+              </div>
+            ) : null}
+          </dl>
+        )}
+      </div>
+    )
+  }
   const renderExpenseEditorModal = () => {
     if (!editingYear) return null
     return createPortal(
@@ -2465,7 +2507,12 @@ function ExpensesTab({ propId }) {
         <DataTable
           rows={data?.rows || []}
           columns={[
-            { id: 'year', header: 'Year', align: 'center', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => row.isCurrent ? `${row.year} · current` : row.year },
+            { id: 'year', header: 'Year', align: 'left', accessor: 'year', cellClassName: 'font-medium text-gray-900 dark:text-white', render: (row) => (
+              <span className="inline-flex items-center gap-1.5">
+                <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${Number(expandedYear) === Number(row.year) ? 'rotate-90' : ''}`} aria-hidden="true" />
+                {row.isCurrent ? `${row.year} · current` : row.year}
+              </span>
+            ) },
             { id: 'property_tax', header: 'Prop. tax', align: 'right', headerClassName: 'text-amber-700 dark:text-amber-300', cellClassName: 'tabular-nums text-amber-700 dark:text-amber-300', render: (row) => renderExpenseValue(row.propertyTax) },
             { id: 'insurance', header: 'Insurance', align: 'right', headerClassName: 'text-blue-700 dark:text-blue-300', cellClassName: 'tabular-nums text-blue-700 dark:text-blue-300', render: (row) => renderExpenseValue(row.insurance) },
             { id: 'hoa', header: 'HOA', align: 'right', headerClassName: 'text-violet-700 dark:text-violet-300', cellClassName: 'tabular-nums text-violet-700 dark:text-violet-300', render: (row) => renderExpenseValue(row.hoa) },
@@ -2510,10 +2557,12 @@ function ExpensesTab({ propId }) {
           getRowKey={(row) => row.year}
           defaultSort={{ id: 'year', direction: 'asc' }}
           getRowProps={(row) => ({
-            className: row.isCurrent
+            className: `cursor-pointer ${row.isCurrent
               ? 'bg-blue-50/60 hover:bg-blue-50/80 dark:bg-blue-950/20 dark:hover:bg-blue-950/30'
-              : 'odd:bg-white even:bg-gray-50/40 hover:bg-gray-50 dark:odd:bg-transparent dark:even:bg-gray-800/20 dark:hover:bg-gray-700/40',
+              : 'odd:bg-white even:bg-gray-50/40 hover:bg-gray-50 dark:odd:bg-transparent dark:even:bg-gray-800/20 dark:hover:bg-gray-700/40'}`,
+            onClick: () => toggleExpandedYear(row.year),
           })}
+          renderExpandedRow={(row) => (Number(expandedYear) === Number(row.year) ? renderExpenseBreakdown(row) : null)}
           emptyMessage="No expense years available."
         />
       </section>
