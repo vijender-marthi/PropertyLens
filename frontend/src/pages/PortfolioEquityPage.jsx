@@ -561,9 +561,10 @@ export default function PortfolioEquityPage() {
           <span className={`block ${band.tone}`}>{pct1(m.ltv)} of value</span>
         </KpiTile>
         <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={capRateFlag ? TONE.amber : TONE.blue} metric={metrics.weightedRate}>
-          <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
+          <span className={`block ${capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}`}>
             {capRateFlag ? '▲ above' : 'vs'} {pct1(m.capRate)} cap rate
           </span>
+          <span className="block text-gray-500 dark:text-gray-400">{ratePct(m.rateMin)} – {ratePct(m.rateMax)} range</span>
         </KpiTile>
         <KpiTile label="Return on Equity" value={pct1(m.roe)} valueClass={m.roe >= 0 ? TONE.green : TONE.red} metric={metrics.roe}>
           <span className="text-gray-500 dark:text-gray-400">cashflow + paydown</span>
