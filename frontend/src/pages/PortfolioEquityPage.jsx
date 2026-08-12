@@ -783,7 +783,7 @@ export default function PortfolioEquityPage() {
         </div>
       </Modal>
 
-      <Modal open={modal?.kind === 'appreciation'} title="Appreciation by property" wide onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'appreciation'} title="Equity by Property" wide onClose={() => setModal(null)}>
         <div className="overflow-x-auto">
           <table className="w-full text-[15px]">
             <thead className="text-xs uppercase text-gray-400">
@@ -793,6 +793,7 @@ export default function PortfolioEquityPage() {
                 <th className="px-3 py-2.5 text-right font-medium">Purchase</th>
                 <th className="px-3 py-2.5 text-right font-medium">Appreciation</th>
                 <th className="px-3 py-2.5 text-right font-medium">Growth</th>
+                <th className="px-3 py-2.5 text-right font-medium">Years</th>
                 <th className="py-2.5 pl-3 text-right font-medium">Annualized</th>
               </tr>
             </thead>
@@ -804,6 +805,7 @@ export default function PortfolioEquityPage() {
                   <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.purchase)}</td>
                   <td className="px-3 py-2.5 text-right">{gainMoney(p.appreciation)}</td>
                   <td className="px-3 py-2.5 text-right">{gainPct(p.growth)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{p.buyYear ? Math.max(m.nowYear - p.buyYear, 0) : '—'}</td>
                   <td className="py-2.5 pl-3 text-right">{gainPct(p.annualized)}</td>
                 </tr>
               ))}
@@ -815,6 +817,7 @@ export default function PortfolioEquityPage() {
                 <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.purchase)}</td>
                 <td className="px-3 py-2.5 text-right">{gainMoney(m.value - m.purchase)}</td>
                 <td className="px-3 py-2.5 text-right">{gainPct(m.growth)}</td>
+                <td className="px-3 py-2.5" />
                 <td className="py-2.5 pl-3 text-right">{gainPct(m.annualizedWeighted)}</td>
               </tr>
             </tfoot>
