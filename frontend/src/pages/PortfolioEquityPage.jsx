@@ -655,11 +655,15 @@ export default function PortfolioEquityPage() {
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
         <SummaryCard title="Appreciation Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
-          <SummaryRow label="Portfolio value" value={fullMoney(m.value)} />
+          <SummaryRow label="Portfolio value" value={fullMoney(m.value)} tone="text-sky-600 dark:text-sky-400" />
           <SummaryRow label="Purchase price" value={fullMoney(m.purchase)} />
           <SummaryRow label="Total appreciation" value={fullMoney(m.value - m.purchase)} strong tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Total growth" value={pct1(m.growth)} />
-          <SummaryRow label="Annualized growth" value={pct1(m.annualizedWeighted)} strong />
+          <SummaryRow label="Annualized growth" value={pct1(m.annualizedWeighted)} strong tone="text-emerald-600 dark:text-emerald-400" />
+          <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+          <SummaryRow label="Avg. annual gain" value={fullMoney(m.annualizedWeighted * m.value)} tone="text-emerald-600 dark:text-emerald-400" />
+          <SummaryRow label="Value multiple" value={`${(m.purchase ? m.value / m.purchase : 0).toFixed(2)}×`} />
+          <SummaryRow label="Equity from appreciation" value={pct1(m.equity ? (m.value - m.purchase) / m.equity : 0)} />
         </SummaryCard>
 
         <div
