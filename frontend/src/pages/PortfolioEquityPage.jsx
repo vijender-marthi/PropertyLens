@@ -626,8 +626,8 @@ export default function PortfolioEquityPage() {
           <SummaryRow label="↳ Interest" value={fullMoney(m.monthlyInterest)} indent />
           <SummaryRow label="↳ Principal" value={fullMoney(m.monthlyPrincipal)} indent />
           <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label={`YTD interest paid (${m.monthsElapsed} mo)`} value={fullMoney(m.ytdInterest)} />
-          <SummaryRow label={`YTD principal paid (${m.monthsElapsed} mo)`} value={fullMoney(m.ytdPrincipal)} />
+          <SummaryRow label="Annual interest" value={fullMoney(m.monthlyInterest * 12)} />
+          <SummaryRow label="Annual principal" value={fullMoney(m.monthlyPrincipal * 12)} />
         </SummaryCard>
       </section>
 
