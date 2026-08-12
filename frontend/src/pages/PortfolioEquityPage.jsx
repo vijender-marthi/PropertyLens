@@ -21,6 +21,14 @@ const SERIES = {
 // formatter module. Compact metric currency renders e.g. $4.73M / $876.5K.
 const compactMoney = (value) => formatMetricCurrency(value)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+// ISO date (YYYY-MM-DD) → "Mon YYYY"; falls back to the year when unavailable.
+const statementAsOfLabel = (iso, fallbackYear) => {
+  if (iso && /^\d{4}-\d{2}/.test(iso)) {
+    const [y, mo] = iso.split('-')
+    return `${MONTHS[Number(mo) - 1]} ${y}`
+  }
+  return String(fallbackYear)
+}
 const fullMoney = (value) => formatCurrency(value)
 const pct1 = (fraction) => `${(Number(fraction || 0) * 100).toFixed(1)}%`
 // Interest rates carry more precision than other percentages — show 3 decimals.
@@ -548,7 +556,7 @@ export default function PortfolioEquityPage() {
       <header className="flex flex-col gap-4 border-b border-gray-200 pb-4 dark:border-gray-700 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-950 dark:text-white">Portfolio</h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{m.counts.total} properties · {m.counts.rentals} rentals · as of {m.nowYear}</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{m.counts.total} properties · {m.counts.rentals} rentals · as of {statementAsOfLabel(m.statementAsOf, m.nowYear)}</p>
         </div>
         <div className="flex flex-col items-start gap-1.5 lg:items-end">
           <PropertyFilter properties={available} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />

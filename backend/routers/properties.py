@@ -12810,6 +12810,15 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
     primary_loan = max(active_loans, key=current_loan_balance, default=None)
     loan_type = str(getattr(primary_loan, "loan_type", "") or "") if primary_loan else ""
     payoff_years = [y for y in (_loan_payoff_year(loan) for loan in active_loans) if y]
+    # Most recent statement/balance date across this property's active loans.
+    _stmt_dates = []
+    for loan in active_loans:
+        for _attr in ("statement_date", "current_balance_as_of", "balance_as_of"):
+            _d = _parse_iso_date(getattr(loan, _attr, None))
+            if _d:
+                _stmt_dates.append(_d)
+                break
+    statement_date = max(_stmt_dates).isoformat() if _stmt_dates else None
     # Rate range + fixed/ARM mix across this property's active loans.
     _loan_rates = [float(loan.interest_rate or 0) for loan in active_loans if (loan.interest_rate or 0) > 0]
     rate_min = min(_loan_rates) if _loan_rates else 0.0
@@ -12864,6 +12873,7 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
         "rateMax": round(rate_max, 3),
         "fixedLoans": fixed_loans,
         "armLoans": arm_loans,
+        "statementDate": statement_date,
         "loanType": loan_type or "—",
         "payment": round(payment, 2),
         "payoffYear": max(payoff_years) if payoff_years else None,
@@ -12915,6 +12925,8 @@ def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months
     rate_max = max(_rate_maxs) if _rate_maxs else 0.0
     fixed_loans = sum(int(r.get("fixedLoans") or 0) for r in rows)
     arm_loans = sum(int(r.get("armLoans") or 0) for r in rows)
+    _stmt = [r["statementDate"] for r in rows if r.get("statementDate")]
+    statement_as_of = max(_stmt) if _stmt else None  # ISO strings sort chronologically
 
     annualized_weighted = (
         sum(r["value"] * r["annualized"] for r in rows) / value if value else 0.0
@@ -12960,6 +12972,7 @@ def _equity_cashflow_totals(rows: List[Dict[str, Any]], *, now_year: int, months
         "rateMax": round(rate_max, 3),
         "fixedLoans": fixed_loans,
         "armLoans": arm_loans,
+        "statementAsOf": statement_as_of,
         "monthlyInterest": round(monthly_interest, 2),
         "monthlyPrincipal": round(monthly_principal, 2),
         "annualizedWeighted": round(annualized_weighted, 4),
