@@ -34,27 +34,6 @@ const ratePct = (percentValue) => `${(Number(percentValue || 0)).toFixed(3)}%`
 // All financial calculations (roll-ups, KPIs, waterfall, per-property equity /
 // appreciation / cashflow) are computed by the backend. This page only renders.
 
-// ── LTV risk-zone meter ──────────────────────────────────────────────────────
-function LtvMeter({ ltv }) {
-  const clamped = Math.max(0, Math.min(1, ltv))
-  return (
-    <div className="mt-1.5">
-      <div className="relative h-2 w-full overflow-hidden rounded-full">
-        <div className="absolute inset-0 flex">
-          <div className="h-full" style={{ width: '60%', background: 'rgba(12,163,12,0.35)' }} />
-          <div className="h-full" style={{ width: '15%', background: 'rgba(217,152,20,0.40)' }} />
-          <div className="h-full" style={{ width: '25%', background: 'rgba(214,58,58,0.40)' }} />
-        </div>
-        <div
-          className="absolute top-1/2 h-3.5 w-1 -translate-y-1/2 rounded-full bg-gray-900 dark:bg-white"
-          style={{ left: `calc(${(clamped * 100).toFixed(1)}% - 2px)` }}
-          aria-hidden="true"
-        />
-      </div>
-    </div>
-  )
-}
-
 function ltvBand(ltv) {
   if (ltv < 0.60) return { label: 'Low leverage', tone: 'text-emerald-600 dark:text-emerald-400' }
   if (ltv <= 0.75) return { label: 'Moderate leverage', tone: 'text-amber-600 dark:text-amber-400' }
@@ -628,8 +607,7 @@ export default function PortfolioEquityPage() {
           <Delta>{pct1(m.equityPct)} of value</Delta>
         </KpiTile>
         <KpiTile label="Total Debt" value={compactMoney(m.loan)} valueClass={TONE.red} metric={metrics.totalDebt}>
-          <LtvMeter ltv={m.ltv} />
-          <span className={`mt-1 block ${band.tone}`}>{pct1(m.ltv)} of value</span>
+          <span className={`block ${band.tone}`}>{pct1(m.ltv)} of value</span>
         </KpiTile>
         <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={capRateFlag ? TONE.amber : TONE.blue} metric={metrics.weightedRate}>
           <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
