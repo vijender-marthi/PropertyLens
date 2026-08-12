@@ -61,12 +61,29 @@ function ltvBand(ltv) {
 }
 
 // ── KPI tile ─────────────────────────────────────────────────────────────────
-function KpiTile({ label, value, children }) {
+// `metric` (optional): hovering anywhere on the tile reveals the formula + the
+// input values used to derive the number; it hides when the pointer leaves.
+function KpiTile({ label, value, metric, children }) {
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="group relative rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:shadow-md dark:border-gray-700 dark:bg-gray-900 dark:hover:border-blue-700">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
       <p className="mt-1 text-2xl font-bold tabular-nums text-gray-950 dark:text-white">{value}</p>
       <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{children}</div>
+      {metric ? (
+        <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case tracking-normal text-gray-600 shadow-xl group-hover:block dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">
+          {metric.formula ? <p className="font-semibold leading-5 text-gray-900 dark:text-white">{metric.formula}</p> : null}
+          {metric.inputs?.length ? (
+            <dl className="mt-2 space-y-1.5">
+              {metric.inputs.map((input, index) => (
+                <div key={`${input.label}-${index}`} className="flex items-start justify-between gap-3">
+                  <dt>{input.label}</dt>
+                  <dd className="text-right font-semibold tabular-nums text-gray-900 dark:text-white">{input.display}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -194,6 +211,62 @@ function WaterfallLegend() {
   )
 }
 
+// ── Cashflow bridge waterfall (income → expenses → NOI → debt → net) ──────────
+const CF_UP = '#0ca30c'      // rental income (increase)
+const CF_DOWN = '#d63a3a'    // expenses / debt service (decrease)
+const CF_SUB = '#2a78d6'     // NOI subtotal
+function CashflowWaterfall({ cf }) {
+  const bars = [
+    { key: 'rent', short: 'Rental', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_UP },
+    { key: 'opex', short: 'OpEx', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_DOWN },
+    { key: 'noi', short: 'NOI', start: 0, end: cf.noi, value: cf.noi, color: CF_SUB, total: true },
+    { key: 'debt', short: 'Debt', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DOWN },
+    { key: 'net', short: 'Net CF', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_UP : CF_DOWN, total: true },
+  ]
+  const levels = bars.flatMap((b) => [b.start, b.end]).concat(0)
+  const domainMax = Math.max(...levels)
+  const domainMin = Math.min(...levels)
+  const range = domainMax - domainMin
+  if (!range) {
+    return <div className="flex h-48 items-center justify-center text-sm text-gray-400">Add rental income and expenses to see the cashflow bridge.</div>
+  }
+
+  const W = 560, H = 320
+  const padL = 16, padR = 16, padT = 40, padB = 44
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+  const colW = plotW / bars.length
+  const barW = colW * 0.5
+  const y = (v) => padT + plotH * ((domainMax - v) / range)
+  const colX = (i) => padL + i * colW + (colW - barW) / 2
+  const zeroY = y(0)
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mt-2 select-none">
+      {/* zero baseline */}
+      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} className="stroke-gray-200 dark:stroke-gray-700" strokeWidth="1" />
+      {/* dashed connectors at the running level */}
+      {[0, 1, 2, 3].map((i) => {
+        const yy = y(bars[i].end)
+        return <line key={`c${i}`} x1={colX(i) + barW} y1={yy} x2={colX(i + 1)} y2={yy} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" strokeDasharray="4 3" />
+      })}
+      {bars.map((b, i) => {
+        const top = Math.max(b.start, b.end)
+        const bottom = Math.min(b.start, b.end)
+        const ry = y(top)
+        const rh = Math.max(2, ((top - bottom) / range) * plotH)
+        return (
+          <g key={b.key}>
+            <rect x={colX(i)} y={ry} width={barW} height={rh} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.82} />
+            <text x={colX(i) + barW / 2} y={ry - 7} textAnchor="middle" className="fill-gray-700 dark:fill-gray-200" fontSize="11.5" fontWeight="600">{compactMoney(b.value)}</text>
+            <text x={colX(i) + barW / 2} y={H - 16} textAnchor="middle" className="fill-gray-500 dark:fill-gray-400" fontSize="11">{b.short}</text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 // ── Shared modal ─────────────────────────────────────────────────────────────
 function Modal({ open, title, wide, onClose, children }) {
   useEffect(() => {
@@ -293,6 +366,17 @@ const ltvPill = (ltv) => {
       : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'
   return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${tone}`}>{pct1(ltv)}</span>
 }
+// Gain/loss coloring: positive green, negative red.
+const gainMoney = (v) => {
+  const n = Number(v) || 0
+  const cls = n >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+  return <span className={`tabular-nums ${cls}`}>{fullMoney(n)}</span>
+}
+const gainPct = (fraction) => {
+  const n = Number(fraction) || 0
+  const cls = n >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'
+  return <span className={`tabular-nums ${cls}`}>{pct1(n)}</span>
+}
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function PortfolioEquityPage() {
@@ -344,6 +428,73 @@ export default function PortfolioEquityPage() {
   const capRateFlag = m.weightedRate > m.capRate * 100
   const band = ltvBand(m.ltv)
 
+  // Hover-tooltip descriptors: the formula + the actual input values used.
+  const mk = (formula, inputs) => ({ formula, inputs })
+  const metrics = {
+    portfolioValue: mk('Portfolio Value = Σ Current Market Value  ·  Growth = (Σ Value − Σ Purchase) ÷ Σ Purchase', [
+      { label: 'Σ Current value', display: fullMoney(m.value) },
+      { label: 'Σ Purchase price', display: fullMoney(m.purchase) },
+      { label: 'Growth', display: pct1(m.growth) },
+    ]),
+    totalEquity: mk('Equity = Σ Value − Σ Loan  ·  % of value = Equity ÷ Value', [
+      { label: 'Σ Current value', display: fullMoney(m.value) },
+      { label: 'Σ Loan balance', display: fullMoney(m.loan) },
+      { label: 'Total equity', display: fullMoney(m.equity) },
+      { label: '% of value', display: pct1(m.equityPct) },
+    ]),
+    totalDebt: mk('Debt = Σ Loan Balance  ·  Paid off = (Σ Original − Σ Balance) ÷ Σ Original', [
+      { label: 'Σ Original loan', display: fullMoney(m.origLoan) },
+      { label: 'Σ Loan balance', display: fullMoney(m.loan) },
+      { label: 'Paid off', display: pct1(m.paidOff) },
+    ]),
+    ltv: mk('LTV = Σ Loan ÷ Σ Value  ·  Cushion = 1 − (Loan ÷ 0.80) ÷ Value', [
+      { label: 'Σ Loan balance', display: fullMoney(m.loan) },
+      { label: 'Σ Current value', display: fullMoney(m.value) },
+      { label: 'Portfolio LTV', display: pct1(m.ltv) },
+      { label: 'Price cushion', display: pct1(Math.max(0, m.priceCushion)) },
+    ]),
+    weightedRate: mk('Weighted Rate = Σ(Balance × Rate) ÷ Σ Balance', [
+      { label: 'Σ Loan balance', display: fullMoney(m.loan) },
+      { label: 'Weighted rate', display: ratePct(m.weightedRate) },
+      { label: 'Monthly interest', display: fullMoney(m.monthlyInterest) },
+      { label: 'Portfolio cap rate', display: pct1(m.capRate) },
+    ]),
+    roe: mk('ROE = (Annual Net Cash Flow + Annual Principal Paydown) ÷ Equity', [
+      { label: 'Annual net cash flow', display: fullMoney(m.netCashFlow * 12) },
+      { label: 'Annual principal paydown', display: fullMoney(m.monthlyPrincipal * 12) },
+      { label: 'Current equity', display: fullMoney(m.equity) },
+      { label: 'Return on equity', display: pct1(m.roe) },
+    ]),
+    rentalIncome: mk(`Rental Income = Σ Scheduled Rent (rentals${per})`, [
+      { label: 'Rentals', display: String(m.counts.rentals) },
+      { label: `Scheduled rent${per}`, display: fullMoney(m.rent * factor) },
+      { label: `Vacancy loss${per}`, display: fullMoney(m.vacancy * factor) },
+      { label: `Effective (EGI)${per}`, display: fullMoney(m.egi * factor) },
+    ]),
+    operatingExpenses: mk(`Operating Expenses = −Σ OpEx  ·  Expense ratio = |OpEx| ÷ EGI`, [
+      { label: `Operating expenses${per}`, display: fullMoney(-m.opex * factor) },
+      { label: `Effective gross income${per}`, display: fullMoney(m.egi * factor) },
+      { label: 'Expense ratio', display: pct1(m.expenseRatio) },
+    ]),
+    noi: mk('Net Operating Income = EGI + OpEx  (before debt service)', [
+      { label: `Effective gross income${per}`, display: fullMoney(m.egi * factor) },
+      { label: `Operating expenses${per}`, display: fullMoney(m.opex * factor) },
+      { label: `Net operating income${per}`, display: fullMoney(m.noi * factor) },
+    ]),
+    netCashFlow: mk('Net Cash Flow = Rental Income + Vacancy + OpEx + Debt Service', [
+      { label: `Scheduled rent${per}`, display: fullMoney(m.rent * factor) },
+      { label: `Vacancy${per}`, display: fullMoney(m.vacancy * factor) },
+      { label: `Operating expenses${per}`, display: fullMoney(m.opex * factor) },
+      { label: `Debt service${per}`, display: fullMoney(m.debtService * factor) },
+      { label: `Net cash flow${per}`, display: fullMoney(m.netCashFlow * factor) },
+    ]),
+    capRate: mk('Portfolio Cap Rate = Annual NOI ÷ Rental Market Value', [
+      { label: 'Annual NOI', display: fullMoney(m.noi * 12) },
+      { label: 'Rental market value', display: fullMoney(m.rentalValue) },
+      { label: 'Portfolio cap rate', display: pct1(m.capRate) },
+    ]),
+  }
+
   return (
     <PageContainer>
       {/* Header + property filter */}
@@ -357,25 +508,25 @@ export default function PortfolioEquityPage() {
 
       {/* ── Band 1: Equity KPI tiles ── */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Equity metrics">
-        <KpiTile label="Portfolio Value" value={compactMoney(m.value)}>
+        <KpiTile label="Portfolio Value" value={compactMoney(m.value)} metric={metrics.portfolioValue}>
           <Delta>{pct1(m.growth)} growth</Delta>
         </KpiTile>
-        <KpiTile label="Total Equity" value={compactMoney(m.equity)}>
+        <KpiTile label="Total Equity" value={compactMoney(m.equity)} metric={metrics.totalEquity}>
           <Delta>{pct1(m.equityPct)} of value</Delta>
         </KpiTile>
-        <KpiTile label="Total Debt" value={compactMoney(m.loan)}>
+        <KpiTile label="Total Debt" value={compactMoney(m.loan)} metric={metrics.totalDebt}>
           <Delta>{pct1(m.paidOff)} paid off</Delta>
         </KpiTile>
-        <KpiTile label="Portfolio LTV" value={pct1(m.ltv)}>
+        <KpiTile label="Portfolio LTV" value={pct1(m.ltv)} metric={metrics.ltv}>
           <LtvMeter ltv={m.ltv} />
           <span className={`mt-1 block ${band.tone}`}>{band.label} · ~{pct1(Math.max(0, m.priceCushion))} price cushion</span>
         </KpiTile>
-        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)}>
+        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} metric={metrics.weightedRate}>
           <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
             {capRateFlag ? '▲ above' : 'vs'} {pct1(m.capRate)} cap rate
           </span>
         </KpiTile>
-        <KpiTile label="Return on Equity" value={pct1(m.roe)}>
+        <KpiTile label="Return on Equity" value={pct1(m.roe)} metric={metrics.roe}>
           <span className="text-gray-500 dark:text-gray-400">cashflow + paydown</span>
         </KpiTile>
       </section>
@@ -440,110 +591,48 @@ export default function PortfolioEquityPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-          <KpiTile label={`Net Cash Flow${per}`} value={compactMoney(m.netCashFlow * factor)}>
-            <span className={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{m.netCashFlow >= 0 ? 'positive' : 'negative'}</span>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+          <KpiTile label={`Rental Income${per}`} value={compactMoney(m.rent * factor)} metric={metrics.rentalIncome}>
+            <span className="text-gray-500 dark:text-gray-400">scheduled rent</span>
           </KpiTile>
-          <KpiTile label={`Gross Rent${per}`} value={compactMoney(m.rent * factor)}><span className="text-gray-500 dark:text-gray-400">scheduled</span></KpiTile>
-          <KpiTile label={`Operating Exp.${per}`} value={compactMoney(-m.opex * factor)}>
+          <KpiTile label={`Operating Expenses${per}`} value={compactMoney(-m.opex * factor)} metric={metrics.operatingExpenses}>
             <span className="text-gray-500 dark:text-gray-400">{pct1(m.expenseRatio)} of EGI</span>
           </KpiTile>
-          <KpiTile label={`Debt Service${per}`} value={compactMoney(-m.debtService * factor)}><span className="text-gray-500 dark:text-gray-400">P&amp;I</span></KpiTile>
-          <KpiTile label={`NOI${per}`} value={compactMoney(m.noi * factor)}>
-            <span className="text-gray-500 dark:text-gray-400">{pct1(m.capRate)} cap rate</span>
+          <KpiTile label={`Net Operating Income${per}`} value={compactMoney(m.noi * factor)} metric={metrics.noi}>
+            <span className="text-gray-500 dark:text-gray-400">before debt service</span>
           </KpiTile>
-          <KpiTile label="DSCR" value={m.dscr ? m.dscr.toFixed(2) : '—'}>
-            <span className={m.dscr >= 1.2 ? 'text-emerald-600 dark:text-emerald-400' : m.dscr >= 1 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}>NOI / debt service</span>
+          <KpiTile label={`Net Cashflow${per}`} value={compactMoney(m.netCashFlow * factor)} metric={metrics.netCashFlow}>
+            <span className={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{m.netCashFlow >= 0 ? 'positive' : 'negative'}</span>
+          </KpiTile>
+          <KpiTile label="Portfolio Cap Rate" value={pct1(m.capRate)} metric={metrics.capRate}>
+            <span className="text-gray-500 dark:text-gray-400">annual NOI / rental value</span>
           </KpiTile>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
-          {/* Cashflow by property */}
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
-            <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property</div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase text-gray-400">
-                  <tr className="border-b border-gray-100 dark:border-gray-800">
-                    <th className="px-4 py-2 text-left font-medium">Property</th>
-                    <th className="px-3 py-2 text-right font-medium">Rent</th>
-                    <th className="px-3 py-2 text-right font-medium">Vacancy</th>
-                    <th className="px-3 py-2 text-right font-medium">OpEx</th>
-                    <th className="px-3 py-2 text-right font-medium">Debt (P&amp;I)</th>
-                    <th className="px-4 py-2 text-right font-medium">Net CF</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rentals.map((p) => {
-                    const net = p.netCashFlow * factor
-                    return (
-                      <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                        <td className="px-4 py-2 text-gray-700 dark:text-gray-200">{p.name}</td>
-                        <td className="px-3 py-2 text-right">{signedMoney(p.rent * factor)}</td>
-                        <td className="px-3 py-2 text-right">{signedMoney(p.vacancy * factor)}</td>
-                        <td className="px-3 py-2 text-right">{signedMoney(p.opex * factor)}</td>
-                        <td className="px-3 py-2 text-right">{signedMoney(p.debtService * factor)}</td>
-                        <td className={`px-4 py-2 text-right font-semibold tabular-nums ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(net)}</td>
-                      </tr>
-                    )
-                  })}
-                  {!rentals.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-gray-400">No rentals selected</td></tr>}
-                </tbody>
-                {rentals.length ? (
-                  <tfoot>
-                    <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                      <td className="px-4 py-2 text-gray-900 dark:text-white">Total</td>
-                      <td className="px-3 py-2 text-right">{signedMoney(m.rent * factor)}</td>
-                      <td className="px-3 py-2 text-right">{signedMoney(m.vacancy * factor)}</td>
-                      <td className="px-3 py-2 text-right">{signedMoney(m.opex * factor)}</td>
-                      <td className="px-3 py-2 text-right">{signedMoney(m.debtService * factor)}</td>
-                      <td className={`px-4 py-2 text-right tabular-nums ${m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(m.netCashFlow * factor)}</td>
-                    </tr>
-                  </tfoot>
-                ) : null}
-              </table>
-            </div>
-          </div>
+          {/* Cashflow summary (click to expand into per-property table) */}
+          <SummaryCard title={`Cashflow Summary${per}`} onExpand={() => setModal({ kind: 'cashflow' })}>
+            <SummaryRow label="Gross rent" value={fullMoney(m.rent * factor)} />
+            <SummaryRow label="Vacancy" value={fullMoney(m.vacancy * factor)} tone="text-red-600 dark:text-red-400" />
+            <SummaryRow label="Operating expenses" value={fullMoney(m.opex * factor)} tone="text-red-600 dark:text-red-400" />
+            <SummaryRow label="Net operating income" value={fullMoney(m.noi * factor)} strong />
+            <SummaryRow label="Debt service (P&I)" value={fullMoney(m.debtService * factor)} tone="text-red-600 dark:text-red-400" />
+            <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+            <SummaryRow label="Net cash flow" value={fullMoney(m.netCashFlow * factor)} strong tone={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
+          </SummaryCard>
 
-          {/* Equity by property */}
-          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
-            <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Equity by property</div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs uppercase text-gray-400">
-                  <tr className="border-b border-gray-100 dark:border-gray-800">
-                    <th className="px-4 py-2 text-left font-medium">Property</th>
-                    <th className="px-3 py-2 text-right font-medium">Value</th>
-                    <th className="px-3 py-2 text-right font-medium">Loan</th>
-                    <th className="px-3 py-2 text-right font-medium">Equity</th>
-                    <th className="px-4 py-2 text-right font-medium">LTV</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((p) => (
-                    <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                      <td className="px-4 py-2 text-gray-700 dark:text-gray-200">{p.name}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.value)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.loan)}</td>
-                      <td className="px-3 py-2 text-right font-semibold tabular-nums text-gray-900 dark:text-white">{fullMoney(p.equity)}</td>
-                      <td className="px-4 py-2 text-right">{ltvPill(p.ltv)}</td>
-                    </tr>
-                  ))}
-                  {!rows.length && <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-gray-400">No properties selected</td></tr>}
-                </tbody>
-                {rows.length ? (
-                  <tfoot>
-                    <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                      <td className="px-4 py-2 text-gray-900 dark:text-white">Total</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fullMoney(m.value)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fullMoney(m.loan)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fullMoney(m.equity)}</td>
-                      <td className="px-4 py-2 text-right">{ltvPill(m.ltv)}</td>
-                    </tr>
-                  </tfoot>
-                ) : null}
-              </table>
-            </div>
+          {/* Cashflow waterfall: rental income → opex → NOI → debt service → net cash flow */}
+          <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge{per}</h3>
+            <CashflowWaterfall
+              cf={{
+                rentalIncome: m.egi * factor,
+                operatingExpenses: m.opex * factor,
+                noi: m.noi * factor,
+                debtService: m.debtService * factor,
+                netCashFlow: m.netCashFlow * factor,
+              }}
+            />
           </div>
         </div>
       </section>
@@ -554,81 +643,129 @@ export default function PortfolioEquityPage() {
         <WaterfallLegend />
       </Modal>
 
-      <Modal open={modal?.kind === 'appreciation'} title="Appreciation by property" onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'cashflow'} title={`Cashflow by property${per}`} wide onClose={() => setModal(null)}>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-[15px]">
             <thead className="text-xs uppercase text-gray-400">
               <tr className="border-b border-gray-100 dark:border-gray-800">
-                <th className="py-2 pr-3 text-left font-medium">Property</th>
-                <th className="px-2 py-2 text-right font-medium">Value</th>
-                <th className="px-2 py-2 text-right font-medium">Purchase</th>
-                <th className="px-2 py-2 text-right font-medium">Appreciation</th>
-                <th className="px-2 py-2 text-right font-medium">Growth</th>
-                <th className="py-2 pl-2 text-right font-medium">Annualized</th>
+                <th className="py-2.5 pr-3 text-left font-medium">Property</th>
+                <th className="px-3 py-2.5 text-right font-medium">Rent</th>
+                <th className="px-3 py-2.5 text-right font-medium">Vacancy</th>
+                <th className="px-3 py-2.5 text-right font-medium">OpEx</th>
+                <th className="px-3 py-2.5 text-right font-medium">Debt (P&amp;I)</th>
+                <th className="py-2.5 pl-3 text-right font-medium">Net CF</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rentals.map((p) => {
+                const net = p.netCashFlow * factor
+                return (
+                  <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
+                    <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
+                    <td className="px-3 py-2.5 text-right">{signedMoney(p.rent * factor)}</td>
+                    <td className="px-3 py-2.5 text-right">{signedMoney(p.vacancy * factor)}</td>
+                    <td className="px-3 py-2.5 text-right">{signedMoney(p.opex * factor)}</td>
+                    <td className="px-3 py-2.5 text-right">{signedMoney(p.debtService * factor)}</td>
+                    <td className={`py-2.5 pl-3 text-right font-semibold tabular-nums ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(net)}</td>
+                  </tr>
+                )
+              })}
+              {!rentals.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-gray-400">No rentals selected</td></tr>}
+            </tbody>
+            {rentals.length ? (
+              <tfoot>
+                <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
+                  <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
+                  <td className="px-3 py-2.5 text-right">{signedMoney(m.rent * factor)}</td>
+                  <td className="px-3 py-2.5 text-right">{signedMoney(m.vacancy * factor)}</td>
+                  <td className="px-3 py-2.5 text-right">{signedMoney(m.opex * factor)}</td>
+                  <td className="px-3 py-2.5 text-right">{signedMoney(m.debtService * factor)}</td>
+                  <td className={`py-2.5 pl-3 text-right tabular-nums ${m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(m.netCashFlow * factor)}</td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      </Modal>
+
+      <Modal open={modal?.kind === 'appreciation'} title="Appreciation by property" wide onClose={() => setModal(null)}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[15px]">
+            <thead className="text-xs uppercase text-gray-400">
+              <tr className="border-b border-gray-100 dark:border-gray-800">
+                <th className="py-2.5 pr-3 text-left font-medium">Property</th>
+                <th className="px-3 py-2.5 text-right font-medium">Value</th>
+                <th className="px-3 py-2.5 text-right font-medium">Purchase</th>
+                <th className="px-3 py-2.5 text-right font-medium">Appreciation</th>
+                <th className="px-3 py-2.5 text-right font-medium">Growth</th>
+                <th className="py-2.5 pl-3 text-right font-medium">Annualized</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((p) => (
                 <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                  <td className="py-2 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.value)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.purchase)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-emerald-600 dark:text-emerald-400">{fullMoney(p.appreciation)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{pct1(p.growth)}</td>
-                  <td className="py-2 pl-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{pct1(p.annualized)}</td>
+                  <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.value)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.purchase)}</td>
+                  <td className="px-3 py-2.5 text-right">{gainMoney(p.appreciation)}</td>
+                  <td className="px-3 py-2.5 text-right">{gainPct(p.growth)}</td>
+                  <td className="py-2.5 pl-3 text-right">{gainPct(p.annualized)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                <td className="py-2 pr-3 text-gray-900 dark:text-white">Total</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.value)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.purchase)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.value - m.purchase)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{pct1(m.growth)}</td>
-                <td className="py-2 pl-2 text-right tabular-nums">{pct1(m.annualizedWeighted)}</td>
+                <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.value)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.purchase)}</td>
+                <td className="px-3 py-2.5 text-right">{gainMoney(m.value - m.purchase)}</td>
+                <td className="px-3 py-2.5 text-right">{gainPct(m.growth)}</td>
+                <td className="py-2.5 pl-3 text-right">{gainPct(m.annualizedWeighted)}</td>
               </tr>
             </tfoot>
           </table>
         </div>
       </Modal>
 
-      <Modal open={modal?.kind === 'loans'} title="Loans by property" onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'loans'} title="Loans by property" wide onClose={() => setModal(null)}>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-[15px]">
             <thead className="text-xs uppercase text-gray-400">
               <tr className="border-b border-gray-100 dark:border-gray-800">
-                <th className="py-2 pr-3 text-left font-medium">Property</th>
-                <th className="px-2 py-2 text-right font-medium">Orig. Loan</th>
-                <th className="px-2 py-2 text-right font-medium">Balance</th>
-                <th className="px-2 py-2 text-right font-medium">Rate</th>
-                <th className="px-2 py-2 text-left font-medium">Type</th>
-                <th className="px-2 py-2 text-right font-medium">Payment</th>
-                <th className="py-2 pl-2 text-right font-medium">Payoff</th>
+                <th className="py-2.5 pr-3 text-left font-medium">Property</th>
+                <th className="px-3 py-2.5 text-right font-medium">Orig. Loan</th>
+                <th className="px-3 py-2.5 text-right font-medium">Balance</th>
+                <th className="px-3 py-2.5 text-right font-medium">Rate</th>
+                <th className="px-3 py-2.5 text-left font-medium">Type</th>
+                <th className="px-3 py-2.5 text-right font-medium">Payment</th>
+                <th className="px-3 py-2.5 text-right font-medium">Payoff</th>
+                <th className="py-2.5 pl-3 text-right font-medium">LTV</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((p) => (
                 <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                  <td className="py-2 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.origLoan)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.loan)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{ratePct(p.rate)}</td>
-                  <td className="px-2 py-2 text-left text-gray-500 dark:text-gray-400">{p.loanType}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.payment)}</td>
-                  <td className="py-2 pl-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{p.payoffYear || '—'}</td>
+                  <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.origLoan)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.loan)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{ratePct(p.rate)}</td>
+                  <td className="px-3 py-2.5 text-left text-gray-500 dark:text-gray-400">{p.loanType}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.payment)}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{p.payoffYear || '—'}</td>
+                  <td className="py-2.5 pl-3 text-right">{ltvPill(p.ltv)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                <td className="py-2 pr-3 text-gray-900 dark:text-white">Total</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.origLoan)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.loan)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{ratePct(m.weightedRate)}</td>
-                <td className="px-2 py-2" />
-                <td className="px-2 py-2 text-right tabular-nums">{fullMoney(m.payment)}</td>
-                <td className="py-2 pl-2" />
+                <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.origLoan)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.loan)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{ratePct(m.weightedRate)}</td>
+                <td className="px-3 py-2.5" />
+                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.payment)}</td>
+                <td className="px-3 py-2.5" />
+                <td className="py-2.5 pl-3 text-right">{ltvPill(m.ltv)}</td>
               </tr>
             </tfoot>
           </table>
