@@ -1901,6 +1901,14 @@ const EDITABLE_EXPENSE_FIELDS = [
   { key: 'other', label: 'Other', decor: 'other_expenses' },
 ]
 
+// Fields for the Overview-tab inline editor — property tax (with its document
+// source) plus every editable category. Same list-mode + add-from-dropdown UX
+// as the Expenses tab.
+const OVERVIEW_EDITOR_FIELDS = [
+  { key: 'property_tax', label: 'Property tax', decor: 'taxes' },
+  ...EDITABLE_EXPENSE_FIELDS,
+]
+
 function ScheduleEExpensesByYear({ propId }) {
   const [year, setYear] = useState(null)
   const [row, setRow] = useState(null)
@@ -2050,6 +2058,8 @@ function ExpensesTab({ propId }) {
   const [expandedYear, setExpandedYear] = useState(null)
   const [editingYear, setEditingYear] = useState(null)
   const [editorRow, setEditorRow] = useState(null)
+  const [editorVisibleKeys, setEditorVisibleKeys] = useState([])
+  const [editorAddKey, setEditorAddKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [escrowUploading, setEscrowUploading] = useState(false)
   const [addressReview, setAddressReview] = useState(null)
@@ -2105,15 +2115,30 @@ function ExpensesTab({ propId }) {
   }
   const openEditor = (year = data?.currentYear || CURRENT_YEAR) => {
     const nextYear = Number(year)
+    const nextRow = rowForYear(nextYear)
     setEditingYear(nextYear)
     setExpandedYear(nextYear)
-    setEditorRow(rowForYear(nextYear))
+    setEditorRow(nextRow)
+    setEditorVisibleKeys(OVERVIEW_EDITOR_FIELDS.filter((f) => inputNumber(nextRow[f.key]) > 0).map((f) => f.key))
+    setEditorAddKey('')
     setAddressReview(null)
+  }
+  const editorAddable = OVERVIEW_EDITOR_FIELDS.filter((f) => !editorVisibleKeys.includes(f.key))
+  const addEditorExpense = () => {
+    if (!editorAddKey) return
+    setEditorVisibleKeys((keys) => [...keys, editorAddKey])
+    setEditorAddKey('')
+  }
+  const removeEditorExpense = (key) => {
+    setEditorVisibleKeys((keys) => keys.filter((k) => k !== key))
+    updateEditorField(key, '')
   }
   const closeEditor = (collapse = true) => {
     const yearToCollapse = editingYear
     setEditingYear(null)
     setEditorRow(null)
+    setEditorVisibleKeys([])
+    setEditorAddKey('')
     setAddressReview(null)
     setUploadTarget(null)
     if (collapse && yearToCollapse) setExpandedYear(null)
@@ -2138,12 +2163,14 @@ function ExpensesTab({ propId }) {
       toast.error(`No ${previousYear} expenses to copy.`)
       return
     }
-    setEditorRow({
+    const copied = {
       ...blankAnnualExpense(editingYear),
-      ...EXPENSE_FIELDS.reduce((values, field) => ({ ...values, [field.key]: previous[field.key] || '' }), {}),
+      ...OVERVIEW_EDITOR_FIELDS.reduce((values, field) => ({ ...values, [field.key]: previous[field.key] || '' }), {}),
       year: Number(editingYear),
       source_status: 'manual',
-    })
+    }
+    setEditorRow(copied)
+    setEditorVisibleKeys(OVERVIEW_EDITOR_FIELDS.filter((f) => inputNumber(copied[f.key]) > 0).map((f) => f.key))
     toast.success(`Copied ${previousYear} expenses.`)
   }
   const saveExpense = async () => {
@@ -2266,29 +2293,62 @@ function ExpensesTab({ propId }) {
             <button type="button" className="btn-secondary text-sm" onClick={copyPriorYear}>Copy prior year</button>
           </div>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {EXPENSE_FIELDS.map((field) => {
-            const source = annualExpenseSourceBadge(selectedEditorRow, field.key)
-            return (
-              <div key={field.key}>
-                <label className="label" htmlFor={`expense-${field.key}`}>{field.label}</label>
-                <div className="relative">
-                  <input
-                    id={`expense-${field.key}`}
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={selectedEditorRow[field.key] || ''}
-                    onChange={(event) => updateEditorField(field.key, event.target.value)}
-                    className="input pr-3"
-                  />
+        <div className="space-y-2">
+          {editorVisibleKeys.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-gray-200 px-3 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+              No expenses yet. Add a line below to start entering {editingYear} expenses.
+            </p>
+          ) : (
+            editorVisibleKeys.map((key) => {
+              const field = OVERVIEW_EDITOR_FIELDS.find((f) => f.key === key)
+              if (!field) return null
+              const source = annualExpenseSourceBadge(selectedEditorRow, field.key)
+              return (
+                <div key={field.key} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900/60">
+                  <label className="min-w-0 flex-1 text-sm text-gray-700 dark:text-gray-200" htmlFor={`expense-${field.key}`}>
+                    {field.label}
+                    <div className="mt-0.5"><ExpenseFieldSourceBadge source={source} /></div>
+                  </label>
+                  <div className="relative w-40 shrink-0">
+                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-sm text-gray-400">$</span>
+                    <input
+                      id={`expense-${field.key}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={selectedEditorRow[field.key] || ''}
+                      onChange={(event) => updateEditorField(field.key, event.target.value)}
+                      className="input pl-5 pr-2 text-right tabular-nums"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeEditorExpense(field.key)}
+                    className="shrink-0 rounded-md p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                    aria-label={`Remove ${field.label}`}
+                    title={`Remove ${field.label}`}
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
                 </div>
-                <div className="mt-1 min-h-5">
-                  <ExpenseFieldSourceBadge source={source} />
-                </div>
-              </div>
-            )
-          })}
+              )
+            })
+          )}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <select
+            value={editorAddKey}
+            onChange={(event) => setEditorAddKey(event.target.value)}
+            disabled={editorAddable.length === 0}
+            aria-label="Add expense category"
+            className="input h-9 max-w-64 text-sm disabled:opacity-50"
+          >
+            <option value="">{editorAddable.length === 0 ? 'All categories added' : 'Add an expense…'}</option>
+            {editorAddable.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
+          </select>
+          <button type="button" onClick={addEditorExpense} disabled={!editorAddKey} className="btn-secondary inline-flex items-center gap-1.5 text-sm disabled:opacity-50">
+            <Plus className="h-3.5 w-3.5" /> Add
+          </button>
         </div>
         <div className="mt-5 flex items-center justify-end gap-2 border-t border-blue-100 pt-4 dark:border-blue-900/40">
           <button type="button" className="btn-secondary text-sm" onClick={() => closeEditor()} disabled={saving}>Cancel</button>
