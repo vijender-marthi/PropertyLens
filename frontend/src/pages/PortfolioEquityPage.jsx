@@ -63,11 +63,11 @@ function ltvBand(ltv) {
 // ── KPI tile ─────────────────────────────────────────────────────────────────
 // `metric` (optional): hovering anywhere on the tile reveals the formula + the
 // input values used to derive the number; it hides when the pointer leaves.
-function KpiTile({ label, value, metric, children }) {
+function KpiTile({ label, value, valueClass, metric, children }) {
   return (
     <div className="group relative rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:shadow-md dark:border-gray-700 dark:bg-gray-900 dark:hover:border-blue-700">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums text-gray-950 dark:text-white">{value}</p>
+      <p className={`mt-1 text-2xl font-bold tabular-nums ${valueClass || 'text-gray-950 dark:text-white'}`}>{value}</p>
       <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{children}</div>
       {metric ? (
         <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case tracking-normal text-gray-600 shadow-xl group-hover:block dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">
@@ -215,13 +215,13 @@ function WaterfallLegend() {
 const CF_UP = '#0ca30c'      // rental income (increase)
 const CF_DOWN = '#d63a3a'    // expenses / debt service (decrease)
 const CF_SUB = '#2a78d6'     // NOI subtotal
-function CashflowWaterfall({ cf }) {
+function CashflowWaterfall({ cf, large = false }) {
   const bars = [
-    { key: 'rent', short: 'Rental', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_UP },
-    { key: 'opex', short: 'OpEx', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_DOWN },
-    { key: 'noi', short: 'NOI', start: 0, end: cf.noi, value: cf.noi, color: CF_SUB, total: true },
-    { key: 'debt', short: 'Debt', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DOWN },
-    { key: 'net', short: 'Net CF', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_UP : CF_DOWN, total: true },
+    { key: 'rent', short: 'Rental', long: 'Rental income', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_UP },
+    { key: 'opex', short: 'OpEx', long: 'Operating exp.', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_DOWN },
+    { key: 'noi', short: 'NOI', long: 'Net op. income', start: 0, end: cf.noi, value: cf.noi, color: CF_SUB, total: true },
+    { key: 'debt', short: 'Debt', long: 'Debt service', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DOWN },
+    { key: 'net', short: 'Net CF', long: 'Net cash flow', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_UP : CF_DOWN, total: true },
   ]
   const levels = bars.flatMap((b) => [b.start, b.end]).concat(0)
   const domainMax = Math.max(...levels)
@@ -231,18 +231,24 @@ function CashflowWaterfall({ cf }) {
     return <div className="flex h-48 items-center justify-center text-sm text-gray-400">Add rental income and expenses to see the cashflow bridge.</div>
   }
 
-  const W = 560, H = 320
-  const padL = 16, padR = 16, padT = 40, padB = 44
+  const W = large ? 660 : 420
+  const H = large ? 380 : 200
+  const padL = large ? 20 : 12
+  const padR = large ? 20 : 12
+  const padT = large ? 44 : 26
+  const padB = large ? 44 : 26
   const plotW = W - padL - padR
   const plotH = H - padT - padB
   const colW = plotW / bars.length
-  const barW = colW * 0.5
+  const barW = colW * (large ? 0.5 : 0.46)
   const y = (v) => padT + plotH * ((domainMax - v) / range)
   const colX = (i) => padL + i * colW + (colW - barW) / 2
   const zeroY = y(0)
+  const valueFont = large ? 13 : 9.5
+  const labelFont = large ? 12 : 9
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mt-2 select-none">
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className={`mx-auto mt-2 block select-none ${large ? '' : 'max-w-[380px]'}`}>
       {/* zero baseline */}
       <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} className="stroke-gray-200 dark:stroke-gray-700" strokeWidth="1" />
       {/* dashed connectors at the running level */}
@@ -257,9 +263,9 @@ function CashflowWaterfall({ cf }) {
         const rh = Math.max(2, ((top - bottom) / range) * plotH)
         return (
           <g key={b.key}>
-            <rect x={colX(i)} y={ry} width={barW} height={rh} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.82} />
-            <text x={colX(i) + barW / 2} y={ry - 7} textAnchor="middle" className="fill-gray-700 dark:fill-gray-200" fontSize="11.5" fontWeight="600">{compactMoney(b.value)}</text>
-            <text x={colX(i) + barW / 2} y={H - 16} textAnchor="middle" className="fill-gray-500 dark:fill-gray-400" fontSize="11">{b.short}</text>
+            <rect x={colX(i)} y={ry} width={barW} height={rh} rx={large ? 4 : 3} fill={b.color} opacity={b.total ? 0.92 : 0.82} />
+            <text x={colX(i) + barW / 2} y={ry - (large ? 7 : 5)} textAnchor="middle" className="fill-gray-700 dark:fill-gray-200" fontSize={valueFont} fontWeight="600">{compactMoney(b.value)}</text>
+            <text x={colX(i) + barW / 2} y={H - (large ? 14 : 9)} textAnchor="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont}>{large ? b.long || b.short : b.short}</text>
           </g>
         )
       })}
@@ -428,6 +434,15 @@ export default function PortfolioEquityPage() {
   const capRateFlag = m.weightedRate > m.capRate * 100
   const band = ltvBand(m.ltv)
 
+  // Value coloring: green = good/income, red = liability/expense/negative,
+  // blue = informational, amber = caution.
+  const TONE = {
+    green: 'text-emerald-600 dark:text-emerald-400',
+    red: 'text-red-600 dark:text-red-400',
+    blue: 'text-blue-600 dark:text-blue-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+  }
+
   // Hover-tooltip descriptors: the formula + the actual input values used.
   const mk = (formula, inputs) => ({ formula, inputs })
   const metrics = {
@@ -508,25 +523,25 @@ export default function PortfolioEquityPage() {
 
       {/* ── Band 1: Equity KPI tiles ── */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Equity metrics">
-        <KpiTile label="Portfolio Value" value={compactMoney(m.value)} metric={metrics.portfolioValue}>
+        <KpiTile label="Portfolio Value" value={compactMoney(m.value)} valueClass={TONE.blue} metric={metrics.portfolioValue}>
           <Delta>{pct1(m.growth)} growth</Delta>
         </KpiTile>
-        <KpiTile label="Total Equity" value={compactMoney(m.equity)} metric={metrics.totalEquity}>
+        <KpiTile label="Total Equity" value={compactMoney(m.equity)} valueClass={m.equity >= 0 ? TONE.green : TONE.red} metric={metrics.totalEquity}>
           <Delta>{pct1(m.equityPct)} of value</Delta>
         </KpiTile>
-        <KpiTile label="Total Debt" value={compactMoney(m.loan)} metric={metrics.totalDebt}>
+        <KpiTile label="Total Debt" value={compactMoney(m.loan)} valueClass={TONE.red} metric={metrics.totalDebt}>
           <Delta>{pct1(m.paidOff)} paid off</Delta>
         </KpiTile>
-        <KpiTile label="Portfolio LTV" value={pct1(m.ltv)} metric={metrics.ltv}>
+        <KpiTile label="Portfolio LTV" value={pct1(m.ltv)} valueClass={band.tone} metric={metrics.ltv}>
           <LtvMeter ltv={m.ltv} />
           <span className={`mt-1 block ${band.tone}`}>{band.label} · ~{pct1(Math.max(0, m.priceCushion))} price cushion</span>
         </KpiTile>
-        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} metric={metrics.weightedRate}>
+        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={capRateFlag ? TONE.amber : TONE.blue} metric={metrics.weightedRate}>
           <span className={capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}>
             {capRateFlag ? '▲ above' : 'vs'} {pct1(m.capRate)} cap rate
           </span>
         </KpiTile>
-        <KpiTile label="Return on Equity" value={pct1(m.roe)} metric={metrics.roe}>
+        <KpiTile label="Return on Equity" value={pct1(m.roe)} valueClass={m.roe >= 0 ? TONE.green : TONE.red} metric={metrics.roe}>
           <span className="text-gray-500 dark:text-gray-400">cashflow + paydown</span>
         </KpiTile>
       </section>
@@ -592,19 +607,19 @@ export default function PortfolioEquityPage() {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-          <KpiTile label={`Rental Income${per}`} value={compactMoney(m.rent * factor)} metric={metrics.rentalIncome}>
+          <KpiTile label={`Rental Income${per}`} value={compactMoney(m.rent * factor)} valueClass={TONE.green} metric={metrics.rentalIncome}>
             <span className="text-gray-500 dark:text-gray-400">scheduled rent</span>
           </KpiTile>
-          <KpiTile label={`Operating Expenses${per}`} value={compactMoney(-m.opex * factor)} metric={metrics.operatingExpenses}>
+          <KpiTile label={`Operating Expenses${per}`} value={compactMoney(-m.opex * factor)} valueClass={TONE.red} metric={metrics.operatingExpenses}>
             <span className="text-gray-500 dark:text-gray-400">{pct1(m.expenseRatio)} of EGI</span>
           </KpiTile>
-          <KpiTile label={`Net Operating Income${per}`} value={compactMoney(m.noi * factor)} metric={metrics.noi}>
+          <KpiTile label={`Net Operating Income${per}`} value={compactMoney(m.noi * factor)} valueClass={m.noi >= 0 ? TONE.green : TONE.red} metric={metrics.noi}>
             <span className="text-gray-500 dark:text-gray-400">before debt service</span>
           </KpiTile>
-          <KpiTile label={`Net Cashflow${per}`} value={compactMoney(m.netCashFlow * factor)} metric={metrics.netCashFlow}>
+          <KpiTile label={`Net Cashflow${per}`} value={compactMoney(m.netCashFlow * factor)} valueClass={m.netCashFlow >= 0 ? TONE.green : TONE.red} metric={metrics.netCashFlow}>
             <span className={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{m.netCashFlow >= 0 ? 'positive' : 'negative'}</span>
           </KpiTile>
-          <KpiTile label="Portfolio Cap Rate" value={pct1(m.capRate)} metric={metrics.capRate}>
+          <KpiTile label="Portfolio Cap Rate" value={pct1(m.capRate)} valueClass={TONE.blue} metric={metrics.capRate}>
             <span className="text-gray-500 dark:text-gray-400">annual NOI / rental value</span>
           </KpiTile>
         </div>
@@ -622,8 +637,17 @@ export default function PortfolioEquityPage() {
           </SummaryCard>
 
           {/* Cashflow waterfall: rental income → opex → NOI → debt service → net cash flow */}
-          <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge{per}</h3>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setModal({ kind: 'cfwaterfall' })}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setModal({ kind: 'cfwaterfall' }) } }}
+            className="group flex cursor-pointer flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-gray-700 dark:bg-gray-900"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge{per}</h3>
+              <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 opacity-0 transition group-hover:opacity-100"><Maximize2 className="h-3.5 w-3.5" /> enlarge</span>
+            </div>
             <CashflowWaterfall
               cf={{
                 rentalIncome: m.egi * factor,
@@ -641,6 +665,20 @@ export default function PortfolioEquityPage() {
       <Modal open={modal?.kind === 'waterfall'} title="Value Buildup" wide onClose={() => setModal(null)}>
         <ValueWaterfall wf={m.waterfall} large />
         <WaterfallLegend />
+      </Modal>
+
+      <Modal open={modal?.kind === 'cfwaterfall'} title={`Cashflow Bridge${per}`} wide onClose={() => setModal(null)}>
+        <CashflowWaterfall
+          large
+          cf={{
+            rentalIncome: m.egi * factor,
+            operatingExpenses: m.opex * factor,
+            noi: m.noi * factor,
+            debtService: m.debtService * factor,
+            netCashFlow: m.netCashFlow * factor,
+          }}
+        />
+        <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
       </Modal>
 
       <Modal open={modal?.kind === 'cashflow'} title={`Cashflow by property${per}`} wide onClose={() => setModal(null)}>

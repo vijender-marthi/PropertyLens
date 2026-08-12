@@ -115,6 +115,7 @@ function normalizeProperty(property, healthRow) {
     healthStatus: healthRow?.status || property.health_status || 'Stable',
     healthKey: healthRow?.status || property.health_status || 'stable',
     recommendation: healthRow?.action || property.recommendation || 'Open property',
+    rentMetric: metrics.monthlyRentalIncome,
     cashFlowMetric: healthRow?.monthlyCashFlow || metrics.monthlyCashFlow,
     equityMetric: healthRow?.equity || metrics.equity,
     ltvMetric: healthRow?.ltv || metrics.loanToValue || metrics.ltv,
@@ -420,6 +421,7 @@ export default function PropertiesPage() {
   const tableColumns = [
     propertyNameColumn,
     { id: 'city', header: 'City', accessor: 'city', sortValue: (record) => record.city },
+    { id: 'rent', header: 'Rent /mo', align: 'right', render: (record) => metricDisplay(record.rentMetric), sortValue: (record) => record.rentMetric?.value },
     { id: 'cashFlow', header: 'Cash Flow', align: 'right', render: (record) => metricDisplay(record.cashFlowMetric), sortValue: (record) => record.cashFlowMetric?.value },
     { id: 'equity', header: 'Equity', align: 'right', render: (record) => metricFullDisplay(record.equityMetric), sortValue: (record) => record.equityMetric?.value },
     { id: 'ltv', header: 'LTV', align: 'right', render: (record) => metricDisplay(record.ltvMetric), sortValue: (record) => record.ltvMetric?.value },

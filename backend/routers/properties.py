@@ -12790,8 +12790,16 @@ def _equity_cashflow_row(prop: models.Property, *, now_year: int) -> Dict[str, A
     value = float(prop.market_value or 0)
     purchase = float(prop.purchase_price or 0)
     buy_year = _year_of(prop.purchase_date)
-    monthly_rent = 0.0 if is_primary else float(prop.monthly_rent or 0)
-    effective_rent = 0.0 if is_primary else float(metrics.get("effective_rent") or 0)  # occupancy-adjusted
+    # Scheduled rent uses the shared resolver: active lease-period rent first,
+    # then the property-details "rent per month" fallback. Reading prop.monthly_rent
+    # alone shows 0 for properties whose rent is tracked via lease periods.
+    if is_primary:
+        monthly_rent = 0.0
+        effective_rent = 0.0
+    else:
+        monthly_rent = float((resolve_monthly_rent(prop, now_year) or {}).get("monthly_rent") or 0)
+        occupancy = float(prop.occupancy_rate if prop.occupancy_rate is not None else 100) / 100
+        effective_rent = monthly_rent * occupancy
     monthly_opex = 0.0 if is_primary else float(metrics.get("monthly_expenses") or 0)
     vacancy = effective_rent - monthly_rent  # negative loss
     opex = -monthly_opex
