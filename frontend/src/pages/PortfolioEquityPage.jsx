@@ -818,7 +818,7 @@ export default function PortfolioEquityPage() {
                 <td className="px-3 py-2.5 text-right">{gainMoney(m.value - m.purchase)}</td>
                 <td className="px-3 py-2.5 text-right">{gainPct(m.growth)}</td>
                 <td className="px-3 py-2.5" />
-                <td className="py-2.5 pl-3 text-right">{gainPct(m.annualizedWeighted)}</td>
+                <td className="py-2.5 pl-3 text-right text-gray-400">—</td>
               </tr>
             </tfoot>
           </table>
