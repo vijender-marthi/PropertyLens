@@ -571,8 +571,15 @@ export default function PortfolioEquityPage() {
         </KpiTile>
       </section>
 
-      {/* ── Acquisition timeline (click a home to filter the dashboard to it) ── */}
-      <HomeTimeline rows={rows} onSelect={(home) => setSelectedIds(new Set([home.id]))} />
+      {/* ── Acquisition timeline (click a home to filter; click again to reset) ── */}
+      <HomeTimeline
+        rows={rows}
+        onSelect={(home) => setSelectedIds((cur) => (
+          cur.size === 1 && cur.has(home.id)
+            ? new Set(available.map((p) => p.id))   // already isolated → reset to all
+            : new Set([home.id])                    // filter to just this home
+        ))}
+      />
 
       {/* ── Band 2: Appreciation · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
