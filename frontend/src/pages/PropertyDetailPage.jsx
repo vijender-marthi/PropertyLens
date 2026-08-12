@@ -24,6 +24,7 @@ import PageContainer from '../components/PageContainer'
 import MetricCard from '../components/metrics/MetricCard'
 import MetricKPI from '../components/metrics/MetricKPI'
 import RentalPropertySummary, { RentalPropertySummaryHeader } from '../components/RentalPropertySummary'
+import PropertyEquitySummary from '../components/PropertyEquitySummary'
 import PrimaryPropertySummary from '../components/PrimaryPropertySummary'
 import { useAuth } from '../hooks/useAuth'
 import { propertyTabs } from '../config/propertyTabs'
@@ -726,18 +727,7 @@ onAddLoan={() => { setEditLoan(null); setShowLoanModal(true) }}
 )}
 
       {activeTab === 'summary' && (
-        rentalSummaryActive ? (
-          <RentalPropertySummary
-            metricVault={metricVault}
-            onJump={(tab) => navigate(`/properties/${id}/${propertyTabs.find((item) => item.id === tab)?.path || tab}`)}
-            waterfall={<ValueWaterfallStoryChart waterfall={metricVault?.rentalSummary?.waterfall} onJump={setActiveTab} showTitle={false} />}
-          />
-        ) : (
-          <PrimaryPropertySummary
-            metricVault={metricVault}
-            waterfall={<ValueWaterfallStoryChart waterfall={metricVault?.primarySummary?.waterfall} onJump={setActiveTab} showTitle={false} />}
-          />
-        )
+        <PropertyEquitySummary propId={id} />
       )}
 
       {/* Modals */}
