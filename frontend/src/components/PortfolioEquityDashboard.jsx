@@ -927,11 +927,12 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             <div>
               <KV label="Market Value" value={compactMoney(rows[0].value)} tone="text-sky-600 dark:text-sky-400" />
               <KV label="Purchase price" value={compactMoney(rows[0].purchase)} />
-              <KV label="Appreciation" value={`${compactMoney(rows[0].appreciation)} · ${pct1(rows[0].growth)}`} tone="text-emerald-600 dark:text-emerald-400" />
+              <KV label="Appreciation" value={compactMoney(rows[0].appreciation)} tone="text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
               <KV label="Number of years" value={yearsHeld(rows[0]).label} />
               <KV label="Annualized" value={pct1(rows[0].annualized)} tone="text-emerald-600 dark:text-emerald-400" />
+              <KV label="Appreciation %" value={pct1(rows[0].growth)} tone="text-emerald-600 dark:text-emerald-400" />
             </div>
           </div>
         ) : (
