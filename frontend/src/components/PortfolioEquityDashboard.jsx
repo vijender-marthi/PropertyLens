@@ -5,6 +5,16 @@ import {
 import PageContainer from './PageContainer'
 import { formatCurrency, formatMetricCurrency } from '../utils/formatters'
 
+// Per-home accent palette — matches the Payoff planner's home colors.
+const HOME_ACCENTS = [
+  { border: 'border-blue-500', text: 'text-blue-500' },
+  { border: 'border-teal-500', text: 'text-teal-500' },
+  { border: 'border-indigo-500', text: 'text-indigo-500' },
+  { border: 'border-fuchsia-500', text: 'text-fuchsia-500' },
+  { border: 'border-cyan-500', text: 'text-cyan-500' },
+  { border: 'border-rose-500', text: 'text-rose-500' },
+]
+
 // ── Visual system (dataviz palette) ─────────────────────────────────────────
 const SERIES = {
   blue: '#2a78d6',   // down payment
@@ -139,7 +149,7 @@ function ValueWaterfall({ wf, large = false, onPick }) {
   const bracePath = `M 58,${grpTop} Q 50,${grpTop} 50,${grpTop + 8} L 50,${grpMid - 7} Q 50,${grpMid} 42,${grpMid} Q 50,${grpMid} 50,${grpMid + 7} L 50,${grpBot - 8} Q 50,${grpBot} 58,${grpBot}`
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Value buildup waterfall" className="select-none">
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Value buildup waterfall" className="block h-auto w-full select-none">
       {/* "Asset" grouping brace over down payment + principal reduction + appreciation */}
       <g onClick={pick('appreciation')} className={onPick ? 'cursor-pointer' : undefined}>
         <path d={bracePath} fill="none" className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -197,8 +207,9 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
     <div className="relative py-1" aria-label="Acquisition timeline">
       <div className="relative h-20">
         <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-blue-500" />
-        {withYear.map((p) => {
+        {withYear.map((p, i) => {
           const primary = p.type === 'primary'
+          const accent = HOME_ACCENTS[i % HOME_ACCENTS.length]
           const active = !isolating || (selectedIds && selectedIds.has(p.id))
           return (
             <button
@@ -211,7 +222,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
               <span className="mb-1 max-w-[6rem] truncate text-[10px] font-semibold text-gray-600 dark:text-gray-300">{p.name}</span>
-              <span className={`flex items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${active && isolating ? 'h-9 w-9' : 'h-7 w-7'} ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
+              <span className={`flex items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${active && isolating ? 'h-9 w-9' : 'h-7 w-7'} ${accent.border} ${accent.text} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
                 {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <span className="mt-1 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
