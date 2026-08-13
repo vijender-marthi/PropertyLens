@@ -12060,7 +12060,7 @@ def payoff_planner(
             planner_loans.append({
                 "name": label,
                 "isPrimary": is_primary,
-                "accentIndex": _home_accent_index(prop_name),
+                "accentIndex": _home_accent_index(prop.id),
                 "balance": round(current_loan_balance(loan), 2),
                 "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
                 "pi": round(loan_monthly_pi(loan), 2),
@@ -12760,16 +12760,20 @@ def portfolio_analysis(
 
 
 # Deterministic per-home accent index (must match HOME_ACCENTS length in the UI),
-# keyed on the property name so a property gets the same color across the portfolio
-# timeline/dropdown and the payoff timeline.
+# keyed on the immutable property id assigned at creation, so a property keeps the
+# same color across the app (nav list, portfolio timeline/dropdown, payoff timeline)
+# even if it's renamed. The same `id % count` formula is used on the front end.
 _HOME_ACCENT_COUNT = 6
 
 
-def _home_accent_index(name: str) -> int:
-    h = 0
-    for ch in str(name or ""):
-        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
-    return h % _HOME_ACCENT_COUNT
+def _home_accent_index(key) -> int:
+    try:
+        return int(key) % _HOME_ACCENT_COUNT
+    except (TypeError, ValueError):
+        h = 0
+        for ch in str(key or ""):
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+        return h % _HOME_ACCENT_COUNT
 
 
 def _year_of(value: Optional[str]) -> Optional[int]:
@@ -13082,7 +13086,7 @@ def portfolio_equity_cashflow(
             "type": "primary" if is_primary else "rental",
             "buyYear": _pd.year if _pd else None,
             "buyMonth": _pd.month if _pd else None,
-            "accentIndex": _home_accent_index(_name),
+            "accentIndex": _home_accent_index(prop.id),
         }
 
     return {

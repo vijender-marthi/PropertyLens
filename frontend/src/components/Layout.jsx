@@ -25,6 +25,10 @@ const MAIN_NAV = [
   { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
 ]
 
+// Per-property accent colors (by property id) — shared with the portfolio /
+// payoff timelines so a property keeps one color across the app.
+const HOME_ACCENTS = ['text-blue-500', 'text-teal-500', 'text-indigo-500', 'text-fuchsia-500', 'text-cyan-500', 'text-rose-500']
+
 // Tabler-style "stairs-down" glyph rendered inline so it matches the spec's
 // ti-stairs-down icon without adding an icon dependency. Mirrors the lucide
 // icon API (accepts a className) so it drops into NavItem unchanged.
@@ -115,6 +119,7 @@ function SidebarPropertyList({ onClose }) {
           const primary = String(property.usage_type || '').toLowerCase() === 'primary'
           const active = location.pathname === `/properties/${property.id}` || location.pathname.startsWith(`/properties/${property.id}/`)
           const label = property.name || property.address || `Property ${property.id}`
+          const accent = HOME_ACCENTS[((property.id ?? 0) % HOME_ACCENTS.length + HOME_ACCENTS.length) % HOME_ACCENTS.length]
           return (
             <Link
               key={property.id}
@@ -128,7 +133,7 @@ function SidebarPropertyList({ onClose }) {
                     : 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700/60'
               }`}
             >
-              {primary ? <Home className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-300" /> : <Building2 className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+              {primary ? <Home className={`h-3.5 w-3.5 shrink-0 ${accent}`} /> : <Building2 className={`h-3.5 w-3.5 shrink-0 ${accent}`} />}
               <span className="min-w-0 flex-1 truncate">{label}</span>
               {primary ? <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-200">Primary</span> : null}
             </Link>

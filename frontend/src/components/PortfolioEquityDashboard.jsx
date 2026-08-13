@@ -190,7 +190,7 @@ function ValueWaterfall({ wf, large = false, onPick }) {
 }
 
 // ── Acquisition timeline: a home icon at each purchase year ──────────────────
-export function HomeTimeline({ rows, onSelect, selectedIds }) {
+export function HomeTimeline({ rows, onSelect, selectedIds, hint = 'Click a home to filter · ⌘/Ctrl-click to select multiple' }) {
   const withYear = rows.filter((p) => p.buyYear)
   if (!withYear.length) return null
   const isolating = selectedIds && selectedIds.size > 0 && selectedIds.size < withYear.length
@@ -230,7 +230,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
           )
         })}
       </div>
-      <p className="mt-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">Click a home to filter · ⌘/Ctrl-click to select multiple</p>
+      {hint ? <p className="mt-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">{hint}</p> : null}
     </div>
   )
 }
@@ -780,7 +780,8 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         </SummaryCard>
       </section>
 
-      {/* ── Band 3: Cashflow (rentals only) ── */}
+      {/* ── Band 3: Cashflow (rentals only; hidden when there are no rentals) ── */}
+      {m.counts.rentals > 0 ? (
       <section aria-label="Cashflow" className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -885,6 +886,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </div>
         </div>
       </section>
+      ) : null}
 
       {/* ── Modals ── */}
       <Modal open={modal?.kind === 'waterfall'} title="Portfolio Value Buildup" wide onClose={() => setModal(null)}>
