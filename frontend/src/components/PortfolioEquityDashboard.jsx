@@ -232,52 +232,49 @@ const CF_NET_POS = '#7c3aed' // violet — positive net cash flow
 const CF_NET_NEG = '#e11d48' // deep rose — negative net cash flow
 function CashflowWaterfall({ cf, large = false }) {
   const bars = [
-    { key: 'rent', short: 'Rental', long: 'Rental income', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_INCOME },
-    { key: 'opex', short: 'OpEx', long: 'Operating exp.', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_OPEX },
-    { key: 'debt', short: 'Debt', long: 'Debt service', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DEBT },
-    { key: 'net', short: 'Net CF', long: 'Net cash flow', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_NET_POS : CF_NET_NEG, total: true },
+    { key: 'rent', label: 'Rental income', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_INCOME },
+    { key: 'opex', label: 'Operating exp.', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_OPEX },
+    { key: 'debt', label: 'Debt service', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DEBT },
+    { key: 'net', label: 'Net cash flow', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_NET_POS : CF_NET_NEG, total: true },
   ]
   const levels = bars.flatMap((b) => [b.start, b.end]).concat(0)
   const domainMax = Math.max(...levels)
   const domainMin = Math.min(...levels)
   const range = domainMax - domainMin
   if (!range) {
-    return <div className="flex h-48 items-center justify-center text-sm text-gray-400">Add rental income and expenses to see the cashflow bridge.</div>
+    return <div className="flex h-40 items-center justify-center text-sm text-gray-400">Add rental income and expenses to see the cashflow bridge.</div>
   }
 
-  const W = large ? 660 : 380
-  const H = large ? 380 : 150
-  const padL = large ? 20 : 10
-  const padR = large ? 20 : 10
-  const padT = large ? 44 : 22
-  const padB = large ? 44 : 22
-  const plotW = W - padL - padR
-  const plotH = H - padT - padB
-  const colW = plotW / bars.length
-  const barW = colW * (large ? 0.5 : 0.46)
-  const y = (v) => padT + plotH * ((domainMax - v) / range)
-  const colX = (i) => padL + i * colW + (colW - barW) / 2
-  const zeroY = y(0)
-  const valueFont = large ? 13 : 9.5
-  const labelFont = large ? 12 : 9
+  const W = 560
+  const rowH = large ? 54 : 40
+  const padL = large ? 132 : 112
+  const padR = large ? 64 : 54
+  const padT = large ? 12 : 8
+  const padB = large ? 12 : 8
+  const H = padT + bars.length * rowH + padB
+  const barH = rowH * 0.58
+  const x = (v) => padL + ((v - domainMin) / range) * (W - padL - padR)
+  const rowCy = (i) => padT + i * rowH + rowH / 2
+  const valueFont = large ? 13 : 11
+  const labelFont = large ? 12.5 : 11
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mx-auto mt-2 block select-none">
-      <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} className="stroke-gray-200 dark:stroke-gray-700" strokeWidth="1" />
+      {/* horizontal connectors between the running levels */}
       {[0, 1, 2].map((i) => {
-        const yy = y(bars[i].end)
-        return <line key={`c${i}`} x1={colX(i) + barW} y1={yy} x2={colX(i + 1)} y2={yy} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" strokeDasharray="4 3" />
+        const xx = x(bars[i].end)
+        return <line key={`c${i}`} x1={xx} y1={rowCy(i)} x2={xx} y2={rowCy(i + 1)} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" strokeDasharray="4 3" />
       })}
       {bars.map((b, i) => {
-        const top = Math.max(b.start, b.end)
-        const bottom = Math.min(b.start, b.end)
-        const ry = y(top)
-        const rh = Math.max(2, ((top - bottom) / range) * plotH)
+        const x0 = x(Math.min(b.start, b.end))
+        const x1 = x(Math.max(b.start, b.end))
+        const w = Math.max(2, x1 - x0)
+        const cy = rowCy(i)
         return (
           <g key={b.key}>
-            <rect x={colX(i)} y={ry} width={barW} height={rh} rx={large ? 4 : 3} fill={b.color} opacity={b.total ? 0.92 : 0.82} />
-            <text x={colX(i) + barW / 2} y={ry - (large ? 7 : 5)} textAnchor="middle" className="fill-gray-700 dark:fill-gray-200" fontSize={valueFont} fontWeight="600">{compactMoney(b.value)}</text>
-            <text x={colX(i) + barW / 2} y={H - (large ? 14 : 9)} textAnchor="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont}>{large ? b.long || b.short : b.short}</text>
+            <text x={padL - 8} y={cy} dominantBaseline="middle" textAnchor="end" className="fill-gray-600 dark:fill-gray-300" fontSize={labelFont} fontWeight={b.total ? 700 : 500}>{b.label}</text>
+            <rect x={x0} y={cy - barH / 2} width={w} height={barH} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.85} />
+            <text x={x1 + 6} y={cy} dominantBaseline="middle" textAnchor="start" className="fill-gray-700 dark:fill-gray-200" fontSize={valueFont} fontWeight="600">{compactMoney(b.value)}</text>
           </g>
         )
       })}
