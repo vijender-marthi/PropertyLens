@@ -654,7 +654,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       </section>
 
       {/* ── Band 2: Equity · Waterfall · Loan & Debt ── */}
-      <section className="grid gap-3 lg:grid-cols-[1fr_1.8fr_1fr]" aria-label="Value buildup">
+      <section className="grid gap-3 lg:grid-cols-[1fr_1.9fr_1fr]" aria-label="Value buildup">
         <SummaryCard title="Equity Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
           <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 gap-y-1.5 text-sm">
             <span className="text-gray-500 dark:text-gray-400">Portfolio value</span>
