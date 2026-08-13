@@ -198,8 +198,8 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
   return (
     <div className="relative px-2 py-1" aria-label="Acquisition timeline">
       <p className="mb-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">Click a home to filter · ⌘/Ctrl-click to select multiple</p>
-      <div className="relative h-12">
-        <div className="absolute inset-x-[5%] top-[22px] h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
+      <div className="relative h-20">
+        <div className="absolute inset-x-[5%] top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
         {withYear.map((p) => {
           const primary = p.type === 'primary'
           const active = !isolating || (selectedIds && selectedIds.has(p.id))
@@ -208,15 +208,16 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
               key={p.id}
               type="button"
               onClick={(e) => onSelect(p, e.metaKey || e.ctrlKey || e.shiftKey)}
-              className={`group absolute top-[22px] z-10 -translate-x-1/2 -translate-y-1/2 transition-opacity focus:outline-none ${active ? '' : 'opacity-35'}`}
+              className={`group absolute top-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center transition-opacity focus:outline-none ${active ? '' : 'opacity-35'}`}
               style={{ left: `${leftPct(frac(p))}%` }}
               title={`${p.name} · purchased ${monthLabel(p)} · ⌘/Ctrl-click to multi-select`}
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
+              <span className="mb-1 max-w-[6rem] truncate text-[10px] font-semibold text-gray-600 dark:text-gray-300">{p.name}</span>
               <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
                 {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
-              <span className="absolute left-1/2 top-[26px] -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
+              <span className="mt-1 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
             </button>
           )
         })}
@@ -439,7 +440,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
     )
   }
 
-  const capRateFlag = m.weightedRate > m.capRate * 100
   const propWord = m.counts.total === 1 ? 'property' : 'properties'
 
   const mk = (formula, inputs) => ({ formula, inputs })
@@ -531,10 +531,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <KpiTile label="Total Debt" value={compactMoney(m.loan)} valueClass={TONE.red} metric={metrics.totalDebt}>
           <Delta direction="down" tone={TONE.red}>{pct1(m.ltv)} of value</Delta>
         </KpiTile>
-        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={capRateFlag ? TONE.amber : TONE.blue} metric={metrics.weightedRate}>
-          <span className={`block ${capRateFlag ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}`}>
-            {capRateFlag ? '▲ above' : 'vs'} {pct1(m.capRate)} cap rate
-          </span>
+        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={TONE.blue} metric={metrics.weightedRate}>
           <span className="block text-gray-500 dark:text-gray-400">{ratePct(m.rateMin)} – {ratePct(m.rateMax)} range</span>
         </KpiTile>
         <KpiTile label="Return on Equity" value={pct1(m.roe)} valueClass={m.roe >= 0 ? TONE.green : TONE.red} metric={metrics.roe}>
