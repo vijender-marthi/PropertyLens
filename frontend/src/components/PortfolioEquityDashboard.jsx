@@ -207,9 +207,9 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
     <div className="relative py-1" aria-label="Acquisition timeline">
       <div className="relative h-20">
         <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-blue-500" />
-        {withYear.map((p, i) => {
+        {withYear.map((p) => {
           const primary = p.type === 'primary'
-          const accent = HOME_ACCENTS[i % HOME_ACCENTS.length]
+          const accent = HOME_ACCENTS[Math.max(0, rows.indexOf(p)) % HOME_ACCENTS.length]
           const active = !isolating || (selectedIds && selectedIds.has(p.id))
           return (
             <button
@@ -370,14 +370,13 @@ export function PropertyFilter({ properties, selectedIds, setSelectedIds }) {
             <div className="max-h-72 overflow-y-auto p-1.5">
               {ordered.length ? ordered.map((p) => {
                 const primary = !!p.isPrimary
+                const accent = HOME_ACCENTS[Math.max(0, properties.indexOf(p)) % HOME_ACCENTS.length]
                 return (
                   <label key={p.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
                     <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggle(p.id)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <span className={`shrink-0 ${accent.text}`}>{primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}</span>
                     <span className="min-w-0 flex-1 truncate text-gray-700 dark:text-gray-200">{p.name}</span>
-                    <span className={`flex shrink-0 items-center gap-1 text-[11px] font-medium ${primary ? 'text-red-500' : 'text-gray-400'}`}>
-                      {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                      {primary ? 'Primary' : 'Rental'}
-                    </span>
+                    <span className="shrink-0 text-[11px] font-medium text-gray-400">{primary ? 'Primary' : 'Rental'}</span>
                   </label>
                 )
               }) : <p className="px-3 py-4 text-center text-xs text-gray-400">No properties available</p>}

@@ -12059,6 +12059,7 @@ def payoff_planner(
                 label = prop_name
             planner_loans.append({
                 "name": label,
+                "isPrimary": is_primary,
                 "balance": round(current_loan_balance(loan), 2),
                 "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
                 "pi": round(loan_monthly_pi(loan), 2),

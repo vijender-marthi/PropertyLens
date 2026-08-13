@@ -159,6 +159,7 @@ def simulate(
         balance = float(loan["balance"])
         state.append({
             "name": loan["name"],
+            "isPrimary": bool(loan.get("isPrimary", False)),
             "rate": float(loan["rate"]),
             "pi": float(loan["pi"]),
             "noi": float(loan.get("noi", 0.0) or 0.0),
@@ -597,6 +598,7 @@ def build_report(
         timeline.append({
             "order": i,
             "name": l["name"],
+            "isPrimary": bool(l.get("isPrimary", False)),
             "payoffMonth": pm,
             "payoffDate": None if never else _format_month_year(pay_date),
             "barPct": 0.0 if never else round(min(pm / denom, 1.0) * 100, 1),

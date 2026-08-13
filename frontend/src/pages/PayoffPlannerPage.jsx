@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare, ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react'
+import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Building2, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare, ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
@@ -970,7 +970,7 @@ function HomeNode({ row }) {
   const accent = homeAccent(row.order, never)
   return (
     <span className={`group/node relative z-10 flex h-9 w-9 cursor-help items-center justify-center rounded-full border-2 bg-white shadow-sm dark:bg-gray-900 ${accent.ring}`}>
-      <Home className={`h-4 w-4 ${accent.icon}`} />
+      {row.isPrimary ? <Home className={`h-4 w-4 ${accent.icon}`} /> : <Building2 className={`h-4 w-4 ${accent.icon}`} />}
       <span className={`absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] font-bold text-white ${accent.badge}`}>
         {row.order}
       </span>
