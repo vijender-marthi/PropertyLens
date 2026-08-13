@@ -209,7 +209,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
         <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-blue-500" />
         {withYear.map((p) => {
           const primary = p.type === 'primary'
-          const accent = HOME_ACCENTS[Math.max(0, rows.indexOf(p)) % HOME_ACCENTS.length]
+          const accent = HOME_ACCENTS[(p.accentIndex ?? 0) % HOME_ACCENTS.length]
           const active = !isolating || (selectedIds && selectedIds.has(p.id))
           return (
             <button
@@ -370,7 +370,7 @@ export function PropertyFilter({ properties, selectedIds, setSelectedIds }) {
             <div className="max-h-72 overflow-y-auto p-1.5">
               {ordered.length ? ordered.map((p) => {
                 const primary = !!p.isPrimary
-                const accent = HOME_ACCENTS[Math.max(0, properties.indexOf(p)) % HOME_ACCENTS.length]
+                const accent = HOME_ACCENTS[(p.accentIndex ?? 0) % HOME_ACCENTS.length]
                 return (
                   <label key={p.id} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
                     <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggle(p.id)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />

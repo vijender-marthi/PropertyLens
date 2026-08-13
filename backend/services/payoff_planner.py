@@ -160,6 +160,7 @@ def simulate(
         state.append({
             "name": loan["name"],
             "isPrimary": bool(loan.get("isPrimary", False)),
+            "accentIndex": int(loan.get("accentIndex", 0) or 0),
             "rate": float(loan["rate"]),
             "pi": float(loan["pi"]),
             "noi": float(loan.get("noi", 0.0) or 0.0),
@@ -270,6 +271,7 @@ def simulate(
         {
             "name": s["name"],
             "isPrimary": s.get("isPrimary", False),
+            "accentIndex": s.get("accentIndex", 0),
             "rate": s["rate"],
             "pi": s["pi"],
             "noi": s["noi"],
@@ -600,6 +602,7 @@ def build_report(
             "order": i,
             "name": l["name"],
             "isPrimary": bool(l.get("isPrimary", False)),
+            "accentIndex": int(l.get("accentIndex", 0) or 0),
             "payoffMonth": pm,
             "payoffDate": None if never else _format_month_year(pay_date),
             "barPct": 0.0 if never else round(min(pm / denom, 1.0) * 100, 1),

@@ -12060,6 +12060,7 @@ def payoff_planner(
             planner_loans.append({
                 "name": label,
                 "isPrimary": is_primary,
+                "accentIndex": _home_accent_index(prop_name),
                 "balance": round(current_loan_balance(loan), 2),
                 "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
                 "pi": round(loan_monthly_pi(loan), 2),
@@ -12758,6 +12759,19 @@ def portfolio_analysis(
     )
 
 
+# Deterministic per-home accent index (must match HOME_ACCENTS length in the UI),
+# keyed on the property name so a property gets the same color across the portfolio
+# timeline/dropdown and the payoff timeline.
+_HOME_ACCENT_COUNT = 6
+
+
+def _home_accent_index(name: str) -> int:
+    h = 0
+    for ch in str(name or ""):
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    return h % _HOME_ACCENT_COUNT
+
+
 def _year_of(value: Optional[str]) -> Optional[int]:
     parsed = _parse_iso_date(value) if value else None
     if parsed:
@@ -13059,14 +13073,16 @@ def portfolio_equity_cashflow(
     def _available_entry(prop):
         _pd = _parse_iso_date(prop.purchase_date) if prop.purchase_date else None
         is_primary = str(prop.usage_type or "Rental").lower() == "primary"
+        _name = prop.name or _default_property_name(prop.address, prop.id)
         return {
             "id": prop.id,
-            "name": prop.name or _default_property_name(prop.address, prop.id),
+            "name": _name,
             "address": prop.address,
             "isPrimary": is_primary,
             "type": "primary" if is_primary else "rental",
             "buyYear": _pd.year if _pd else None,
             "buyMonth": _pd.month if _pd else None,
+            "accentIndex": _home_accent_index(_name),
         }
 
     return {

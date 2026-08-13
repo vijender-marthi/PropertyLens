@@ -963,11 +963,19 @@ function homeAccent(order, never) {
   return never ? HOME_AMBER : HOME_ACCENTS[(((order || 1) - 1) % HOME_ACCENTS.length + HOME_ACCENTS.length) % HOME_ACCENTS.length]
 }
 
+// Color keyed on the backend accentIndex (property name) so a home matches its
+// color on the Portfolio timeline; falls back to payoff order when absent.
+function homeAccentFor(row, never) {
+  if (never) return HOME_AMBER
+  const idx = row?.accentIndex != null ? row.accentIndex : (row?.order || 1) - 1
+  return HOME_ACCENTS[((idx % HOME_ACCENTS.length) + HOME_ACCENTS.length) % HOME_ACCENTS.length]
+}
+
 // A home-icon node placed at the home's true time position on the axis.
 // Hovering it shows the reason (why this home clears where it does).
 function HomeNode({ row }) {
   const never = row.verdict?.neverPaysOff
-  const accent = homeAccent(row.order, never)
+  const accent = homeAccentFor(row, never)
   return (
     <span className={`group/node relative z-10 flex h-9 w-9 cursor-help items-center justify-center rounded-full border-2 bg-white shadow-sm dark:bg-gray-900 ${accent.ring}`}>
       {row.isPrimary ? <Home className={`h-4 w-4 ${accent.icon}`} /> : <Building2 className={`h-4 w-4 ${accent.icon}`} />}
@@ -992,7 +1000,7 @@ function HomeNode({ row }) {
 function ChartCard({ row, asOf }) {
   const never = row.verdict?.neverPaysOff
   const belowMarket = row.verdict?.belowMarket
-  const accent = homeAccent(row.order, never)
+  const accent = homeAccentFor(row, never)
   return (
     <div className="min-w-0 flex-1 px-1">
       <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
@@ -1052,7 +1060,7 @@ function PayoffTimeline({ report, timeline }) {
         {timeline.map((row, i) => {
           const cardX = ((i + 0.5) / n) * 100
           const homeX = clampPct(row.planPct)
-          const hex = homeAccent(row.order, row.verdict?.neverPaysOff).hex
+          const hex = homeAccentFor(row, row.verdict?.neverPaysOff).hex
           const yTop = PT.HOME_Y - 18
           const mid = yTop / 2
           return (
