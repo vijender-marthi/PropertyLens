@@ -30,7 +30,7 @@ import {
   WalletCards,
 } from 'lucide-react'
 import { homeTypeLabel } from '../config/propertySetupPresentation'
-import { formatChartCurrency, formatDate } from '../utils/formatters'
+import { formatChartCurrency, formatDate, formatMonthYear } from '../utils/formatters'
 import { chartColorRamps, chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
 
 const ICONS = {
@@ -94,18 +94,27 @@ export function RentalPropertySummaryHeader({ prop, presentation, metrics, expan
   const purchaseDate = prop?.purchase_date || header.purchaseDate
   const status = header.currentStatus || header.status || prop?.current_residency_status || prop?.usage_type || '—'
 
-  // "As of" reflects the most recent loan statement/balance date, falling back to
-  // the presentation's date when no statement date is on file.
-  const lastStatementDate = (() => {
-    const dated = (prop?.loans || [])
-      .map((l) => l.statement_date || l.current_balance_as_of || l.balance_as_of)
+  // "As of" reflects the most recent month with data on file — the latest loan
+  // statement, valuation, or rental-period month — shown as month + year only.
+  const dataAsOf = (() => {
+    const pad = (n) => String(n).padStart(2, '0')
+    const candidates = []
+    for (const l of prop?.loans || []) {
+      candidates.push(l.statement_date || l.current_balance_as_of || l.balance_as_of)
+    }
+    candidates.push(prop?.market_value_updated)
+    for (const rp of prop?.rental_periods || []) {
+      if (rp.end_year && rp.end_month) candidates.push(`${rp.end_year}-${pad(rp.end_month)}-01`)
+      if (rp.start_year && rp.start_month) candidates.push(`${rp.start_year}-${pad(rp.start_month)}-01`)
+    }
+    const dated = candidates
       .filter(Boolean)
       .map((s) => ({ s, t: new Date(String(s).slice(0, 10)).getTime() }))
       .filter((d) => !Number.isNaN(d.t))
     if (!dated.length) return null
     return dated.sort((a, b) => b.t - a.t)[0].s
   })()
-  const asOfDate = lastStatementDate || header.asOfDate
+  const asOfDate = dataAsOf || header.asOfDate
 
   return (
     <header className="rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:px-5">
@@ -128,7 +137,7 @@ export function RentalPropertySummaryHeader({ prop, presentation, metrics, expan
         </div>
         <div className="flex shrink-0 items-center">
           <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2.5 text-[11px] font-medium text-orange-700">
-            As of {asOfDate ? formatDate(asOfDate) : '—'}
+            As of {asOfDate ? formatMonthYear(asOfDate) : '—'}
             <CalendarDays className="h-3.5 w-3.5 text-orange-500" aria-hidden="true" />
           </span>
         </div>
