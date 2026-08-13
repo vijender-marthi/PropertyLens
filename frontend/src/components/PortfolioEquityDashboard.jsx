@@ -592,13 +592,13 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   // Sortable "Loans by property" columns (share-% after Orig. Loan and Balance).
   const loanCols = [
     { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
-    { key: 'origLoan', label: 'Orig. Loan', align: 'right', sortVal: (p) => p.origLoan, render: (p) => fullMoney(p.origLoan) },
+    { key: 'origLoan', label: 'Orig. Loan', align: 'right', sortVal: (p) => p.origLoan, render: (p) => compactMoney(p.origLoan) },
     { key: 'origPct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.origLoan, render: (p) => pct1(m.origLoan ? p.origLoan / m.origLoan : 0) },
-    { key: 'loan', label: 'Balance', align: 'right', sortVal: (p) => p.loan, render: (p) => fullMoney(p.loan) },
+    { key: 'loan', label: 'Balance', align: 'right', sortVal: (p) => p.loan, render: (p) => compactMoney(p.loan) },
     { key: 'loanPct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.loan, render: (p) => pct1(m.loan ? p.loan / m.loan : 0) },
     { key: 'rate', label: 'Rate', align: 'right', sortVal: (p) => p.rate, render: (p) => ratePct(p.rate) },
     { key: 'loanType', label: 'Type', align: 'left', tone: 'text-gray-500 dark:text-gray-400', sortVal: (p) => p.loanType, render: (p) => p.loanType },
-    { key: 'payment', label: 'Payment', align: 'right', sortVal: (p) => p.payment, render: (p) => fullMoney(p.payment) },
+    { key: 'payment', label: 'Payment', align: 'right', sortVal: (p) => p.payment, render: (p) => compactMoney(p.payment) },
     { key: 'payoffYear', label: 'Payoff', align: 'right', sortVal: (p) => p.payoffYear || 0, render: (p) => p.payoffYear || '—' },
     { key: 'ltv', label: 'LTV', align: 'right', sortVal: (p) => p.ltv, render: (p) => ltvPill(p.ltv) },
   ]
@@ -932,13 +932,13 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             <tfoot>
               <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
                 <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.origLoan)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{compactMoney(m.origLoan)}</td>
                 <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.loan)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{compactMoney(m.loan)}</td>
                 <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{ratePct(m.weightedRate)}</td>
                 <td className="px-3 py-2.5" />
-                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.payment)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{compactMoney(m.payment)}</td>
                 <td className="px-3 py-2.5" />
                 <td className="py-2.5 pl-3 text-right">{ltvPill(m.ltv)}</td>
               </tr>
