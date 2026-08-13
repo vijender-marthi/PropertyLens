@@ -499,7 +499,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const singleAccent = single ? HOME_ACCENTS[(rows[0].accentIndex ?? 0) % HOME_ACCENTS.length].text : ''
   // Title node with the property name in its accent color + acquisition year.
   const detailTitle = (prefix) => (
-    <>{prefix} · <span className={singleAccent}>{rows[0]?.name}</span>{rows[0]?.buyYear ? <span className="font-normal text-gray-400 dark:text-gray-500"> · Acquired {rows[0].buyYear}</span> : null}</>
+    <>{prefix} · <span className={singleAccent}>{rows[0]?.name}</span>{rows[0]?.buyYear ? <span className="text-xs font-normal text-gray-400 dark:text-gray-500"> · Acquired {rows[0].buyYear}</span> : null}</>
   )
   const rentals = useMemo(() => rows.filter((p) => p.type === 'rental'), [rows])
   const m = data?.totals
