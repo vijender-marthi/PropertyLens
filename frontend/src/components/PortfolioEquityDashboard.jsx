@@ -126,7 +126,7 @@ function ValueWaterfall({ wf, large = false, onPick }) {
   const padT = large ? 14 : 10
   const padB = large ? 14 : 10
   const H = padT + bars.length * rowH + padB
-  const barH = rowH * 0.66 + 10
+  const barH = rowH * 0.66 + 8
   const x = (v) => padL + (v / max) * (W - padL - padR)
   const rowCy = (i) => padT + i * rowH + rowH / 2
   const valueFont = large ? 13 : 11
