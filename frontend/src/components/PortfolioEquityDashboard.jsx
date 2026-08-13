@@ -113,9 +113,9 @@ function ValueWaterfall({ wf, large = false, onPick }) {
   const pick = (kind) => (onPick ? () => onPick(kind) : undefined)
   const bars = [
     { label: 'Down payment', value: wf.downPayment, color: SERIES.blue, start: 0, end: c1, pick: 'appreciation' },
-    { label: 'Principal reduction', value: wf.principalReduction, color: SERIES.aqua, start: c1, end: c2, pick: 'appreciation' },
+    { label: 'Principal paid', value: wf.principalReduction, color: SERIES.aqua, start: c1, end: c2, pick: 'appreciation' },
     { label: 'Appreciation', value: wf.appreciation, color: SERIES.green, start: c2, end: c3, pick: 'appreciation' },
-    { label: 'Remaining debt', value: wf.remainingDebt, color: SERIES.slate, start: c3, end: c3 + wf.remainingDebt, pick: 'loans' },
+    { label: 'Loan Balance', value: wf.remainingDebt, color: SERIES.slate, start: c3, end: c3 + wf.remainingDebt, pick: 'loans' },
     { label: 'Market value', value: wf.currentValue, color: SERIES.violet, start: 0, end: wf.currentValue, total: true },
   ]
 
@@ -143,7 +143,7 @@ function ValueWaterfall({ wf, large = false, onPick }) {
       {/* "Asset" grouping brace over down payment + principal reduction + appreciation */}
       <g onClick={pick('appreciation')} className={onPick ? 'cursor-pointer' : undefined}>
         <path d={bracePath} fill="none" className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <text x={32} y={grpMid} transform={`rotate(-90 32 ${grpMid})`} textAnchor="middle" dominantBaseline="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont} fontWeight="700">Asset</text>
+        <text x={32} y={grpMid} transform={`rotate(-90 32 ${grpMid})`} textAnchor="middle" dominantBaseline="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont} fontWeight="700">Equity</text>
       </g>
       {/* vertical dashed connectors between build bars */}
       {[0, 1, 2].map((i) => {
