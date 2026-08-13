@@ -638,15 +638,15 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
             <span className="pl-4 text-gray-400">↳ Down payment</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.waterfall.downPayment)}</span>
-            <span />
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.equity ? m.waterfall.downPayment / m.equity : 0)}</span>
 
             <span className="pl-4 text-gray-400">↳ Principal paid</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.waterfall.principalReduction)}</span>
-            <span />
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.equity ? m.waterfall.principalReduction / m.equity : 0)}</span>
 
             <span className="pl-4 text-gray-400">↳ Appreciation</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.waterfall.appreciation)}</span>
-            <span />
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.equity ? m.waterfall.appreciation / m.equity : 0)}</span>
 
             <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
 
