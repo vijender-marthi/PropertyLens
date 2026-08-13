@@ -190,14 +190,14 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
   const domainStart = Math.floor(startFrac)
   const domainEnd = Math.max(...withYear.map((p) => p.buyYear)) + 1
   const span = Math.max(1, domainEnd - domainStart)
-  const leftPct = (f) => 5 + ((f - domainStart) / span) * 90
+  const leftPct = (f) => 3 + ((f - domainStart) / span) * 94
   const monthLabel = (p) => `${MONTHS[(p.buyMonth || 1) - 1]} ${p.buyYear}`
 
   return (
-    <div className="relative px-2 py-1" aria-label="Acquisition timeline">
+    <div className="relative py-1" aria-label="Acquisition timeline">
       <p className="mb-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">Click a home to filter · ⌘/Ctrl-click to select multiple</p>
       <div className="relative h-20">
-        <div className="absolute inset-x-[5%] top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
+        <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
         {withYear.map((p) => {
           const primary = p.type === 'primary'
           const active = !isolating || (selectedIds && selectedIds.has(p.id))
@@ -245,12 +245,12 @@ function CashflowWaterfall({ cf, large = false }) {
     return <div className="flex h-48 items-center justify-center text-sm text-gray-400">Add rental income and expenses to see the cashflow bridge.</div>
   }
 
-  const W = large ? 660 : 420
-  const H = large ? 380 : 200
-  const padL = large ? 20 : 12
-  const padR = large ? 20 : 12
-  const padT = large ? 44 : 26
-  const padB = large ? 44 : 26
+  const W = large ? 660 : 380
+  const H = large ? 380 : 150
+  const padL = large ? 20 : 10
+  const padR = large ? 20 : 10
+  const padT = large ? 44 : 22
+  const padB = large ? 44 : 22
   const plotW = W - padL - padR
   const plotH = H - padT - padB
   const colW = plotW / bars.length
@@ -262,7 +262,7 @@ function CashflowWaterfall({ cf, large = false }) {
   const labelFont = large ? 12 : 9
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className={`mx-auto mt-2 block select-none ${large ? '' : 'max-w-[380px]'}`}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mx-auto mt-2 block select-none">
       <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} className="stroke-gray-200 dark:stroke-gray-700" strokeWidth="1" />
       {[0, 1, 2].map((i) => {
         const yy = y(bars[i].end)
@@ -475,6 +475,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const [modal, setModal] = useState(null)
   const [eqSort, setEqSort] = useState({ key: 'value', dir: 'desc' })
   const [loanSort, setLoanSort] = useState({ key: 'loan', dir: 'desc' })
+  const [cfSort, setCfSort] = useState({ key: 'net', dir: 'desc' })
 
   const rows = data?.properties || []
   const rentals = useMemo(() => rows.filter((p) => p.type === 'rental'), [rows])
@@ -603,6 +604,22 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const loanSortedRows = sortRows(rows, loanCols, loanSort)
   const onLoanSort = (key) => setLoanSort((s) => nextSort(s, key))
 
+  // Sortable "Cashflow by property" columns (rentals). Ratios are period-independent.
+  const egiOf = (p) => p.rent + p.vacancy
+  const noiOf = (p) => egiOf(p) + p.opex
+  const cfCols = [
+    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
+    { key: 'rent', label: 'Rent', align: 'right', sortVal: (p) => p.rent, render: (p) => fullMoney(p.rent * factor) },
+    { key: 'opex', label: 'OpEx', align: 'right', sortVal: (p) => -p.opex, render: (p) => fullMoney(-p.opex * factor) },
+    { key: 'opexRatio', label: 'OpEx %', align: 'right', tone: PCT_TONE, sortVal: (p) => (egiOf(p) ? -p.opex / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? -p.opex / egiOf(p) : 0) },
+    { key: 'noi', label: 'NOI', align: 'right', sortVal: (p) => noiOf(p), render: (p) => fullMoney(noiOf(p) * factor) },
+    { key: 'noiMargin', label: 'NOI %', align: 'right', tone: PCT_TONE, sortVal: (p) => (egiOf(p) ? noiOf(p) / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? noiOf(p) / egiOf(p) : 0) },
+    { key: 'debt', label: 'Debt', align: 'right', sortVal: (p) => -p.debtService, render: (p) => fullMoney(-p.debtService * factor) },
+    { key: 'net', label: 'Net CF', align: 'right', sortVal: (p) => p.netCashFlow, render: (p) => <span className={`font-semibold ${p.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(p.netCashFlow * factor)}</span> },
+  ]
+  const cfSortedRows = sortRows(rentals, cfCols, cfSort)
+  const onCfSort = (key) => setCfSort((s) => nextSort(s, key))
+
   return (
     <Wrapper>
       {title ? (
@@ -686,12 +703,14 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </div>
         </SummaryCard>
 
-        <div className="flex flex-col self-start rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Portfolio Value Buildup</h3>
             <button type="button" onClick={() => setModal({ kind: 'waterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
           </div>
-          <ValueWaterfall wf={m.waterfall} onPick={(kind) => setModal({ kind })} />
+          <div className="flex flex-1 items-center">
+            <ValueWaterfall wf={m.waterfall} onPick={(kind) => setModal({ kind })} />
+          </div>
         </div>
 
         <SummaryCard title="Loan &amp; Debt Summary" onExpand={() => setModal({ kind: 'loans' })}>
@@ -790,41 +809,43 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </KpiTile>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
             <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property{per}</div>
             <div className="max-h-[19rem] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-gray-400 dark:bg-gray-900">
                   <tr className="border-b border-gray-100 dark:border-gray-800">
-                    <th className="py-2 pl-4 pr-3 text-left font-medium">Property</th>
-                    <th className="px-3 py-2 text-right font-medium">Rent</th>
-                    <th className="px-3 py-2 text-right font-medium">OpEx</th>
-                    <th className="px-3 py-2 text-right font-medium">Debt</th>
-                    <th className="py-2 pl-3 pr-4 text-right font-medium">Net CF</th>
+                    {cfCols.map((c, i) => (
+                      <th
+                        key={c.key}
+                        onClick={() => onCfSort(c.key)}
+                        className={`cursor-pointer select-none py-2 font-medium hover:text-gray-600 dark:hover:text-gray-300 ${i === 0 ? 'pl-4 pr-3 text-left' : i === cfCols.length - 1 ? 'pl-3 pr-4 text-right' : 'px-3 text-right'} ${cfSort.key === c.key ? 'text-gray-700 dark:text-gray-200' : ''}`}
+                      >
+                        {c.label}{cfSort.key === c.key ? (cfSort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rentals.map((p) => {
-                    const net = p.netCashFlow * factor
-                    return (
-                      <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                        <td className="py-2 pl-4 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.rent * factor)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-p.opex * factor)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-p.debtService * factor)}</td>
-                        <td className={`py-2 pl-3 pr-4 text-right font-semibold tabular-nums ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(net)}</td>
-                      </tr>
-                    )
-                  })}
-                  {!rentals.length && <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-gray-400">No rentals</td></tr>}
+                  {cfSortedRows.map((p) => (
+                    <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
+                      {cfCols.map((c, i) => (
+                        <td key={c.key} className={`py-2 tabular-nums ${i === 0 ? 'pl-4 pr-3 text-left' : i === cfCols.length - 1 ? 'pl-3 pr-4 text-right' : 'px-3 text-right'} ${c.tone || 'text-gray-700 dark:text-gray-200'}`}>{c.render(p)}</td>
+                      ))}
+                    </tr>
+                  ))}
+                  {!rentals.length && <tr><td colSpan={cfCols.length} className="px-4 py-6 text-center text-xs text-gray-400">No rentals</td></tr>}
                 </tbody>
                 {rentals.length ? (
                   <tfoot className="sticky bottom-0 bg-white dark:bg-gray-900">
                     <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                      <td className="py-2 pl-4 pr-3 text-gray-900 dark:text-white">Total</td>
+                      <td className="py-2 pl-4 pr-3 text-left text-gray-900 dark:text-white">Total</td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(m.rent * factor)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-m.opex * factor)}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${PCT_TONE}`}>{pct1(m.egi ? -m.opex / m.egi : 0)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(m.noi * factor)}</td>
+                      <td className={`px-3 py-2 text-right tabular-nums ${PCT_TONE}`}>{pct1(m.egi ? m.noi / m.egi : 0)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-m.debtService * factor)}</td>
                       <td className={`py-2 pl-3 pr-4 text-right tabular-nums ${m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(m.netCashFlow * factor)}</td>
                     </tr>
@@ -834,26 +855,22 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             </div>
           </div>
 
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setModal({ kind: 'cfwaterfall' })}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setModal({ kind: 'cfwaterfall' }) } }}
-            className="group flex cursor-pointer flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-gray-700 dark:bg-gray-900"
-          >
+          <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge{per}</h3>
-              <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 opacity-0 transition group-hover:opacity-100"><Maximize2 className="h-3.5 w-3.5" /> enlarge</span>
+              <button type="button" onClick={() => setModal({ kind: 'cfwaterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
             </div>
-            <CashflowWaterfall
-              cf={{
-                rentalIncome: m.egi * factor,
-                operatingExpenses: m.opex * factor,
-                noi: m.noi * factor,
-                debtService: m.debtService * factor,
-                netCashFlow: m.netCashFlow * factor,
-              }}
-            />
+            <div className="flex flex-1 items-center">
+              <CashflowWaterfall
+                cf={{
+                  rentalIncome: m.egi * factor,
+                  operatingExpenses: m.opex * factor,
+                  noi: m.noi * factor,
+                  debtService: m.debtService * factor,
+                  netCashFlow: m.netCashFlow * factor,
+                }}
+              />
+            </div>
           </div>
         </div>
       </section>
