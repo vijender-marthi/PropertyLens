@@ -612,7 +612,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
     { key: 'rent', label: 'Rent', align: 'right', sortVal: (p) => p.rent, render: (p) => fullMoney(p.rent * factor) },
     { key: 'opex', label: 'OpEx', align: 'right', sortVal: (p) => -p.opex, render: (p) => fullMoney(-p.opex * factor) },
     { key: 'opexRatio', label: 'OpEx %', align: 'right', tone: PCT_TONE, hint: 'OpEx Ratio = Operating Expenses ÷ Effective Gross Income (rent − vacancy)', sortVal: (p) => (egiOf(p) ? -p.opex / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? -p.opex / egiOf(p) : 0) },
-    { key: 'noi', label: 'NOI', align: 'right', hint: 'NOI = Rent + Vacancy − Operating Expenses (before debt service)', sortVal: (p) => noiOf(p), render: (p) => fullMoney(noiOf(p) * factor) },
+    { key: 'noi', label: 'NOI', align: 'right', sortVal: (p) => noiOf(p), render: (p) => fullMoney(noiOf(p) * factor) },
     { key: 'noiMargin', label: 'NOI %', align: 'right', tone: PCT_TONE, hint: 'NOI Margin = NOI ÷ Effective Gross Income (rent − vacancy)', sortVal: (p) => (egiOf(p) ? noiOf(p) / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? noiOf(p) / egiOf(p) : 0) },
     { key: 'debt', label: 'Debt', align: 'right', sortVal: (p) => -p.debtService, render: (p) => fullMoney(-p.debtService * factor) },
     { key: 'net', label: 'Net CF', align: 'right', sortVal: (p) => p.netCashFlow, render: (p) => <span className={`font-semibold ${p.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(p.netCashFlow * factor)}</span> },
