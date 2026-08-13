@@ -273,7 +273,7 @@ function CashflowWaterfall({ cf, large = false }) {
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mx-auto mt-2 block select-none">
       {/* zero baseline (vertical) with label */}
       <line x1={x(0)} y1={padT} x2={x(0)} y2={H - padB + 2} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" />
-      <text x={x(0)} y={H - 4} textAnchor="middle" className="fill-gray-400 dark:fill-gray-500" fontSize={large ? 10 : 9} fontWeight="600">Zero</text>
+      <text x={x(0)} y={H - 4} textAnchor="middle" className="fill-gray-400 dark:fill-gray-500" fontSize={large ? 11 : 10} fontWeight="700">0</text>
       {/* horizontal connectors between the running levels */}
       {[0, 1, 2].map((i) => {
         const xx = x(bars[i].end)
@@ -722,12 +722,12 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </SummaryCard>
         </div>
 
-        <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex min-w-0 flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Portfolio Value Buildup</h3>
             <button type="button" onClick={() => setModal({ kind: 'waterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
           </div>
-          <div className="flex flex-1 items-center">
+          <div className="flex min-w-0 flex-1 items-center">
             <ValueWaterfall wf={m.waterfall} onPick={(kind) => setModal({ kind })} />
           </div>
         </div>
@@ -876,12 +876,12 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             </div>
           </div>
 
-          <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex min-w-0 flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge</h3>
               <button type="button" onClick={() => setModal({ kind: 'cfwaterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
             </div>
-            <div className="flex flex-1 items-center">
+            <div className="flex min-w-0 flex-1 items-center">
               <CashflowWaterfall
                 cf={{
                   rentalIncome: m.egi * factor,
