@@ -14,10 +14,10 @@ import { propAPI } from '../services/api'
 const DASHBOARDS_NAV = [
   // Old Portfolio dashboard (/dashboard) is hidden from nav; route still exists.
   { to: '/portfolio-equity', icon: Scale, label: 'Portfolio' },
-  { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
   { to: '/loans',      icon: Landmark,   label: 'Loans' },
-  { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },
+  { to: '/income-expenses', icon: ReceiptText, label: 'Income & Expenses' },
   { to: '/tax-center', icon: ReceiptText, label: 'Tax Center' },
+  { to: '/analytics',  icon: TrendingUp, label: 'Analytics' },
 ]
 
 const MAIN_NAV = [

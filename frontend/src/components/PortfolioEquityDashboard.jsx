@@ -469,6 +469,22 @@ function sortRows(rows, cols, sort) {
   })
 }
 
+// Single-property drill-down: label → value pairs instead of a table. Share-of-
+// total "%" columns are dropped (they're always 100% for one property).
+function DetailList({ cols, row }) {
+  const items = cols.filter((c) => c.key !== 'name' && !/Pct$/.test(c.key))
+  return (
+    <div className="grid gap-x-10 gap-y-1 text-[15px] sm:grid-cols-2">
+      {items.map((c) => (
+        <div key={c.key} className="flex items-center justify-between gap-4 border-b border-gray-50 py-2 dark:border-gray-800/60">
+          <span className="text-gray-500 dark:text-gray-400">{c.label}</span>
+          <span className={`text-right tabular-nums ${c.tone || 'text-gray-800 dark:text-gray-100'}`}>{c.render(row)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /**
  * Reusable Equity & Cashflow dashboard, rendered identically for the whole
  * portfolio or a single property (the caller supplies the scoped data).
@@ -488,6 +504,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const [cfSort, setCfSort] = useState({ key: 'net', dir: 'desc' })
 
   const rows = data?.properties || []
+  const single = rows.length === 1
   const rentals = useMemo(() => rows.filter((p) => p.type === 'rental'), [rows])
   const m = data?.totals
   const factor = period === 'annual' ? (m?.annualFactor || 12) : 1
@@ -908,7 +925,8 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
       </Modal>
 
-      <Modal open={modal?.kind === 'appreciation'} title="Equity by Property" size="xl" onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'appreciation'} title={single ? 'Equity details' : 'Equity by Property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
+        {single ? <DetailList cols={eqCols} row={rows[0]} /> : (
         <SortableTable
           cols={eqCols}
           rows={eqSortedRows}
@@ -932,9 +950,11 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             </tfoot>
           )}
         />
+        )}
       </Modal>
 
-      <Modal open={modal?.kind === 'loans'} title="Loans by property" size="xl" onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'loans'} title={single ? 'Loan details' : 'Loans by property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
+        {single ? <DetailList cols={loanCols} row={rows[0]} /> : (
         <SortableTable
           cols={loanCols}
           rows={loanSortedRows}
@@ -957,6 +977,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             </tfoot>
           )}
         />
+        )}
       </Modal>
     </Wrapper>
   )
