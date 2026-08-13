@@ -214,7 +214,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
               <span className="mb-1 max-w-[6rem] truncate text-[10px] font-semibold text-gray-600 dark:text-gray-300">{p.name}</span>
-              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
+              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'scale-125 ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
                 {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <span className="mt-1 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
@@ -520,6 +520,8 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         </header>
       ) : null}
 
+      {timeline}
+
       {/* ── Band 1: Equity KPI tiles ── */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5" aria-label="Equity metrics">
         <KpiTile label="Portfolio Value" value={compactMoney(m.value)} valueClass={TONE.blue} metric={metrics.portfolioValue}>
@@ -538,8 +540,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           <span className="text-gray-500 dark:text-gray-400">cashflow + paydown</span>
         </KpiTile>
       </section>
-
-      {timeline}
 
       {/* ── Band 2: Equity · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
