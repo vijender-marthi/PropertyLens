@@ -552,7 +552,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           <SummaryRow label="↳ Principal paid" value={compactMoney(m.waterfall.principalReduction)} indent />
           <SummaryRow label="↳ Appreciation" value={compactMoney(m.waterfall.appreciation)} indent />
           <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="Total appreciation" value={compactMoney(m.value - m.purchase)} tone="text-emerald-600 dark:text-emerald-400" />
           <SummaryRow label="Total growth" value={pct1(m.growth)} />
           <SummaryRow label="Annualized growth" value={pct1(m.annualizedWeighted)} strong tone="text-emerald-600 dark:text-emerald-400" />
         </SummaryCard>
