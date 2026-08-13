@@ -201,6 +201,7 @@ function blankAnnualExpense(year = CURRENT_YEAR) {
     other_interest: '',
     supplies: '',
     home_warranty: '',
+    landscaping: '',
     other: '',
     property_tax_source: 'manual',
     insurance_source: 'manual',
@@ -232,6 +233,7 @@ function normalizeAnnualExpense(row, year = CURRENT_YEAR) {
     other_interest: numberOrEmpty(row?.other_interest),
     supplies: numberOrEmpty(row?.supplies),
     home_warranty: numberOrEmpty(row?.home_warranty),
+    landscaping: numberOrEmpty(row?.landscaping),
     other: numberOrEmpty(row?.other),
     property_tax_source: row?.property_tax_source || 'manual',
     insurance_source: row?.insurance_source || 'manual',
@@ -259,6 +261,7 @@ function annualExpensePayload(row, year = CURRENT_YEAR) {
     other_interest: inputNumber(row?.other_interest),
     supplies: inputNumber(row?.supplies),
     home_warranty: inputNumber(row?.home_warranty),
+    landscaping: inputNumber(row?.landscaping),
     other: inputNumber(row?.other),
     property_tax_source: row?.property_tax_source || 'manual',
     insurance_source: row?.insurance_source || 'manual',
@@ -614,6 +617,13 @@ const tabBadgeFor = (tab) => {
 
 return (
 <PageContainer>
+      {/* Top actions */}
+      <div className="flex justify-end">
+        <Link to={`/properties/${id}/edit`} className="btn-secondary inline-flex h-9 items-center gap-1.5 text-sm">
+          <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
+        </Link>
+      </div>
+
       {/* Header */}
       <RentalPropertySummaryHeader
         prop={prop}
@@ -1886,6 +1896,7 @@ const EDITABLE_EXPENSE_FIELDS = [
   { key: 'property_management', label: 'Management fees', decor: 'management_fees' },
   { key: 'other_interest', label: 'Other interest', decor: 'other_interest' },
   { key: 'repairs_maintenance', label: 'Repairs & maintenance', decor: 'repairs' },
+  { key: 'landscaping', label: 'Landscaping', decor: 'repairs' },
   { key: 'supplies', label: 'Supplies', decor: 'other_expenses' },
   { key: 'utilities', label: 'Utilities', decor: 'utilities' },
   { key: 'hoa', label: 'HOA', decor: 'other_expenses' },

@@ -213,6 +213,7 @@ MIGRATIONS = {
         "other_interest": "FLOAT DEFAULT 0.0",
         "supplies": "FLOAT DEFAULT 0.0",
         "home_warranty": "FLOAT DEFAULT 0.0",
+        "landscaping": "FLOAT DEFAULT 0.0",
     },
     "escrow_payments": {
         "servicer": "VARCHAR",

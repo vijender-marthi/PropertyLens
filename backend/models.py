@@ -619,6 +619,7 @@ class AnnualExpense(Base):
     other_interest = Column(Float, default=0.0)           # Sch E line 13
     supplies = Column(Float, default=0.0)                 # Sch E line 15
     home_warranty = Column(Float, default=0.0)            # rolls into "Other" (line 19)
+    landscaping = Column(Float, default=0.0)              # rolls into "Other" (line 19)
     other = Column(Float, default=0.0)
     property_tax_source = Column(String, default="manual")
     insurance_source = Column(String, default="manual")

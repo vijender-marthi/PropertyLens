@@ -338,6 +338,7 @@ class AnnualExpenseBase(BaseModel):
     other_interest: float = 0.0
     supplies: float = 0.0
     home_warranty: float = 0.0
+    landscaping: float = 0.0
     other: float = 0.0
     property_tax_source: str = "manual"
     insurance_source: str = "manual"
@@ -983,6 +984,7 @@ ANNUAL_EXPENSE_FIELDS = [
     "other_interest",
     "supplies",
     "home_warranty",
+    "landscaping",
     "other",
 ]
 
