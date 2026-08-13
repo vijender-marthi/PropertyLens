@@ -261,7 +261,7 @@ function CashflowWaterfall({ cf, large = false }) {
   const padL = large ? 132 : 112
   const padR = large ? 64 : 54
   const padT = large ? 12 : 8
-  const padB = large ? 12 : 8
+  const padB = large ? 22 : 18
   const H = padT + bars.length * rowH + padB
   const barH = rowH * 0.58
   const x = (v) => padL + ((v - domainMin) / range) * (W - padL - padR)
@@ -271,8 +271,9 @@ function CashflowWaterfall({ cf, large = false }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mx-auto mt-2 block select-none">
-      {/* zero baseline (vertical) */}
-      <line x1={x(0)} y1={padT} x2={x(0)} y2={H - padB} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" />
+      {/* zero baseline (vertical) with label */}
+      <line x1={x(0)} y1={padT} x2={x(0)} y2={H - padB + 2} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" />
+      <text x={x(0)} y={H - 4} textAnchor="middle" className="fill-gray-400 dark:fill-gray-500" fontSize={large ? 10 : 9} fontWeight="600">Zero</text>
       {/* horizontal connectors between the running levels */}
       {[0, 1, 2].map((i) => {
         const xx = x(bars[i].end)

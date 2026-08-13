@@ -11996,6 +11996,7 @@ def payoff_planner(
         if tok.strip().lstrip("-").isdigit()
     }
 
+    _accent = _home_accent_map(all_props)
     properties_meta: List[Dict[str, Any]] = []
     planner_loans: List[Dict[str, Any]] = []
     noi_sum = 0.0
@@ -12060,7 +12061,7 @@ def payoff_planner(
             planner_loans.append({
                 "name": label,
                 "isPrimary": is_primary,
-                "accentIndex": _home_accent_index(prop.id),
+                "accentIndex": _accent.get(prop.id, 0),
                 "balance": round(current_loan_balance(loan), 2),
                 "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
                 "pi": round(loan_monthly_pi(loan), 2),
@@ -12776,6 +12777,12 @@ def _home_accent_index(key) -> int:
         return h % _HOME_ACCENT_COUNT
 
 
+def _home_accent_map(props) -> Dict[int, int]:
+    """property id -> accent index by global id order, so distinct properties get
+    distinct colors (until the palette cycles) consistently across endpoints."""
+    return {p.id: i % _HOME_ACCENT_COUNT for i, p in enumerate(sorted(props, key=lambda p: p.id))}
+
+
 def _year_of(value: Optional[str]) -> Optional[int]:
     parsed = _parse_iso_date(value) if value else None
     if parsed:
@@ -13073,6 +13080,7 @@ def portfolio_equity_cashflow(
 
     today = date.today()
     rows = [_equity_cashflow_row(prop, now_year=today.year) for prop in props]
+    _accent = _home_accent_map(all_props)
 
     def _available_entry(prop):
         _pd = _parse_iso_date(prop.purchase_date) if prop.purchase_date else None
@@ -13086,7 +13094,7 @@ def portfolio_equity_cashflow(
             "type": "primary" if is_primary else "rental",
             "buyYear": _pd.year if _pd else None,
             "buyMonth": _pd.month if _pd else None,
-            "accentIndex": _home_accent_index(prop.id),
+            "accentIndex": _accent.get(prop.id, 0),
         }
 
     return {

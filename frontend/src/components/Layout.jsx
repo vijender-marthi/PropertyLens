@@ -105,6 +105,9 @@ function SidebarPropertyList({ onClose }) {
     if (leftPrimary !== rightPrimary) return leftPrimary ? -1 : 1
     return String(left.name || left.address || '').localeCompare(String(right.name || right.address || ''))
   })
+  // Accent by global id-order rank (matches the backend), so distinct properties
+  // get distinct colors consistently across the app.
+  const accentRank = new Map([...properties].sort((a, b) => a.id - b.id).map((p, i) => [p.id, i]))
 
   return (
     <section className="mt-4 border-t border-gray-100 px-2 pt-3 dark:border-gray-700">
@@ -119,7 +122,7 @@ function SidebarPropertyList({ onClose }) {
           const primary = String(property.usage_type || '').toLowerCase() === 'primary'
           const active = location.pathname === `/properties/${property.id}` || location.pathname.startsWith(`/properties/${property.id}/`)
           const label = property.name || property.address || `Property ${property.id}`
-          const accent = HOME_ACCENTS[((property.id ?? 0) % HOME_ACCENTS.length + HOME_ACCENTS.length) % HOME_ACCENTS.length]
+          const accent = HOME_ACCENTS[(accentRank.get(property.id) ?? 0) % HOME_ACCENTS.length]
           return (
             <Link
               key={property.id}
