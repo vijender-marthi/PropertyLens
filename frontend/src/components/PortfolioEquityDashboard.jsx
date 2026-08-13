@@ -307,7 +307,7 @@ function Modal({ open, title, wide, size, onClose, children }) {
   if (!open) return null
   const maxW = size === 'xl' ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
       <div className={`relative z-10 w-full ${maxW} max-h-[90vh] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900`}>
         <div className="mb-3 flex items-center justify-between">
@@ -496,6 +496,11 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
   const rows = data?.properties || []
   const single = rows.length === 1
+  const singleAccent = single ? HOME_ACCENTS[(rows[0].accentIndex ?? 0) % HOME_ACCENTS.length].text : ''
+  // Title node with the property name in its accent color + acquisition year.
+  const detailTitle = (prefix) => (
+    <>{prefix} · <span className={singleAccent}>{rows[0]?.name}</span>{rows[0]?.buyYear ? <span className="font-normal text-gray-400 dark:text-gray-500"> · Acquired {rows[0].buyYear}</span> : null}</>
+  )
   const rentals = useMemo(() => rows.filter((p) => p.type === 'rental'), [rows])
   const m = data?.totals
   const factor = period === 'annual' ? (m?.annualFactor || 12) : 1
@@ -916,7 +921,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
       </Modal>
 
-      <Modal open={modal?.kind === 'appreciation'} title={single ? `Equity Details · ${rows[0]?.name ?? ''}` : 'Equity by Property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'appreciation'} title={single ? detailTitle('Equity Details') : 'Equity by Property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
         {single ? (
           <div className="grid gap-x-10 gap-y-1 text-[15px] sm:grid-cols-2">
             <div>
@@ -956,7 +961,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         )}
       </Modal>
 
-      <Modal open={modal?.kind === 'loans'} title={single ? `Loan Details · ${rows[0]?.name ?? ''}` : 'Loans by property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'loans'} title={single ? detailTitle('Loan Details') : 'Loans by property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
         {single ? (
           <div className="grid gap-x-10 gap-y-1 text-[15px] sm:grid-cols-2">
             <div>
