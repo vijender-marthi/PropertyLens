@@ -469,6 +469,14 @@ function sortRows(rows, cols, sort) {
   })
 }
 
+// Classify a loan type string into ARM / Balloon / Fixed.
+const loanClassLabel = (type) => {
+  const t = String(type || '').toLowerCase()
+  if (t.includes('arm') || t.includes('adjust')) return 'ARM'
+  if (t.includes('balloon')) return 'Balloon'
+  return 'Fixed'
+}
+
 const KV = ({ label, value, tone }) => (
   <div className="flex items-center justify-between gap-4 border-b border-gray-50 py-2 dark:border-gray-800/60">
     <span className="text-gray-500 dark:text-gray-400">{label}</span>
@@ -669,8 +677,8 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <KpiTile label="Total Debt" value={compactMoney(m.loan)} valueClass={TONE.red} metric={metrics.totalDebt}>
           <Delta direction="down" tone={TONE.red}>{pct1(m.ltv)} of value</Delta>
         </KpiTile>
-        <KpiTile label="Weighted Interest Rate" value={ratePct(m.weightedRate)} valueClass={TONE.blue} metric={metrics.weightedRate}>
-          <span className="block text-gray-500 dark:text-gray-400">{ratePct(m.rateMin)} – {ratePct(m.rateMax)} range</span>
+        <KpiTile label={single ? 'Interest Rate' : 'Weighted Interest Rate'} value={ratePct(m.weightedRate)} valueClass={TONE.blue} metric={metrics.weightedRate}>
+          <span className="block text-gray-500 dark:text-gray-400">{single ? loanClassLabel(rows[0].loanType) : `${ratePct(m.rateMin)} – ${ratePct(m.rateMax)} range`}</span>
         </KpiTile>
         <KpiTile label="Return on Equity" value={pct1(m.roe)} valueClass={m.roe >= 0 ? TONE.green : TONE.red} metric={metrics.roe}>
           <span className="text-gray-500 dark:text-gray-400">cashflow + paydown</span>
