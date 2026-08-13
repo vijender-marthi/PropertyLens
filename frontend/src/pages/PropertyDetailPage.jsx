@@ -25,6 +25,7 @@ import MetricCard from '../components/metrics/MetricCard'
 import MetricKPI from '../components/metrics/MetricKPI'
 import RentalPropertySummary, { RentalPropertySummaryHeader } from '../components/RentalPropertySummary'
 import PropertyEquitySummary from '../components/PropertyEquitySummary'
+import PropertyTimelineBar from '../components/PropertyTimelineBar'
 import PrimaryPropertySummary from '../components/PrimaryPropertySummary'
 import { useAuth } from '../hooks/useAuth'
 import { propertyTabs } from '../config/propertyTabs'
@@ -622,6 +623,9 @@ return (
         onToggleDetails={() => setShowAddress((value) => !value)}
         badgeFallback={topIsPrimary ? 'Primary Residence' : 'Rental Property'}
       />
+
+      {/* Acquisition timeline — shown across all tabs */}
+      <PropertyTimelineBar propId={id} />
 
       {/* Tabs — scrollable on mobile */}
       <div className="border-b border-gray-200 dark:border-gray-700">
