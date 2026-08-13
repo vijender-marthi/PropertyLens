@@ -269,6 +269,7 @@ def simulate(
     loans_out = [
         {
             "name": s["name"],
+            "isPrimary": s.get("isPrimary", False),
             "rate": s["rate"],
             "pi": s["pi"],
             "noi": s["noi"],
