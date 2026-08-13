@@ -699,10 +699,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
               <span className="text-gray-500 dark:text-gray-400">Appreciation</span>
               <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(totalAppr)}</span>
               <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.growth)}</span>
-
-              <span className="text-gray-500 dark:text-gray-400">Annualized growth</span>
-              <span />
-              <span className="text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.annualizedWeighted)}</span>
             </div>
           </SummaryCard>
         </div>
