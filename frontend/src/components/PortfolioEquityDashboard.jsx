@@ -16,8 +16,9 @@ const SERIES = {
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 // Per UI_DESIGN_STANDARDS §5, display formatting goes through the shared
-// formatter module. Compact metric currency renders e.g. $4.73M / $876.5K.
-const compactMoney = (value) => formatMetricCurrency(value)
+// formatter module. Compact metric currency shows up to two decimals in both
+// millions and thousands, e.g. $4.73M / $753.33K.
+const compactMoney = (value) => formatMetricCurrency(value, { kDigits: 2 })
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 // ISO date (YYYY-MM-DD) → "Mon YYYY"; falls back to the year when unavailable.
 const statementAsOfLabel = (iso, fallbackYear) => {
@@ -100,7 +101,7 @@ const SummaryRow = ({ label, value, strong, indent, tone }) => (
 
 // ── Value-buildup waterfall (horizontal, inline SVG) ─────────────────────────
 // Each component of value is its own labeled horizontal bar; no separate legend.
-function ValueWaterfall({ wf, large = false }) {
+function ValueWaterfall({ wf, large = false, onPick }) {
   const max = wf.currentValue
   if (!max || max <= 0) {
     return <div className="flex h-48 items-center justify-center text-sm text-gray-400">Add purchase prices and market values to see the value buildup.</div>
@@ -109,11 +110,12 @@ function ValueWaterfall({ wf, large = false }) {
   const c1 = wf.downPayment
   const c2 = c1 + wf.principalReduction
   const c3 = c2 + wf.appreciation
+  const pick = (kind) => (onPick ? () => onPick(kind) : undefined)
   const bars = [
-    { label: 'Down payment', value: wf.downPayment, color: SERIES.blue, start: 0, end: c1 },
-    { label: 'Principal reduction', value: wf.principalReduction, color: SERIES.aqua, start: c1, end: c2 },
-    { label: 'Appreciation', value: wf.appreciation, color: SERIES.green, start: c2, end: c3 },
-    { label: 'Remaining debt', value: wf.remainingDebt, color: SERIES.slate, start: c3, end: c3 + wf.remainingDebt },
+    { label: 'Down payment', value: wf.downPayment, color: SERIES.blue, start: 0, end: c1, pick: 'appreciation' },
+    { label: 'Principal reduction', value: wf.principalReduction, color: SERIES.aqua, start: c1, end: c2, pick: 'appreciation' },
+    { label: 'Appreciation', value: wf.appreciation, color: SERIES.green, start: c2, end: c3, pick: 'appreciation' },
+    { label: 'Remaining debt', value: wf.remainingDebt, color: SERIES.slate, start: c3, end: c3 + wf.remainingDebt, pick: 'loans' },
     { label: 'Market value', value: wf.currentValue, color: SERIES.violet, start: 0, end: wf.currentValue, total: true },
   ]
 
@@ -124,7 +126,7 @@ function ValueWaterfall({ wf, large = false }) {
   const padT = large ? 14 : 10
   const padB = large ? 14 : 10
   const H = padT + bars.length * rowH + padB
-  const barH = rowH * 0.66
+  const barH = rowH * 0.66 + 10
   const x = (v) => padL + (v / max) * (W - padL - padR)
   const rowCy = (i) => padT + i * rowH + rowH / 2
   const valueFont = large ? 13 : 11
@@ -139,8 +141,10 @@ function ValueWaterfall({ wf, large = false }) {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Value buildup waterfall" className="select-none">
       {/* "Asset" grouping brace over down payment + principal reduction + appreciation */}
-      <path d={bracePath} fill="none" className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <text x={32} y={grpMid} transform={`rotate(-90 32 ${grpMid})`} textAnchor="middle" dominantBaseline="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont} fontWeight="700">Asset</text>
+      <g onClick={pick('appreciation')} className={onPick ? 'cursor-pointer' : undefined}>
+        <path d={bracePath} fill="none" className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <text x={32} y={grpMid} transform={`rotate(-90 32 ${grpMid})`} textAnchor="middle" dominantBaseline="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont} fontWeight="700">Asset</text>
+      </g>
       {/* vertical dashed connectors between build bars */}
       {[0, 1, 2].map((i) => {
         const xx = x(bars[i].end)
@@ -153,11 +157,11 @@ function ValueWaterfall({ wf, large = false }) {
         const cy = rowCy(i)
         const nearRight = x1 > W - padR - 64
         return (
-          <g key={b.label}>
+          <g key={b.label} onClick={b.pick ? pick(b.pick) : undefined} className={b.pick && onPick ? 'cursor-pointer' : undefined}>
             {/* category label (left column) */}
             <text x={padL - 8} y={cy} dominantBaseline="middle" textAnchor="end" className="fill-gray-600 dark:fill-gray-300" fontSize={labelFont} fontWeight={b.total ? 700 : 500}>{b.label}</text>
             {/* bar */}
-            <rect x={x0} y={cy - barH / 2} width={w} height={barH} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.85} />
+            <rect x={x0} y={cy - barH / 2} width={w} height={barH} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.85} className={b.pick && onPick ? 'transition-opacity hover:opacity-100' : undefined} />
             {/* value label — inside the bar when it reaches the right edge, else after it */}
             <text
               x={nearRight ? x1 - 8 : x1 + 6}
@@ -682,18 +686,12 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </div>
         </SummaryCard>
 
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => setModal({ kind: 'waterfall' })}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setModal({ kind: 'waterfall' }) } }}
-          className="group flex cursor-pointer flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-gray-700 dark:bg-gray-900"
-        >
+        <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Portfolio Value Buildup</h3>
-            <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 opacity-0 transition group-hover:opacity-100"><Maximize2 className="h-3.5 w-3.5" /> enlarge</span>
+            <button type="button" onClick={() => setModal({ kind: 'waterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
           </div>
-          <ValueWaterfall wf={m.waterfall} />
+          <ValueWaterfall wf={m.waterfall} onPick={(kind) => setModal({ kind })} />
         </div>
 
         <SummaryCard title="Loan &amp; Debt Summary" onExpand={() => setModal({ kind: 'loans' })}>

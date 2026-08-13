@@ -116,15 +116,18 @@ Do not call `Intl.NumberFormat`, `.toLocaleString()`, or `.toFixed()` directly i
 ### Cards, Dashboard Metrics, and KPIs
 
 Absolute currency values greater than or equal to `100,000` use compact notation.
+Compact notation shows **up to two decimal places** in both thousands (`K`) and
+millions (`M`); trailing zeros are trimmed. Use `formatMetricCurrency(value, { kDigits: 2 })`
+for two-decimal thousands.
 
 Examples:
 
 - `100000` -> `$100K`
-- `456201` -> `$456K`
-- `700000` -> `$700K`
-- `965313` -> `$965K`
-- `1210000` -> `$1.2M`
-- `1800000` -> `$1.8M`
+- `456201` -> `$456.2K`
+- `753333` -> `$753.33K`
+- `965313` -> `$965.31K`
+- `1210000` -> `$1.21M`
+- `4730000` -> `$4.73M`
 
 Values below `100,000` remain full unless a component explicitly uses chart formatting.
 
