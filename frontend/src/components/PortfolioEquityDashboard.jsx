@@ -812,7 +812,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
         <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
-            <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property{per}</div>
+            <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property</div>
             <div className="max-h-[19rem] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-gray-400 dark:bg-gray-900">
