@@ -544,16 +544,43 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       {/* ── Band 2: Equity · Waterfall · Loan & Debt ── */}
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
         <SummaryCard title="Equity Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
-          <SummaryRow label="Portfolio value" value={compactMoney(m.value)} tone="text-sky-600 dark:text-sky-400" />
-          <SummaryRow label="Loan balance" value={`${compactMoney(m.loan)} · ${pct1(m.ltv)}`} tone="text-red-600 dark:text-red-400" />
-          <SummaryRow label="Total equity" value={`${compactMoney(m.equity)} · ${pct1(m.equityPct)}`} strong tone="text-emerald-600 dark:text-emerald-400" />
-          <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="↳ Down payment" value={compactMoney(m.waterfall.downPayment)} indent />
-          <SummaryRow label="↳ Principal paid" value={compactMoney(m.waterfall.principalReduction)} indent />
-          <SummaryRow label="↳ Appreciation" value={compactMoney(m.waterfall.appreciation)} indent />
-          <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="Total growth" value={pct1(m.growth)} />
-          <SummaryRow label="Annualized growth" value={pct1(m.annualizedWeighted)} strong tone="text-emerald-600 dark:text-emerald-400" />
+          <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 gap-y-1.5 text-sm">
+            <span className="text-gray-500 dark:text-gray-400">Portfolio value</span>
+            <span className="text-right tabular-nums text-sky-600 dark:text-sky-400">{compactMoney(m.value)}</span>
+            <span />
+
+            <span className="text-gray-500 dark:text-gray-400">Loan balance</span>
+            <span className="text-right tabular-nums text-red-600 dark:text-red-400">{compactMoney(m.loan)}</span>
+            <span className="text-right tabular-nums text-red-600 dark:text-red-400">{pct1(m.ltv)}</span>
+
+            <span className="text-gray-500 dark:text-gray-400">Total equity</span>
+            <span className="text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(m.equity)}</span>
+            <span className="text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.equityPct)}</span>
+
+            <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+
+            <span className="pl-4 text-gray-400">↳ Down payment</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.waterfall.downPayment)}</span>
+            <span />
+
+            <span className="pl-4 text-gray-400">↳ Principal paid</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.waterfall.principalReduction)}</span>
+            <span />
+
+            <span className="pl-4 text-gray-400">↳ Appreciation</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.waterfall.appreciation)}</span>
+            <span />
+
+            <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+
+            <span className="text-gray-500 dark:text-gray-400">Total growth</span>
+            <span />
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{pct1(m.growth)}</span>
+
+            <span className="text-gray-500 dark:text-gray-400">Annualized growth</span>
+            <span />
+            <span className="text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.annualizedWeighted)}</span>
+          </div>
         </SummaryCard>
 
         <div
