@@ -195,9 +195,8 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
 
   return (
     <div className="relative py-1" aria-label="Acquisition timeline">
-      <p className="mb-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">Click a home to filter · ⌘/Ctrl-click to select multiple</p>
       <div className="relative h-20">
-        <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-gray-200 dark:bg-gray-700" />
+        <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-blue-500" />
         {withYear.map((p) => {
           const primary = p.type === 'primary'
           const active = !isolating || (selectedIds && selectedIds.has(p.id))
@@ -220,6 +219,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
           )
         })}
       </div>
+      <p className="mt-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">Click a home to filter · ⌘/Ctrl-click to select multiple</p>
     </div>
   )
 }
