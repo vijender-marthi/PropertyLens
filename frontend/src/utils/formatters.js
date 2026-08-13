@@ -49,7 +49,9 @@ export function formatCurrencyCompact(value, options = {}) {
 }
 
 export function formatMetricCurrency(value, options = {}) {
- return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 1, mDigits: 2, ...options })
+ // Compact metric currency shows up to two decimals in both thousands and
+ // millions (trailing zeros trimmed) per UI_DESIGN_STANDARDS §5.
+ return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 2, mDigits: 2, ...options })
 }
 
 export function formatMonthlyCurrency(value, options = {}) {

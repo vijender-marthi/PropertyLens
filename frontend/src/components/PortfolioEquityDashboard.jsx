@@ -18,7 +18,7 @@ const SERIES = {
 // Per UI_DESIGN_STANDARDS §5, display formatting goes through the shared
 // formatter module. Compact metric currency shows up to two decimals in both
 // millions and thousands, e.g. $4.73M / $753.33K.
-const compactMoney = (value) => formatMetricCurrency(value, { kDigits: 2 })
+const compactMoney = (value) => formatMetricCurrency(value)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 // ISO date (YYYY-MM-DD) → "Mon YYYY"; falls back to the year when unavailable.
 const statementAsOfLabel = (iso, fallbackYear) => {
