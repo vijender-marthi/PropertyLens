@@ -574,12 +574,13 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const totalAppr = m.value - m.purchase
   // Sortable "Equity by Property" columns (share-% columns after value/purchase/appreciation).
   const eqCols = [
-    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => <span>{p.name}{p.buyYear ? <span className="text-gray-400 dark:text-gray-500"> · {p.buyYear}</span> : null}</span> },
-    { key: 'value', label: 'Market Value', align: 'right', sortVal: (p) => p.value, render: (p) => fullMoney(p.value) },
+    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
+    { key: 'buyYear', label: 'Year', align: 'right', sortVal: (p) => p.buyYear || 0, render: (p) => p.buyYear || '—' },
+    { key: 'value', label: 'Market Value', align: 'right', sortVal: (p) => p.value, render: (p) => compactMoney(p.value) },
     { key: 'valuePct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.value, render: (p) => pct1(m.value ? p.value / m.value : 0) },
-    { key: 'purchase', label: 'Purchase', align: 'right', sortVal: (p) => p.purchase, render: (p) => fullMoney(p.purchase) },
+    { key: 'purchase', label: 'Purchase', align: 'right', sortVal: (p) => p.purchase, render: (p) => compactMoney(p.purchase) },
     { key: 'purchasePct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.purchase, render: (p) => pct1(m.purchase ? p.purchase / m.purchase : 0) },
-    { key: 'appr', label: 'Appreciation', align: 'right', sortVal: (p) => p.appreciation, render: (p) => gainMoney(p.appreciation) },
+    { key: 'appr', label: 'Appreciation', align: 'right', sortVal: (p) => p.appreciation, render: (p) => <span className={p.appreciation >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{compactMoney(p.appreciation)}</span> },
     { key: 'apprPct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.appreciation, render: (p) => pct1(totalAppr ? p.appreciation / totalAppr : 0) },
     { key: 'growth', label: 'Growth', align: 'right', sortVal: (p) => p.growth, render: (p) => gainPct(p.growth) },
     { key: 'years', label: 'Years', align: 'right', sortVal: (p) => yearsHeld(p).months, render: (p) => yearsHeld(p).label },
@@ -905,11 +906,12 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             <tfoot>
               <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
                 <td className="py-2.5 pr-3 text-left text-gray-900 dark:text-white">Total</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.value)}</td>
+                <td className="px-3 py-2.5" />
+                <td className="px-3 py-2.5 text-right tabular-nums">{compactMoney(m.value)}</td>
                 <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.purchase)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{compactMoney(m.purchase)}</td>
                 <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
-                <td className="px-3 py-2.5 text-right">{gainMoney(totalAppr)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(totalAppr)}</td>
                 <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
                 <td className="px-3 py-2.5 text-right">{gainPct(m.growth)}</td>
                 <td className="px-3 py-2.5" />
