@@ -721,7 +721,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
             <span className="text-gray-500 dark:text-gray-400">Loan balance</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.loan)}</span>
-            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.ltv)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.origLoan ? m.loan / m.origLoan : 0)}</span>
 
             <span className="pl-4 text-gray-400">↳ Fixed loans</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.fixedBalance)}</span>
