@@ -686,7 +686,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </div>
         </SummaryCard>
 
-        <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex flex-col self-start rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Portfolio Value Buildup</h3>
             <button type="button" onClick={() => setModal({ kind: 'waterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
