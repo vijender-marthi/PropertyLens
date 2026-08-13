@@ -756,7 +756,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <KpiTile label={`Rental Income${per}`} value={compactMoney(m.rent * factor)} valueClass={TONE.green} metric={metrics.rentalIncome}>
             <span className="text-gray-500 dark:text-gray-400">scheduled rent</span>
           </KpiTile>
@@ -768,12 +768,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </KpiTile>
           <KpiTile label={`Net Cashflow${per}`} value={compactMoney(m.netCashFlow * factor)} valueClass={m.netCashFlow >= 0 ? TONE.green : TONE.red} metric={metrics.netCashFlow}>
             <span className={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{m.netCashFlow >= 0 ? 'positive' : 'negative'}</span>
-          </KpiTile>
-          <KpiTile label="Portfolio Cap Rate" value={pct1(m.capRate)} valueClass={TONE.blue} metric={metrics.capRate}>
-            <span className="text-gray-500 dark:text-gray-400">annual NOI / rental value</span>
-          </KpiTile>
-          <KpiTile label="Equity Yield" value={pct1(m.equityYield)} valueClass={m.equityYield >= 0 ? TONE.green : TONE.red} metric={metrics.equityYield}>
-            <span className="text-gray-500 dark:text-gray-400">cash flow / equity</span>
           </KpiTile>
         </div>
 
