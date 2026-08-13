@@ -469,21 +469,12 @@ function sortRows(rows, cols, sort) {
   })
 }
 
-// Single-property drill-down: label → value pairs instead of a table. Share-of-
-// total "%" columns are dropped (they're always 100% for one property).
-function DetailList({ cols, row }) {
-  const items = cols.filter((c) => c.key !== 'name' && !/Pct$/.test(c.key))
-  return (
-    <div className="grid gap-x-10 gap-y-1 text-[15px] sm:grid-cols-2">
-      {items.map((c) => (
-        <div key={c.key} className="flex items-center justify-between gap-4 border-b border-gray-50 py-2 dark:border-gray-800/60">
-          <span className="text-gray-500 dark:text-gray-400">{c.label}</span>
-          <span className={`text-right tabular-nums ${c.tone || 'text-gray-800 dark:text-gray-100'}`}>{c.render(row)}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
+const KV = ({ label, value, tone }) => (
+  <div className="flex items-center justify-between gap-4 border-b border-gray-50 py-2 dark:border-gray-800/60">
+    <span className="text-gray-500 dark:text-gray-400">{label}</span>
+    <span className={`text-right tabular-nums ${tone || 'text-gray-800 dark:text-gray-100'}`}>{value}</span>
+  </div>
+)
 
 /**
  * Reusable Equity & Cashflow dashboard, rendered identically for the whole
@@ -925,8 +916,20 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
       </Modal>
 
-      <Modal open={modal?.kind === 'appreciation'} title={single ? 'Equity details' : 'Equity by Property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
-        {single ? <DetailList cols={eqCols} row={rows[0]} /> : (
+      <Modal open={modal?.kind === 'appreciation'} title={single ? `Equity Details · ${rows[0]?.name ?? ''}` : 'Equity by Property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
+        {single ? (
+          <div className="grid gap-x-10 gap-y-1 text-[15px] sm:grid-cols-2">
+            <div>
+              <KV label="Market Value" value={compactMoney(rows[0].value)} tone="text-sky-600 dark:text-sky-400" />
+              <KV label="Purchase price" value={compactMoney(rows[0].purchase)} />
+              <KV label="Appreciation" value={`${compactMoney(rows[0].appreciation)} · ${pct1(rows[0].growth)}`} tone="text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div>
+              <KV label="Number of years" value={yearsHeld(rows[0]).label} />
+              <KV label="Annualized" value={pct1(rows[0].annualized)} tone="text-emerald-600 dark:text-emerald-400" />
+            </div>
+          </div>
+        ) : (
         <SortableTable
           cols={eqCols}
           rows={eqSortedRows}
@@ -953,8 +956,22 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         )}
       </Modal>
 
-      <Modal open={modal?.kind === 'loans'} title={single ? 'Loan details' : 'Loans by property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
-        {single ? <DetailList cols={loanCols} row={rows[0]} /> : (
+      <Modal open={modal?.kind === 'loans'} title={single ? `Loan Details · ${rows[0]?.name ?? ''}` : 'Loans by property'} size={single ? undefined : 'xl'} wide={single} onClose={() => setModal(null)}>
+        {single ? (
+          <div className="grid gap-x-10 gap-y-1 text-[15px] sm:grid-cols-2">
+            <div>
+              <KV label="Original loan" value={compactMoney(rows[0].origLoan)} />
+              <KV label="Loan balance" value={compactMoney(rows[0].loan)} tone="text-red-600 dark:text-red-400" />
+              <KV label="Monthly payment" value={compactMoney(rows[0].payment)} />
+            </div>
+            <div>
+              <KV label="Interest rate" value={ratePct(rows[0].rate)} tone="text-sky-600 dark:text-sky-400" />
+              <KV label="Loan type" value={rows[0].loanType} />
+              <KV label="Payoff year" value={rows[0].payoffYear || '—'} />
+              <KV label="LTV" value={ltvPill(rows[0].ltv)} />
+            </div>
+          </div>
+        ) : (
         <SortableTable
           cols={loanCols}
           rows={loanSortedRows}
