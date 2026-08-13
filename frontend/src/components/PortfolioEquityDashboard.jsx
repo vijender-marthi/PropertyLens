@@ -545,9 +545,8 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       <section className="grid gap-3 lg:grid-cols-[1fr_1.5fr_1fr]" aria-label="Value buildup">
         <SummaryCard title="Equity Summary" onExpand={() => setModal({ kind: 'appreciation' })}>
           <SummaryRow label="Portfolio value" value={compactMoney(m.value)} tone="text-sky-600 dark:text-sky-400" />
-          <SummaryRow label="Loan balance" value={compactMoney(m.loan)} tone="text-red-600 dark:text-red-400" />
-          <SummaryRow label="Total equity" value={compactMoney(m.equity)} strong tone="text-emerald-600 dark:text-emerald-400" />
-          <SummaryRow label="Equity % of value" value={pct1(m.equityPct)} />
+          <SummaryRow label="Loan balance" value={`${compactMoney(m.loan)} · ${pct1(m.ltv)}`} tone="text-red-600 dark:text-red-400" />
+          <SummaryRow label="Total equity" value={`${compactMoney(m.equity)} · ${pct1(m.equityPct)}`} strong tone="text-emerald-600 dark:text-emerald-400" />
           <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
           <SummaryRow label="↳ Down payment" value={compactMoney(m.waterfall.downPayment)} indent />
           <SummaryRow label="↳ Principal paid" value={compactMoney(m.waterfall.principalReduction)} indent />
