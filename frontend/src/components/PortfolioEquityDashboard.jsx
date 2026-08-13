@@ -119,7 +119,7 @@ function ValueWaterfall({ wf, large = false }) {
 
   const W = 720
   const rowH = large ? 60 : 46
-  const padL = large ? 150 : 128
+  const padL = large ? 214 : 196
   const padR = 16
   const padT = large ? 14 : 10
   const padB = large ? 14 : 10
@@ -130,8 +130,17 @@ function ValueWaterfall({ wf, large = false }) {
   const valueFont = large ? 13 : 11
   const labelFont = large ? 12.5 : 11
 
+  // "Asset" brace groups the three equity components (rows 0–2).
+  const grpTop = rowCy(0) - rowH / 2 + 4
+  const grpBot = rowCy(2) + rowH / 2 - 4
+  const grpMid = (grpTop + grpBot) / 2
+  const bracePath = `M 58,${grpTop} Q 50,${grpTop} 50,${grpTop + 8} L 50,${grpMid - 7} Q 50,${grpMid} 42,${grpMid} Q 50,${grpMid} 50,${grpMid + 7} L 50,${grpBot - 8} Q 50,${grpBot} 58,${grpBot}`
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Value buildup waterfall" className="select-none">
+      {/* "Asset" grouping brace over down payment + principal reduction + appreciation */}
+      <path d={bracePath} fill="none" className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <text x={32} y={grpMid} transform={`rotate(-90 32 ${grpMid})`} textAnchor="middle" dominantBaseline="middle" className="fill-gray-500 dark:fill-gray-400" fontSize={labelFont} fontWeight="700">Asset</text>
       {/* vertical dashed connectors between build bars */}
       {[0, 1, 2].map((i) => {
         const xx = x(bars[i].end)
@@ -729,13 +738,17 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
             <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
 
-            <span className="text-gray-500 dark:text-gray-400">Annual interest</span>
-            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyInterest * 12)}</span>
+            <span className="text-gray-500 dark:text-gray-400">Annual payment <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">(next 12 mo)</span></span>
+            <span className="text-right font-semibold tabular-nums text-gray-950 dark:text-white">{compactMoney(m.payment * 12)}</span>
             <span />
 
-            <span className="text-gray-500 dark:text-gray-400">Annual principal</span>
+            <span className="pl-4 text-gray-400">↳ Interest</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyInterest * 12)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.payment ? m.monthlyInterest / m.payment : 0)}</span>
+
+            <span className="pl-4 text-gray-400">↳ Principal</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyPrincipal * 12)}</span>
-            <span />
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.payment ? m.monthlyPrincipal / m.payment : 0)}</span>
           </div>
         </SummaryCard>
       </section>
@@ -782,9 +795,9 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
             <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property{per}</div>
-            <div className="overflow-x-auto">
+            <div className="max-h-[19rem] overflow-auto">
               <table className="w-full text-sm">
-                <thead className="text-xs uppercase text-gray-400">
+                <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-gray-400 dark:bg-gray-900">
                   <tr className="border-b border-gray-100 dark:border-gray-800">
                     <th className="py-2 pl-4 pr-3 text-left font-medium">Property</th>
                     <th className="px-3 py-2 text-right font-medium">Rent</th>
@@ -809,7 +822,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
                   {!rentals.length && <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-gray-400">No rentals</td></tr>}
                 </tbody>
                 {rentals.length ? (
-                  <tfoot>
+                  <tfoot className="sticky bottom-0 bg-white dark:bg-gray-900">
                     <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
                       <td className="py-2 pl-4 pr-3 text-gray-900 dark:text-white">Total</td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(m.rent * factor)}</td>
