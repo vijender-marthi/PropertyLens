@@ -41,17 +41,21 @@ export function formatCurrencyCompact(value, options = {}) {
   const abs = Math.abs(number)
   const prefix = sign(number)
   const threshold = options.threshold ?? 100_000
+  // `trim: false` keeps trailing zeros (fixed decimals), e.g. $2.00M.
+  const fmt = options.trim === false ? (v, d) => Number(v).toFixed(d) : trimFixed
   if (abs < threshold) return formatCurrency(number, options)
- if (abs < 1_000_000) return `${prefix}$${trimFixed(abs / 1_000, options.kDigits ?? 0)}K`
- if (abs < 10_000_000) return `${prefix}$${trimFixed(abs / 1_000_000, options.mDigits ?? 1)}M`
- if (abs < 1_000_000_000) return `${prefix}$${formatWithCommas(Math.round(abs / 1_000_000))}M`
-  return `${prefix}$${trimFixed(abs / 1_000_000_000, options.bDigits ?? 1)}B`
+ if (abs < 1_000_000) return `${prefix}$${fmt(abs / 1_000, options.kDigits ?? 0)}K`
+ if (abs < 10_000_000) return `${prefix}$${fmt(abs / 1_000_000, options.mDigits ?? 1)}M`
+ if (abs < 1_000_000_000) return options.trim === false
+   ? `${prefix}$${fmt(abs / 1_000_000, options.mDigits ?? 1)}M`
+   : `${prefix}$${formatWithCommas(Math.round(abs / 1_000_000))}M`
+  return `${prefix}$${fmt(abs / 1_000_000_000, options.bDigits ?? 1)}B`
 }
 
 export function formatMetricCurrency(value, options = {}) {
- // Compact metric currency shows up to two decimals in both thousands and
- // millions (trailing zeros trimmed) per UI_DESIGN_STANDARDS §5.
- return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 2, mDigits: 2, ...options })
+ // Compact metric currency shows exactly two decimals in both thousands and
+ // millions (trailing zeros kept), e.g. $2.00M / $753.33K, per UI_DESIGN_STANDARDS §5.
+ return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 2, mDigits: 2, trim: false, ...options })
 }
 
 export function formatMonthlyCurrency(value, options = {}) {
