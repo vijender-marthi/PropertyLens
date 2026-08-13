@@ -625,7 +625,7 @@ return (
       />
 
       {/* Acquisition timeline — shown across all tabs */}
-      <PropertyTimelineBar propId={id} />
+      <PropertyTimelineBar propId={id} tabPath={propertyTabs.find((tab) => tab.id === activeTab)?.path} />
 
       {/* Tabs — scrollable on mobile */}
       <div className="border-b border-gray-200 dark:border-gray-700">
