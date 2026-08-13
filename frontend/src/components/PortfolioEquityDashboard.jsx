@@ -287,7 +287,7 @@ function CashflowWaterfall({ cf, large = false }) {
 }
 
 // ── Shared modal ─────────────────────────────────────────────────────────────
-function Modal({ open, title, wide, onClose, children }) {
+function Modal({ open, title, wide, size, onClose, children }) {
   useEffect(() => {
     if (!open) return undefined
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
@@ -295,10 +295,11 @@ function Modal({ open, title, wide, onClose, children }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
   if (!open) return null
+  const maxW = size === 'xl' ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
-      <div className={`relative z-10 w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[85vh] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900`}>
+      <div className={`relative z-10 w-full ${maxW} max-h-[90vh] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900`}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-900 dark:text-white">{title}</h3>
           <button type="button" onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800" aria-label="Close">
@@ -408,6 +409,56 @@ const TONE = {
   blue: 'text-sky-600 dark:text-sky-400',
   amber: 'text-amber-600 dark:text-amber-400',
 }
+// Distinct color for share-% columns so they read apart from the $ columns.
+const PCT_TONE = 'text-indigo-500 dark:text-indigo-400'
+
+// Generic sortable table: cols = [{ key, label, align, sortVal, render, tone }].
+function SortableTable({ cols, rows, sort, onSort, footer }) {
+  const cell = (i, c) => (i === 0 ? 'pr-3 text-left' : i === cols.length - 1 ? 'pl-3 text-right' : `px-3 ${c.align === 'left' ? 'text-left' : 'text-right'}`)
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[15px]">
+        <thead className="text-xs uppercase text-gray-400">
+          <tr className="border-b border-gray-100 dark:border-gray-800">
+            {cols.map((c, i) => (
+              <th
+                key={c.key}
+                onClick={() => onSort(c.key)}
+                className={`cursor-pointer select-none py-2.5 font-medium hover:text-gray-600 dark:hover:text-gray-300 ${cell(i, c)} ${sort.key === c.key ? 'text-gray-700 dark:text-gray-200' : ''}`}
+              >
+                {c.label}{sort.key === c.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
+              {cols.map((c, i) => (
+                <td key={c.key} className={`py-2.5 tabular-nums ${cell(i, c)} ${c.tone || 'text-gray-700 dark:text-gray-200'}`}>{c.render(p)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+        {footer}
+      </table>
+    </div>
+  )
+}
+
+// Toggle-sort state helper.
+function nextSort(s, key) {
+  return s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' }
+}
+function sortRows(rows, cols, sort) {
+  const col = cols.find((c) => c.key === sort.key) || cols[0]
+  return [...rows].sort((a, b) => {
+    const av = col.sortVal(a)
+    const bv = col.sortVal(b)
+    if (typeof av === 'string') return sort.dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av)
+    return sort.dir === 'asc' ? av - bv : bv - av
+  })
+}
 
 /**
  * Reusable Equity & Cashflow dashboard, rendered identically for the whole
@@ -423,6 +474,8 @@ const TONE = {
 export default function PortfolioEquityDashboard({ data, title, headerRight, timeline, wrap = true }) {
   const [period, setPeriod] = useState('monthly')
   const [modal, setModal] = useState(null)
+  const [eqSort, setEqSort] = useState({ key: 'value', dir: 'desc' })
+  const [loanSort, setLoanSort] = useState({ key: 'loan', dir: 'desc' })
 
   const rows = data?.properties || []
   const rentals = useMemo(() => rows.filter((p) => p.type === 'rental'), [rows])
@@ -507,6 +560,45 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       { label: 'Equity yield', display: pct1(m.equityYield) },
     ]),
   }
+
+  // Years held including months as "years.months" (e.g. 5.1 = 5 yrs 1 mo).
+  const yearsHeld = (p) => {
+    if (!p.buyYear) return { label: '—', months: -1 }
+    const total = Math.max((m.nowYear - p.buyYear) * 12 + (m.monthsElapsed - (p.buyMonth || 1)), 0)
+    return { label: `${Math.floor(total / 12)}.${total % 12}`, months: total }
+  }
+  const totalAppr = m.value - m.purchase
+  // Sortable "Equity by Property" columns (share-% columns after value/purchase/appreciation).
+  const eqCols = [
+    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
+    { key: 'value', label: 'Market Value', align: 'right', sortVal: (p) => p.value, render: (p) => fullMoney(p.value) },
+    { key: 'valuePct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.value, render: (p) => pct1(m.value ? p.value / m.value : 0) },
+    { key: 'purchase', label: 'Purchase', align: 'right', sortVal: (p) => p.purchase, render: (p) => fullMoney(p.purchase) },
+    { key: 'purchasePct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.purchase, render: (p) => pct1(m.purchase ? p.purchase / m.purchase : 0) },
+    { key: 'appr', label: 'Appreciation', align: 'right', sortVal: (p) => p.appreciation, render: (p) => gainMoney(p.appreciation) },
+    { key: 'apprPct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.appreciation, render: (p) => pct1(totalAppr ? p.appreciation / totalAppr : 0) },
+    { key: 'growth', label: 'Growth', align: 'right', sortVal: (p) => p.growth, render: (p) => gainPct(p.growth) },
+    { key: 'years', label: 'Years', align: 'right', sortVal: (p) => yearsHeld(p).months, render: (p) => yearsHeld(p).label },
+    { key: 'annualized', label: 'Annualized', align: 'right', sortVal: (p) => p.annualized, render: (p) => gainPct(p.annualized) },
+  ]
+  const eqSortedRows = sortRows(rows, eqCols, eqSort)
+  const onEqSort = (key) => setEqSort((s) => nextSort(s, key))
+
+  // Sortable "Loans by property" columns (share-% after Orig. Loan and Balance).
+  const loanCols = [
+    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
+    { key: 'origLoan', label: 'Orig. Loan', align: 'right', sortVal: (p) => p.origLoan, render: (p) => fullMoney(p.origLoan) },
+    { key: 'origPct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.origLoan, render: (p) => pct1(m.origLoan ? p.origLoan / m.origLoan : 0) },
+    { key: 'loan', label: 'Balance', align: 'right', sortVal: (p) => p.loan, render: (p) => fullMoney(p.loan) },
+    { key: 'loanPct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.loan, render: (p) => pct1(m.loan ? p.loan / m.loan : 0) },
+    { key: 'rate', label: 'Rate', align: 'right', sortVal: (p) => p.rate, render: (p) => ratePct(p.rate) },
+    { key: 'loanType', label: 'Type', align: 'left', tone: 'text-gray-500 dark:text-gray-400', sortVal: (p) => p.loanType, render: (p) => p.loanType },
+    { key: 'payment', label: 'Payment', align: 'right', sortVal: (p) => p.payment, render: (p) => fullMoney(p.payment) },
+    { key: 'payoffYear', label: 'Payoff', align: 'right', sortVal: (p) => p.payoffYear || 0, render: (p) => p.payoffYear || '—' },
+    { key: 'ltv', label: 'LTV', align: 'right', sortVal: (p) => p.ltv, render: (p) => ltvPill(p.ltv) },
+  ]
+  const loanSortedRows = sortRows(rows, loanCols, loanSort)
+  const onLoanSort = (key) => setLoanSort((s) => nextSort(s, key))
 
   return (
     <Wrapper>
@@ -599,16 +691,55 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         </div>
 
         <SummaryCard title="Loan &amp; Debt Summary" onExpand={() => setModal({ kind: 'loans' })}>
-          <SummaryRow label="Original loan" value={compactMoney(m.origLoan)} />
-          <SummaryRow label="Loan balance" value={compactMoney(m.loan)} />
-          <SummaryRow label="Principal paid to date" value={compactMoney(m.origLoan - m.loan)} tone="text-emerald-600 dark:text-emerald-400" />
-          <SummaryRow label="Weighted rate" value={ratePct(m.weightedRate)} />
-          <SummaryRow label="Monthly payment" value={compactMoney(m.payment)} strong />
-          <SummaryRow label="↳ Interest" value={compactMoney(m.monthlyInterest)} indent />
-          <SummaryRow label="↳ Principal" value={compactMoney(m.monthlyPrincipal)} indent />
-          <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-          <SummaryRow label="Annual interest" value={compactMoney(m.monthlyInterest * 12)} />
-          <SummaryRow label="Annual principal" value={compactMoney(m.monthlyPrincipal * 12)} />
+          <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 gap-y-1.5 text-sm">
+            <span className="text-gray-500 dark:text-gray-400">Original loan</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.origLoan)}</span>
+            <span />
+
+            <span className="text-gray-500 dark:text-gray-400">Loan balance</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.loan)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.ltv)}</span>
+
+            <span className="pl-4 text-gray-400">↳ Fixed loans</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.fixedBalance)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.loan ? m.fixedBalance / m.loan : 0)}</span>
+
+            <span className="pl-4 text-gray-400">↳ ARM loans</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.armBalance)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.loan ? m.armBalance / m.loan : 0)}</span>
+
+            <span className="text-gray-500 dark:text-gray-400">Principal paid to date</span>
+            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(m.origLoan - m.loan)}</span>
+            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.paidOff)}</span>
+
+            <span className="text-gray-500 dark:text-gray-400">Weighted rate</span>
+            <span />
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{ratePct(m.weightedRate)}</span>
+
+            <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+
+            <span className="text-gray-500 dark:text-gray-400">Monthly payment</span>
+            <span className="text-right font-semibold tabular-nums text-gray-950 dark:text-white">{compactMoney(m.payment)}</span>
+            <span />
+
+            <span className="pl-4 text-gray-400">↳ Interest</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyInterest)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.payment ? m.monthlyInterest / m.payment : 0)}</span>
+
+            <span className="pl-4 text-gray-400">↳ Principal</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyPrincipal)}</span>
+            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.payment ? m.monthlyPrincipal / m.payment : 0)}</span>
+
+            <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
+
+            <span className="text-gray-500 dark:text-gray-400">Annual interest</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyInterest * 12)}</span>
+            <span />
+
+            <span className="text-gray-500 dark:text-gray-400">Annual principal</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.monthlyPrincipal * 12)}</span>
+            <span />
+          </div>
         </SummaryCard>
       </section>
 
@@ -754,82 +885,45 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         </div>
       </Modal>
 
-      <Modal open={modal?.kind === 'appreciation'} title="Equity by Property" wide onClose={() => setModal(null)}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[15px]">
-            <thead className="text-xs uppercase text-gray-400">
-              <tr className="border-b border-gray-100 dark:border-gray-800">
-                <th className="py-2.5 pr-3 text-left font-medium">Property</th>
-                <th className="px-3 py-2.5 text-right font-medium">Market Value</th>
-                <th className="px-3 py-2.5 text-right font-medium">Purchase</th>
-                <th className="px-3 py-2.5 text-right font-medium">Appreciation</th>
-                <th className="px-3 py-2.5 text-right font-medium">Growth</th>
-                <th className="px-3 py-2.5 text-right font-medium">Years</th>
-                <th className="py-2.5 pl-3 text-right font-medium">Annualized</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                  <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.value)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.purchase)}</td>
-                  <td className="px-3 py-2.5 text-right">{gainMoney(p.appreciation)}</td>
-                  <td className="px-3 py-2.5 text-right">{gainPct(p.growth)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{p.buyYear ? Math.max(m.nowYear - p.buyYear, 0) : '—'}</td>
-                  <td className="py-2.5 pl-3 text-right">{gainPct(p.annualized)}</td>
-                </tr>
-              ))}
-            </tbody>
+      <Modal open={modal?.kind === 'appreciation'} title="Equity by Property" size="xl" onClose={() => setModal(null)}>
+        <SortableTable
+          cols={eqCols}
+          rows={eqSortedRows}
+          sort={eqSort}
+          onSort={onEqSort}
+          footer={(
             <tfoot>
               <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
+                <td className="py-2.5 pr-3 text-left text-gray-900 dark:text-white">Total</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.value)}</td>
+                <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.purchase)}</td>
-                <td className="px-3 py-2.5 text-right">{gainMoney(m.value - m.purchase)}</td>
+                <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
+                <td className="px-3 py-2.5 text-right">{gainMoney(totalAppr)}</td>
+                <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
                 <td className="px-3 py-2.5 text-right">{gainPct(m.growth)}</td>
                 <td className="px-3 py-2.5" />
                 <td className="py-2.5 pl-3 text-right text-gray-400">—</td>
               </tr>
             </tfoot>
-          </table>
-        </div>
+          )}
+        />
       </Modal>
 
-      <Modal open={modal?.kind === 'loans'} title="Loans by property" wide onClose={() => setModal(null)}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[15px]">
-            <thead className="text-xs uppercase text-gray-400">
-              <tr className="border-b border-gray-100 dark:border-gray-800">
-                <th className="py-2.5 pr-3 text-left font-medium">Property</th>
-                <th className="px-3 py-2.5 text-right font-medium">Orig. Loan</th>
-                <th className="px-3 py-2.5 text-right font-medium">Balance</th>
-                <th className="px-3 py-2.5 text-right font-medium">Rate</th>
-                <th className="px-3 py-2.5 text-left font-medium">Type</th>
-                <th className="px-3 py-2.5 text-right font-medium">Payment</th>
-                <th className="px-3 py-2.5 text-right font-medium">Payoff</th>
-                <th className="py-2.5 pl-3 text-right font-medium">LTV</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                  <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.origLoan)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.loan)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{ratePct(p.rate)}</td>
-                  <td className="px-3 py-2.5 text-left text-gray-500 dark:text-gray-400">{p.loanType}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.payment)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-200">{p.payoffYear || '—'}</td>
-                  <td className="py-2.5 pl-3 text-right">{ltvPill(p.ltv)}</td>
-                </tr>
-              ))}
-            </tbody>
+      <Modal open={modal?.kind === 'loans'} title="Loans by property" size="xl" onClose={() => setModal(null)}>
+        <SortableTable
+          cols={loanCols}
+          rows={loanSortedRows}
+          sort={loanSort}
+          onSort={onLoanSort}
+          footer={(
             <tfoot>
               <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
                 <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.origLoan)}</td>
+                <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.loan)}</td>
+                <td className={`px-3 py-2.5 text-right tabular-nums ${PCT_TONE}`}>100.0%</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{ratePct(m.weightedRate)}</td>
                 <td className="px-3 py-2.5" />
                 <td className="px-3 py-2.5 text-right tabular-nums">{fullMoney(m.payment)}</td>
@@ -837,8 +931,8 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
                 <td className="py-2.5 pl-3 text-right">{ltvPill(m.ltv)}</td>
               </tr>
             </tfoot>
-          </table>
-        </div>
+          )}
+        />
       </Modal>
     </Wrapper>
   )
