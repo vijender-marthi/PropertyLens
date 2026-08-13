@@ -118,13 +118,13 @@ function ValueWaterfall({ wf, large = false }) {
   ]
 
   const W = 720
-  const rowH = large ? 54 : 40
+  const rowH = large ? 60 : 46
   const padL = large ? 150 : 128
   const padR = 16
   const padT = large ? 14 : 10
   const padB = large ? 14 : 10
   const H = padT + bars.length * rowH + padB
-  const barH = rowH * 0.5
+  const barH = rowH * 0.66
   const x = (v) => padL + (v / max) * (W - padL - padR)
   const rowCy = (i) => padT + i * rowH + rowH / 2
   const valueFont = large ? 13 : 11
@@ -199,7 +199,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
               aria-label={`${p.name}, purchased ${monthLabel(p)}`}
             >
               <span className="mb-1 max-w-[6rem] truncate text-[10px] font-semibold text-gray-600 dark:text-gray-300">{p.name}</span>
-              <span className={`flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'scale-125 ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
+              <span className={`flex items-center justify-center rounded-full border-2 bg-white shadow-sm transition group-hover:scale-110 dark:bg-gray-900 ${active && isolating ? 'h-9 w-9' : 'h-7 w-7'} ${primary ? 'border-red-400 text-red-500' : 'border-sky-400 text-sky-500'} ${active && isolating ? 'ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-gray-900' : ''}`}>
                 {primary ? <Home className="h-3.5 w-3.5" aria-hidden="true" /> : <Building2 className="h-3.5 w-3.5" aria-hidden="true" />}
               </span>
               <span className="mt-1 whitespace-nowrap text-[10px] font-medium text-gray-400 dark:text-gray-500">{monthLabel(p)}</span>
@@ -211,17 +211,18 @@ export function HomeTimeline({ rows, onSelect, selectedIds }) {
   )
 }
 
-// ── Cashflow bridge waterfall (income → expenses → NOI → debt → net) ──────────
-const CF_UP = '#0ca30c'
-const CF_DOWN = '#d63a3a'
-const CF_SUB = '#2a78d6'
+// ── Cashflow bridge waterfall (income → expenses → debt → net) ──────────────
+const CF_INCOME = '#0d9488'  // teal — rental income (inflow)
+const CF_OPEX = '#f59e0b'    // amber — operating expenses (outflow)
+const CF_DEBT = '#fb7185'    // rose — debt service (outflow)
+const CF_NET_POS = '#7c3aed' // violet — positive net cash flow
+const CF_NET_NEG = '#e11d48' // deep rose — negative net cash flow
 function CashflowWaterfall({ cf, large = false }) {
   const bars = [
-    { key: 'rent', short: 'Rental', long: 'Rental income', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_UP },
-    { key: 'opex', short: 'OpEx', long: 'Operating exp.', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_DOWN },
-    { key: 'noi', short: 'NOI', long: 'Net op. income', start: 0, end: cf.noi, value: cf.noi, color: CF_SUB, total: true },
-    { key: 'debt', short: 'Debt', long: 'Debt service', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DOWN },
-    { key: 'net', short: 'Net CF', long: 'Net cash flow', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_UP : CF_DOWN, total: true },
+    { key: 'rent', short: 'Rental', long: 'Rental income', start: 0, end: cf.rentalIncome, value: cf.rentalIncome, color: CF_INCOME },
+    { key: 'opex', short: 'OpEx', long: 'Operating exp.', start: cf.rentalIncome, end: cf.noi, value: cf.operatingExpenses, color: CF_OPEX },
+    { key: 'debt', short: 'Debt', long: 'Debt service', start: cf.noi, end: cf.netCashFlow, value: cf.debtService, color: CF_DEBT },
+    { key: 'net', short: 'Net CF', long: 'Net cash flow', start: 0, end: cf.netCashFlow, value: cf.netCashFlow, color: cf.netCashFlow >= 0 ? CF_NET_POS : CF_NET_NEG, total: true },
   ]
   const levels = bars.flatMap((b) => [b.start, b.end]).concat(0)
   const domainMax = Math.max(...levels)
@@ -250,7 +251,7 @@ function CashflowWaterfall({ cf, large = false }) {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className={`mx-auto mt-2 block select-none ${large ? '' : 'max-w-[380px]'}`}>
       <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} className="stroke-gray-200 dark:stroke-gray-700" strokeWidth="1" />
-      {[0, 1, 2, 3].map((i) => {
+      {[0, 1, 2].map((i) => {
         const yy = y(bars[i].end)
         return <line key={`c${i}`} x1={colX(i) + barW} y1={yy} x2={colX(i + 1)} y2={yy} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" strokeDasharray="4 3" />
       })}
@@ -527,6 +528,10 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       { label: `Operating expenses${per}`, display: fullMoney(m.opex * factor) },
       { label: `Net operating income${per}`, display: fullMoney(m.noi * factor) },
     ]),
+    debtService: mk('Debt Service = Σ Monthly P&I on active loans (rentals)', [
+      { label: `Debt service${per}`, display: fullMoney(-m.debtService * factor) },
+      { label: 'DSCR (NOI ÷ debt service)', display: m.dscr ? m.dscr.toFixed(2) : '—' },
+    ]),
     netCashFlow: mk('Net Cash Flow = Rental Income + Vacancy + OpEx + Debt Service', [
       { label: `Scheduled rent${per}`, display: fullMoney(m.rent * factor) },
       { label: `Vacancy${per}`, display: fullMoney(m.vacancy * factor) },
@@ -676,7 +681,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           className="group flex cursor-pointer flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-gray-700 dark:bg-gray-900"
         >
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Value Buildup</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Portfolio Value Buildup</h3>
             <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 opacity-0 transition group-hover:opacity-100"><Maximize2 className="h-3.5 w-3.5" /> enlarge</span>
           </div>
           <ValueWaterfall wf={m.waterfall} />
@@ -756,7 +761,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
           <KpiTile label={`Rental Income${per}`} value={compactMoney(m.rent * factor)} valueClass={TONE.green} metric={metrics.rentalIncome}>
             <span className="text-gray-500 dark:text-gray-400">scheduled rent</span>
           </KpiTile>
@@ -766,21 +771,57 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           <KpiTile label={`Net Operating Income${per}`} value={compactMoney(m.noi * factor)} valueClass={m.noi >= 0 ? TONE.green : TONE.red} metric={metrics.noi}>
             <span className="text-gray-500 dark:text-gray-400">before debt service</span>
           </KpiTile>
+          <KpiTile label={`Debt Service${per}`} value={compactMoney(-m.debtService * factor)} valueClass={TONE.red} metric={metrics.debtService}>
+            <span className="text-gray-500 dark:text-gray-400">principal &amp; interest</span>
+          </KpiTile>
           <KpiTile label={`Net Cashflow${per}`} value={compactMoney(m.netCashFlow * factor)} valueClass={m.netCashFlow >= 0 ? TONE.green : TONE.red} metric={metrics.netCashFlow}>
             <span className={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{m.netCashFlow >= 0 ? 'positive' : 'negative'}</span>
           </KpiTile>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-2">
-          <SummaryCard title={`Cashflow Summary${per}`} onExpand={() => setModal({ kind: 'cashflow' })}>
-            <SummaryRow label="Gross rent" value={compactMoney(m.rent * factor)} tone="text-emerald-600 dark:text-emerald-400" />
-            <SummaryRow label="Vacancy rate" value={pct1(m.rent ? -m.vacancy / m.rent : 0)} tone="text-red-600 dark:text-red-400" />
-            <SummaryRow label="Operating expenses" value={compactMoney(m.opex * factor)} tone="text-red-600 dark:text-red-400" />
-            <SummaryRow label="Net operating income" value={compactMoney(m.noi * factor)} strong tone={m.noi >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
-            <SummaryRow label="Debt service (P&I)" value={compactMoney(m.debtService * factor)} tone="text-red-600 dark:text-red-400" />
-            <div className="my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
-            <SummaryRow label="Net cash flow" value={compactMoney(m.netCashFlow * factor)} strong tone={m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
-          </SummaryCard>
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property{per}</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase text-gray-400">
+                  <tr className="border-b border-gray-100 dark:border-gray-800">
+                    <th className="py-2 pl-4 pr-3 text-left font-medium">Property</th>
+                    <th className="px-3 py-2 text-right font-medium">Rent</th>
+                    <th className="px-3 py-2 text-right font-medium">OpEx</th>
+                    <th className="px-3 py-2 text-right font-medium">Debt</th>
+                    <th className="py-2 pl-3 pr-4 text-right font-medium">Net CF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rentals.map((p) => {
+                    const net = p.netCashFlow * factor
+                    return (
+                      <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
+                        <td className="py-2 pl-4 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(p.rent * factor)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-p.opex * factor)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-p.debtService * factor)}</td>
+                        <td className={`py-2 pl-3 pr-4 text-right font-semibold tabular-nums ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(net)}</td>
+                      </tr>
+                    )
+                  })}
+                  {!rentals.length && <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-gray-400">No rentals</td></tr>}
+                </tbody>
+                {rentals.length ? (
+                  <tfoot>
+                    <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
+                      <td className="py-2 pl-4 pr-3 text-gray-900 dark:text-white">Total</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(m.rent * factor)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-m.opex * factor)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 dark:text-gray-200">{fullMoney(-m.debtService * factor)}</td>
+                      <td className={`py-2 pl-3 pr-4 text-right tabular-nums ${m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(m.netCashFlow * factor)}</td>
+                    </tr>
+                  </tfoot>
+                ) : null}
+              </table>
+            </div>
+          </div>
 
           <div
             role="button"
@@ -807,7 +848,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       </section>
 
       {/* ── Modals ── */}
-      <Modal open={modal?.kind === 'waterfall'} title="Value Buildup" wide onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'waterfall'} title="Portfolio Value Buildup" wide onClose={() => setModal(null)}>
         <ValueWaterfall wf={m.waterfall} large />
       </Modal>
 
@@ -823,51 +864,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
           }}
         />
         <p className="mt-2 text-center text-xs text-gray-400">Rental income (net of vacancy) → operating expenses → NOI → debt service → net cash flow</p>
-      </Modal>
-
-      <Modal open={modal?.kind === 'cashflow'} title={`Cashflow by property${per}`} wide onClose={() => setModal(null)}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[15px]">
-            <thead className="text-xs uppercase text-gray-400">
-              <tr className="border-b border-gray-100 dark:border-gray-800">
-                <th className="py-2.5 pr-3 text-left font-medium">Property</th>
-                <th className="px-3 py-2.5 text-right font-medium">Rent</th>
-                <th className="px-3 py-2.5 text-right font-medium">Vacancy %</th>
-                <th className="px-3 py-2.5 text-right font-medium">OpEx</th>
-                <th className="px-3 py-2.5 text-right font-medium">Debt (P&amp;I)</th>
-                <th className="py-2.5 pl-3 text-right font-medium">Net CF</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rentals.map((p) => {
-                const net = p.netCashFlow * factor
-                return (
-                  <tr key={p.id} className="border-b border-gray-50 last:border-0 dark:border-gray-800/60">
-                    <td className="py-2.5 pr-3 text-gray-700 dark:text-gray-200">{p.name}</td>
-                    <td className="px-3 py-2.5 text-right">{signedMoney(p.rent * factor)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-red-600 dark:text-red-400">{pct1(p.rent ? -p.vacancy / p.rent : 0)}</td>
-                    <td className="px-3 py-2.5 text-right">{signedMoney(p.opex * factor)}</td>
-                    <td className="px-3 py-2.5 text-right">{signedMoney(p.debtService * factor)}</td>
-                    <td className={`py-2.5 pl-3 text-right font-semibold tabular-nums ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(net)}</td>
-                  </tr>
-                )
-              })}
-              {!rentals.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-gray-400">No rentals</td></tr>}
-            </tbody>
-            {rentals.length ? (
-              <tfoot>
-                <tr className="border-t border-gray-200 font-semibold dark:border-gray-700">
-                  <td className="py-2.5 pr-3 text-gray-900 dark:text-white">Total</td>
-                  <td className="px-3 py-2.5 text-right">{signedMoney(m.rent * factor)}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-red-600 dark:text-red-400">{pct1(m.rent ? -m.vacancy / m.rent : 0)}</td>
-                  <td className="px-3 py-2.5 text-right">{signedMoney(m.opex * factor)}</td>
-                  <td className="px-3 py-2.5 text-right">{signedMoney(m.debtService * factor)}</td>
-                  <td className={`py-2.5 pl-3 text-right tabular-nums ${m.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(m.netCashFlow * factor)}</td>
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
-        </div>
       </Modal>
 
       <Modal open={modal?.kind === 'appreciation'} title="Equity by Property" size="xl" onClose={() => setModal(null)}>
