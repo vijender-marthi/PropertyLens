@@ -98,18 +98,13 @@ const SummaryRow = ({ label, value, strong, indent, tone }) => (
   </div>
 )
 
-// ── Value-buildup waterfall (inline SVG) ─────────────────────────────────────
+// ── Value-buildup waterfall (horizontal, inline SVG) ─────────────────────────
+// Each component of value is its own labeled horizontal bar; no separate legend.
 function ValueWaterfall({ wf, large = false }) {
   const max = wf.currentValue
   if (!max || max <= 0) {
     return <div className="flex h-48 items-center justify-center text-sm text-gray-400">Add purchase prices and market values to see the value buildup.</div>
   }
-  const W = 760, H = large ? 460 : 380
-  const padL = 44, padR = 20, padT = 46, padB = large ? 96 : 84
-  const plotW = W - padL - padR
-  const plotH = H - padT - padB
-  const colW = plotW / 5
-  const barW = colW * 0.52
 
   const c1 = wf.downPayment
   const c2 = c1 + wf.principalReduction
@@ -118,66 +113,56 @@ function ValueWaterfall({ wf, large = false }) {
     { label: 'Down payment', value: wf.downPayment, color: SERIES.blue, start: 0, end: c1 },
     { label: 'Principal reduction', value: wf.principalReduction, color: SERIES.aqua, start: c1, end: c2 },
     { label: 'Appreciation', value: wf.appreciation, color: SERIES.green, start: c2, end: c3 },
-    { label: 'Remaining secured debt', value: wf.remainingDebt, color: SERIES.slate, start: c3, end: c3 + wf.remainingDebt },
-    { label: 'Current market value', value: wf.currentValue, color: SERIES.violet, start: 0, end: wf.currentValue, total: true },
+    { label: 'Remaining debt', value: wf.remainingDebt, color: SERIES.slate, start: c3, end: c3 + wf.remainingDebt },
+    { label: 'Market value', value: wf.currentValue, color: SERIES.violet, start: 0, end: wf.currentValue, total: true },
   ]
-  const y = (v) => padT + plotH * (1 - v / max)
-  const colX = (i) => padL + i * colW + (colW - barW) / 2
-  const axisY = padT + plotH
+
+  const W = 720
+  const rowH = large ? 54 : 40
+  const padL = large ? 150 : 128
+  const padR = 16
+  const padT = large ? 14 : 10
+  const padB = large ? 14 : 10
+  const H = padT + bars.length * rowH + padB
+  const barH = rowH * 0.5
+  const x = (v) => padL + (v / max) * (W - padL - padR)
+  const rowCy = (i) => padT + i * rowH + rowH / 2
+  const valueFont = large ? 13 : 11
+  const labelFont = large ? 12.5 : 11
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Value buildup waterfall" className="select-none">
-      <line x1={padL} y1={axisY} x2={W - padR} y2={axisY} className="stroke-gray-200 dark:stroke-gray-700" strokeWidth="1" />
+      {/* vertical dashed connectors between build bars */}
       {[0, 1, 2].map((i) => {
-        const yy = y(bars[i].end)
-        return <line key={`c${i}`} x1={colX(i) + barW} y1={yy} x2={colX(i + 1)} y2={yy} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" strokeDasharray="4 3" />
+        const xx = x(bars[i].end)
+        return <line key={`c${i}`} x1={xx} y1={rowCy(i)} x2={xx} y2={rowCy(i + 1)} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" strokeDasharray="4 3" />
       })}
       {bars.map((b, i) => {
-        const top = Math.max(b.start, b.end)
-        const bottom = Math.min(b.start, b.end)
-        const ry = y(top)
-        const rh = Math.max(2, ((top - bottom) / max) * plotH)
+        const x0 = x(Math.min(b.start, b.end))
+        const x1 = x(Math.max(b.start, b.end))
+        const w = Math.max(2, x1 - x0)
+        const cy = rowCy(i)
+        const nearRight = x1 > W - padR - 64
         return (
           <g key={b.label}>
-            <rect x={colX(i)} y={ry} width={barW} height={rh} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.85} />
-            <text x={colX(i) + barW / 2} y={ry - 8} textAnchor="middle" className="fill-gray-700 dark:fill-gray-200" fontSize="12.5" fontWeight="600">{compactMoney(b.value)}</text>
+            {/* category label (left column) */}
+            <text x={padL - 8} y={cy} dominantBaseline="middle" textAnchor="end" className="fill-gray-600 dark:fill-gray-300" fontSize={labelFont} fontWeight={b.total ? 700 : 500}>{b.label}</text>
+            {/* bar */}
+            <rect x={x0} y={cy - barH / 2} width={w} height={barH} rx="4" fill={b.color} opacity={b.total ? 0.92 : 0.85} />
+            {/* value label — inside the bar when it reaches the right edge, else after it */}
+            <text
+              x={nearRight ? x1 - 8 : x1 + 6}
+              y={cy}
+              dominantBaseline="middle"
+              textAnchor={nearRight ? 'end' : 'start'}
+              className={nearRight ? 'fill-white' : 'fill-gray-700 dark:fill-gray-200'}
+              fontSize={valueFont}
+              fontWeight="600"
+            >{compactMoney(b.value)}</text>
           </g>
         )
       })}
-      {(() => {
-        const x1 = colX(0)
-        const x2 = colX(2) + barW
-        const by = axisY + 16
-        return (
-          <g>
-            <line x1={x1} y1={by} x2={x2} y2={by} className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1" />
-            <line x1={x1} y1={by} x2={x1} y2={by - 5} className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1" />
-            <line x1={x2} y1={by} x2={x2} y2={by - 5} className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="1" />
-            <text x={(x1 + x2) / 2} y={by + 16} textAnchor="middle" className="fill-gray-600 dark:fill-gray-300" fontSize="12" fontWeight="600">Total equity · {compactMoney(wf.totalEquity)}</text>
-          </g>
-        )
-      })()}
-      <text x={colX(3) + barW / 2} y={axisY + 22} textAnchor="middle" className="fill-gray-500 dark:fill-gray-400" fontSize="12" fontWeight="600">Owed · {compactMoney(wf.owed)}</text>
     </svg>
-  )
-}
-
-function WaterfallLegend() {
-  const items = [
-    ['Down payment', SERIES.blue],
-    ['Principal reduction', SERIES.aqua],
-    ['Appreciation', SERIES.green],
-    ['Remaining debt', SERIES.slate],
-    ['Market value', SERIES.violet],
-  ]
-  return (
-    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-      {items.map(([label, color]) => (
-        <span key={label} className="inline-flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: color }} />{label}
-        </span>
-      ))}
-    </div>
   )
 }
 
@@ -570,7 +555,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const totalAppr = m.value - m.purchase
   // Sortable "Equity by Property" columns (share-% columns after value/purchase/appreciation).
   const eqCols = [
-    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
+    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => <span>{p.name}{p.buyYear ? <span className="text-gray-400 dark:text-gray-500"> · {p.buyYear}</span> : null}</span> },
     { key: 'value', label: 'Market Value', align: 'right', sortVal: (p) => p.value, render: (p) => fullMoney(p.value) },
     { key: 'valuePct', label: '%', align: 'right', tone: PCT_TONE, sortVal: (p) => p.value, render: (p) => pct1(m.value ? p.value / m.value : 0) },
     { key: 'purchase', label: 'Purchase', align: 'right', sortVal: (p) => p.purchase, render: (p) => fullMoney(p.purchase) },
@@ -665,9 +650,17 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
             <div className="col-span-3 my-1 border-t border-dashed border-gray-200 dark:border-gray-700" />
 
-            <span className="text-gray-500 dark:text-gray-400">Total growth</span>
+            <span className="text-gray-500 dark:text-gray-400">Total portfolio value</span>
+            <span className="text-right tabular-nums text-sky-600 dark:text-sky-400">{compactMoney(m.value)}</span>
             <span />
-            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{pct1(m.growth)}</span>
+
+            <span className="text-gray-500 dark:text-gray-400">Total purchase price</span>
+            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.purchase)}</span>
+            <span />
+
+            <span className="text-gray-500 dark:text-gray-400">Appreciation</span>
+            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(totalAppr)}</span>
+            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.growth)}</span>
 
             <span className="text-gray-500 dark:text-gray-400">Annualized growth</span>
             <span />
@@ -687,7 +680,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 opacity-0 transition group-hover:opacity-100"><Maximize2 className="h-3.5 w-3.5" /> enlarge</span>
           </div>
           <ValueWaterfall wf={m.waterfall} />
-          <WaterfallLegend />
         </div>
 
         <SummaryCard title="Loan &amp; Debt Summary" onExpand={() => setModal({ kind: 'loans' })}>
@@ -823,7 +815,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
       {/* ── Modals ── */}
       <Modal open={modal?.kind === 'waterfall'} title="Value Buildup" wide onClose={() => setModal(null)}>
         <ValueWaterfall wf={m.waterfall} large />
-        <WaterfallLegend />
       </Modal>
 
       <Modal open={modal?.kind === 'cfwaterfall'} title={`Cashflow Bridge${per}`} wide onClose={() => setModal(null)}>
