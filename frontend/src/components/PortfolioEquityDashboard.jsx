@@ -260,6 +260,8 @@ function CashflowWaterfall({ cf, large = false }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Cashflow bridge waterfall" className="mx-auto mt-2 block select-none">
+      {/* zero baseline (vertical) */}
+      <line x1={x(0)} y1={padT} x2={x(0)} y2={H - padB} className="stroke-gray-300 dark:stroke-gray-600" strokeWidth="1" />
       {/* horizontal connectors between the running levels */}
       {[0, 1, 2].map((i) => {
         const xx = x(bars[i].end)
@@ -856,7 +858,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
 
           <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge{per}</h3>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Cashflow Bridge</h3>
               <button type="button" onClick={() => setModal({ kind: 'cfwaterfall' })} className="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Maximize2 className="h-3.5 w-3.5" /> enlarge</button>
             </div>
             <div className="flex flex-1 items-center">
@@ -879,7 +881,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <ValueWaterfall wf={m.waterfall} large />
       </Modal>
 
-      <Modal open={modal?.kind === 'cfwaterfall'} title={`Cashflow Bridge${per}`} wide onClose={() => setModal(null)}>
+      <Modal open={modal?.kind === 'cfwaterfall'} title="Cashflow Bridge" wide onClose={() => setModal(null)}>
         <CashflowWaterfall
           large
           cf={{
