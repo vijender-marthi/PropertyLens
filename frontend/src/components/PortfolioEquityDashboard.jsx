@@ -499,7 +499,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const singleAccent = single ? HOME_ACCENTS[(rows[0].accentIndex ?? 0) % HOME_ACCENTS.length].text : ''
   // Title node with the property name in its accent color + acquisition year.
   const detailTitle = (prefix) => (
-    <>{prefix} · <span className={singleAccent}>{rows[0]?.name}</span>{rows[0]?.buyYear ? <span className="text-xs font-normal text-gray-400 dark:text-gray-500"> · Acquired {rows[0].buyYear}</span> : null}</>
+    <>{prefix} · <span className={singleAccent}>{rows[0]?.name}</span>{rows[0]?.buyYear ? <span className="text-xs font-normal text-gray-400 dark:text-gray-500"> · Acquired in {rows[0].buyYear}</span> : null}</>
   )
   const rentals = useMemo(() => rows.filter((p) => p.type === 'rental'), [rows])
   const m = data?.totals
@@ -837,6 +837,21 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
         <div className="grid gap-3 lg:grid-cols-[1.7fr_1fr]">
           <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
             <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-900 dark:border-gray-800 dark:text-white">Cashflow by property</div>
+            {single ? (
+              <div className="grid gap-x-10 gap-y-1 p-4 text-[15px] sm:grid-cols-2">
+                <div>
+                  <KV label={`Rent${per}`} value={compactMoney(rentals[0].rent * factor)} />
+                  <KV label={`Operating expenses${per}`} value={compactMoney(-rentals[0].opex * factor)} />
+                  <KV label={`NOI${per}`} value={compactMoney((rentals[0].rent + rentals[0].vacancy + rentals[0].opex) * factor)} />
+                  <KV label={`Debt service${per}`} value={compactMoney(-rentals[0].debtService * factor)} />
+                </div>
+                <div>
+                  <KV label="OpEx %" value={pct1((rentals[0].rent + rentals[0].vacancy) ? -rentals[0].opex / (rentals[0].rent + rentals[0].vacancy) : 0)} tone={PCT_TONE} />
+                  <KV label="NOI %" value={pct1((rentals[0].rent + rentals[0].vacancy) ? (rentals[0].rent + rentals[0].vacancy + rentals[0].opex) / (rentals[0].rent + rentals[0].vacancy) : 0)} tone={PCT_TONE} />
+                  <KV label={`Net cash flow${per}`} value={compactMoney(rentals[0].netCashFlow * factor)} tone={rentals[0].netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} />
+                </div>
+              </div>
+            ) : (
             <div className="max-h-[19rem] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white text-xs uppercase text-gray-400 dark:bg-gray-900">
@@ -879,6 +894,7 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
                 ) : null}
               </table>
             </div>
+            )}
           </div>
 
           <div className="flex min-w-0 flex-col rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
