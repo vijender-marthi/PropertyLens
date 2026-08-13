@@ -611,9 +611,9 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
     { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
     { key: 'rent', label: 'Rent', align: 'right', sortVal: (p) => p.rent, render: (p) => fullMoney(p.rent * factor) },
     { key: 'opex', label: 'OpEx', align: 'right', sortVal: (p) => -p.opex, render: (p) => fullMoney(-p.opex * factor) },
-    { key: 'opexRatio', label: 'OpEx %', align: 'right', tone: PCT_TONE, sortVal: (p) => (egiOf(p) ? -p.opex / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? -p.opex / egiOf(p) : 0) },
-    { key: 'noi', label: 'NOI', align: 'right', sortVal: (p) => noiOf(p), render: (p) => fullMoney(noiOf(p) * factor) },
-    { key: 'noiMargin', label: 'NOI %', align: 'right', tone: PCT_TONE, sortVal: (p) => (egiOf(p) ? noiOf(p) / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? noiOf(p) / egiOf(p) : 0) },
+    { key: 'opexRatio', label: 'OpEx %', align: 'right', tone: PCT_TONE, hint: 'OpEx Ratio = Operating Expenses ÷ Effective Gross Income (rent − vacancy)', sortVal: (p) => (egiOf(p) ? -p.opex / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? -p.opex / egiOf(p) : 0) },
+    { key: 'noi', label: 'NOI', align: 'right', hint: 'NOI = Rent + Vacancy − Operating Expenses (before debt service)', sortVal: (p) => noiOf(p), render: (p) => fullMoney(noiOf(p) * factor) },
+    { key: 'noiMargin', label: 'NOI %', align: 'right', tone: PCT_TONE, hint: 'NOI Margin = NOI ÷ Effective Gross Income (rent − vacancy)', sortVal: (p) => (egiOf(p) ? noiOf(p) / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? noiOf(p) / egiOf(p) : 0) },
     { key: 'debt', label: 'Debt', align: 'right', sortVal: (p) => -p.debtService, render: (p) => fullMoney(-p.debtService * factor) },
     { key: 'net', label: 'Net CF', align: 'right', sortVal: (p) => p.netCashFlow, render: (p) => <span className={`font-semibold ${p.netCashFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fullMoney(p.netCashFlow * factor)}</span> },
   ]
@@ -820,9 +820,10 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
                       <th
                         key={c.key}
                         onClick={() => onCfSort(c.key)}
-                        className={`cursor-pointer select-none py-2 font-medium hover:text-gray-600 dark:hover:text-gray-300 ${i === 0 ? 'pl-4 pr-3 text-left' : i === cfCols.length - 1 ? 'pl-3 pr-4 text-right' : 'px-3 text-right'} ${cfSort.key === c.key ? 'text-gray-700 dark:text-gray-200' : ''}`}
+                        title={c.hint || undefined}
+                        className={`select-none py-2 font-medium hover:text-gray-600 dark:hover:text-gray-300 ${c.hint ? 'cursor-help' : 'cursor-pointer'} ${i === 0 ? 'pl-4 pr-3 text-left' : i === cfCols.length - 1 ? 'pl-3 pr-4 text-right' : 'px-3 text-right'} ${cfSort.key === c.key ? 'text-gray-700 dark:text-gray-200' : ''}`}
                       >
-                        {c.label}{cfSort.key === c.key ? (cfSort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                        {c.label}{c.hint ? <span className="text-gray-300 dark:text-gray-600"> ⓘ</span> : null}{cfSort.key === c.key ? (cfSort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
                       </th>
                     ))}
                   </tr>
