@@ -336,40 +336,79 @@ def _selected_schedule_row(schedule: Dict[str, Any], year: int) -> Optional[Dict
     return next((row for row in history if row.get("year") == year and row.get("kind") != "total"), None)
 
 
-def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[str, Any]], selected_year: int) -> Dict[str, Any]:
+def _tax_row_components(selected: Optional[Dict[str, Any]]) -> Dict[str, Decimal]:
+    """Deductible components for one Schedule-E schedule row (one property-year)."""
+    total_expenses = _metric_value(selected, "totalExpenses")
+    interest = _metric_value(selected, "mortgageInterest")
+    depreciation = _metric_value(selected, "depreciation")
+    property_tax = _metric_value(selected, "propertyTax")
+    operating = _metric_value(selected, "operatingExpenses")
+    if not operating and total_expenses:
+        operating = max(total_expenses - interest - depreciation - property_tax, Decimal("0"))
+    deductions = total_expenses if total_expenses else operating + interest + depreciation + property_tax
+    return {
+        "rentalIncome": _metric_value(selected, "rentalIncome"),
+        "operatingExpenses": operating,
+        "mortgageInterest": interest,
+        "depreciation": depreciation,
+        "propertyTax": property_tax,
+        "totalDeductions": deductions,
+        "taxableIncome": _metric_value(selected, "netScheduleE"),
+    }
+
+
+_TAX_COMPONENT_KEYS = (
+    "rentalIncome", "operatingExpenses", "mortgageInterest",
+    "depreciation", "propertyTax", "totalDeductions", "taxableIncome",
+)
+
+
+def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[str, Any]], selected_year: int, all_years: bool = False) -> Dict[str, Any]:
     rows = []
     available_years = set()
     for prop in properties:
         if str(prop.get("usage_type") or "Rental").lower() == "primary":
             continue
         schedule = schedules.get(prop.get("id")) or {}
-        available_years.update(int(row["year"]) for row in schedule.get("history") or [] if row.get("year") and int(row["year"]) < 9999)
-        # Don't list a property for a year it wasn't owned (e.g. a 2024 purchase
-        # under 2023). The backend flags this; data presence overrides the date.
-        if schedule.get("ownedInSelectedYear") is False:
-            continue
-        selected = _selected_schedule_row(schedule, selected_year)
-        total_expenses = _metric_value(selected, "totalExpenses")
-        interest = _metric_value(selected, "mortgageInterest")
-        depreciation = _metric_value(selected, "depreciation")
-        property_tax = _metric_value(selected, "propertyTax")
-        operating = _metric_value(selected, "operatingExpenses")
-        if not operating and total_expenses:
-            operating = max(total_expenses - interest - depreciation - property_tax, Decimal("0"))
-        deductions = total_expenses if total_expenses else operating + interest + depreciation + property_tax
+        owned_rows = [
+            row for row in schedule.get("history") or []
+            if row.get("year") and int(row["year"]) < 9999 and row.get("kind") != "total"
+        ]
+        available_years.update(int(row["year"]) for row in owned_rows)
+        if all_years:
+            # Combine every owned year into a single lifetime row per property.
+            if not owned_rows:
+                continue
+            per_year = [_tax_row_components(row) for row in owned_rows]
+            comp = {key: sum((c[key] for c in per_year), Decimal("0")) for key in _TAX_COMPONENT_KEYS}
+            year_span = sorted({int(row["year"]) for row in owned_rows})
+            source_label = (
+                f"{year_span[0]}–{year_span[-1]} combined" if len(year_span) > 1
+                else f"{year_span[0]}"
+            )
+            status = "REPORTED"
+        else:
+            # Don't list a property for a year it wasn't owned (e.g. a 2024
+            # purchase under 2023). The backend flags this; data presence wins.
+            if schedule.get("ownedInSelectedYear") is False:
+                continue
+            selected = _selected_schedule_row(schedule, selected_year)
+            comp = _tax_row_components(selected)
+            source_label = (selected or {}).get("sourceLabel") or "No source data"
+            status = "REPORTED" if selected else "UNAVAILABLE"
         rows.append({
             "propertyId": prop.get("id"),
             "propertyName": prop.get("name") or prop.get("address") or f"Property {prop.get('id')}",
             "location": ", ".join(str(item) for item in (prop.get("city"), prop.get("state")) if item),
-            "rentalIncome": _money(_metric_value(selected, "rentalIncome")),
-            "operatingExpenses": _money(operating),
-            "mortgageInterest": _money(interest),
-            "depreciation": _money(depreciation),
-            "propertyTax": _money(property_tax),
-            "totalDeductions": _money(deductions),
-            "taxableIncome": _money(_metric_value(selected, "netScheduleE")),
-            "sourceLabel": (selected or {}).get("sourceLabel") or "No source data",
-            "status": "REPORTED" if selected else "UNAVAILABLE",
+            "rentalIncome": _money(comp["rentalIncome"]),
+            "operatingExpenses": _money(comp["operatingExpenses"]),
+            "mortgageInterest": _money(comp["mortgageInterest"]),
+            "depreciation": _money(comp["depreciation"]),
+            "propertyTax": _money(comp["propertyTax"]),
+            "totalDeductions": _money(comp["totalDeductions"]),
+            "taxableIncome": _money(comp["taxableIncome"]),
+            "sourceLabel": source_label,
+            "status": status,
         })
 
     def total(key: str) -> Decimal:
@@ -410,7 +449,8 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
         })
 
     return {
-        "selectedYear": selected_year,
+        "selectedYear": "all" if all_years else selected_year,
+        "allYears": all_years,
         "availableYears": sorted(available_years, reverse=True),
         "rows": rows,
         "totals": totals,
@@ -987,6 +1027,7 @@ def build_portfolio_analysis(
     filter_context: Dict[str, Any],
     as_of_date: Optional[str] = None,
     occupancy_by_year: Optional[List[Dict[str, Any]]] = None,
+    all_years: bool = False,
 ) -> Dict[str, Any]:
     as_of = as_of_date or date.today().isoformat()
     loans = _loan_analysis(
@@ -996,7 +1037,7 @@ def build_portfolio_analysis(
         loan_status=str(filter_context.get("loanStatus") or "Active"),
     )
     income = _income_analysis(properties, yearly_trends, as_of)
-    tax = _tax_analysis(properties, schedules, selected_year)
+    tax = _tax_analysis(properties, schedules, selected_year, all_years=all_years)
     analytics = _analytics(properties, income, loans, as_of, occupancy_by_year)
     return {
         "schemaVersion": "portfolio-analysis.v1",

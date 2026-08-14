@@ -12657,6 +12657,7 @@ def portfolio_analysis(
     active_loan_only: bool = True,
     loan_status: str = "Active",
     tax_year: Optional[int] = None,
+    all_years: bool = False,
     scenario_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
@@ -12776,6 +12777,7 @@ def portfolio_analysis(
         selected_year=selected_year,
         filter_context=filter_context,
         occupancy_by_year=occupancy_by_year,
+        all_years=all_years,
     )
 
 

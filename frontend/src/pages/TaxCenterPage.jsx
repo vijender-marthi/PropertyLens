@@ -524,10 +524,12 @@ export default function TaxCenterPage() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear() - 1)
   const [activeTab, setActiveTab] = useState('Overview')
 
+  const isAllYears = selectedYear === 'all'
+
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    propAPI.portfolioAnalysis({ tax_year: selectedYear, include_primary_residence: false }, { signal: controller.signal })
+    propAPI.portfolioAnalysis({ tax_year: isAllYears ? undefined : selectedYear, all_years: isAllYears, include_primary_residence: false }, { signal: controller.signal })
       .then((response) => setAnalysis(response.data || null))
       .catch((error) => {
         if (error?.code !== 'ERR_CANCELED') toast.error('Failed to load tax center')
@@ -540,7 +542,8 @@ export default function TaxCenterPage() {
 
   const model = analysis?.taxCenter || { rows: [], totals: {}, categories: [], trend: [], assumptions: {} }
   const properties = analysis?.properties || []
-  const availableYears = model.availableYears?.length ? model.availableYears : [selectedYear]
+  const availableYears = model.availableYears?.length ? model.availableYears : (isAllYears ? [] : [selectedYear])
+  const yearLabel = isAllYears ? 'All years' : selectedYear
   const showTrend = ['Overview', 'Estimated Taxes', 'History'].includes(activeTab)
   const showCategories = ['Overview', 'Deductions'].includes(activeTab)
   const showTable = ['Overview', 'Deductions', 'Depreciation', 'Property Taxes', 'Tax Reports'].includes(activeTab)
@@ -564,7 +567,7 @@ export default function TaxCenterPage() {
       ...model.rows.map((row) => [
         row.propertyName,
         row.location,
-        selectedYear,
+        yearLabel,
         row.totalDeductions,
         row.depreciation,
         row.mortgageInterest,
@@ -577,7 +580,7 @@ export default function TaxCenterPage() {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `PropertyLens_Tax_Center_${selectedYear}.csv`
+    anchor.download = `PropertyLens_Tax_Center_${isAllYears ? 'All_years' : selectedYear}.csv`
     anchor.click()
     URL.revokeObjectURL(url)
   }
@@ -604,14 +607,15 @@ export default function TaxCenterPage() {
             <label className="btn-secondary relative inline-flex cursor-pointer items-center gap-2 text-sm">
               <CalendarDays className="h-4 w-4" />
               <span>Tax Year</span>
-              <span className="font-medium tabular-nums">{selectedYear}</span>
+              <span className="font-medium tabular-nums">{yearLabel}</span>
               <ChevronDown className="h-4 w-4" aria-hidden="true" />
               <select
                 className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                value={selectedYear}
-                onChange={(event) => setSelectedYear(Number(event.target.value))}
+                value={isAllYears ? 'all' : selectedYear}
+                onChange={(event) => setSelectedYear(event.target.value === 'all' ? 'all' : Number(event.target.value))}
                 aria-label="Tax year"
               >
+                <option value="all">All years</option>
                 {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
             </label>
@@ -624,7 +628,7 @@ export default function TaxCenterPage() {
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <KpiCard icon={ShieldCheck} label="Estimated Tax Savings" value={compact(model.totals.estimatedSavings)} note="based on deductions" tone="emerald" />
-          <KpiCard icon={ReceiptText} label="Total Deductions" value={compact(model.totals.totalDeductions)} note={`Tax year ${selectedYear}`} tone="purple" />
+          <KpiCard icon={ReceiptText} label="Total Deductions" value={compact(model.totals.totalDeductions)} note={isAllYears ? 'All years combined' : `Tax year ${selectedYear}`} tone="purple" />
           <KpiCard icon={Landmark} label="Depreciation Deduction" value={compact(model.totals.depreciation)} note="non-cash deduction" tone="amber" />
           <KpiCard icon={FileSpreadsheet} label="Taxable Income" value={compact(model.totals.taxableIncome)} note="Schedule E total" tone={model.totals.taxableIncome < 0 ? 'red' : 'blue'} />
           <KpiCard icon={Percent} label="Effective Tax Rate" value={`${formatFixed(model.assumptions?.effectiveTaxRate || 0, 2)}%`} note="planning assumption" tone="emerald" />
@@ -650,21 +654,8 @@ export default function TaxCenterPage() {
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
           <main className="space-y-5">
-            {showTrend || showCategories ? <div className="grid gap-5 lg:grid-cols-2">
-              {showTrend ? (
-              <Panel title="Tax Savings Over Time" subtitle="Savings and liability from backend yearly tax rows">
-                <SavingsTrend data={model.trend} />
-              </Panel>
-              ) : null}
-              {showCategories ? (
-              <Panel title={`Deductions by Category (${selectedYear})`} subtitle="No pie charts; proportional bar breakdown">
-                <DeductionBars categories={model.categories} />
-              </Panel>
-              ) : null}
-            </div> : null}
-
             {showTable ? <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-              <Panel title={`${deductionTableTitle} (${selectedYear})`} subtitle="One row per property, export-ready">
+              <Panel title={`${deductionTableTitle} (${yearLabel})`} subtitle="One row per property, export-ready">
                 <DeductionTable rows={model.rows} columns={deductionTableColumns} />
                 <Link to="/properties" className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-blue-700 dark:text-blue-300">
                   View Property Details
@@ -690,7 +681,20 @@ export default function TaxCenterPage() {
               </div>
             </div> : null}
 
-            {activeTab === 'Schedule E' ? <ScheduleEReconciliation properties={properties} year={selectedYear} /> : null}
+            {showTrend || showCategories ? <div className="grid gap-5 lg:grid-cols-2">
+              {showTrend ? (
+              <Panel title="Tax Savings Over Time" subtitle="Savings and liability from backend yearly tax rows">
+                <SavingsTrend data={model.trend} />
+              </Panel>
+              ) : null}
+              {showCategories ? (
+              <Panel title={`Deductions by Category (${yearLabel})`} subtitle="No pie charts; proportional bar breakdown">
+                <DeductionBars categories={model.categories} />
+              </Panel>
+              ) : null}
+            </div> : null}
+
+            {activeTab === 'Schedule E' ? <ScheduleEReconciliation properties={properties} year={isAllYears ? (availableYears[0] || (new Date().getFullYear() - 1)) : selectedYear} /> : null}
             {activeTab === 'Documents' ? <Panel title="Tax Documents" subtitle="Canonical property documents remain the source of tax values."><Link to="/uploads" className="btn-secondary inline-flex items-center gap-2"><Upload className="h-4 w-4" />Open Documents</Link></Panel> : null}
             {activeTab === 'Estimated Taxes' ? <Panel title="Estimate Status" subtitle="Planning values use the backend tax-rate assumption."><p className="text-sm text-gray-600 dark:text-neutral-300">Estimated liability: <strong>{money(model.totals.estimatedLiability)}</strong> at {formatFixed(model.assumptions?.effectiveTaxRate || 0, 2)}%.</p></Panel> : null}
           </main>
