@@ -1632,6 +1632,23 @@ def _is_closed_loan_status(value: Optional[str]) -> bool:
     return _normalize_loan_status_value(value) in CLOSED_LOAN_STATUSES
 
 
+def _schedule_loans(prop: Any) -> List[Any]:
+    """Loans used to project/estimate interest & principal by year.
+
+    Excludes closed (refinanced / servicer-transferred) loans. Their
+    amortization schedule otherwise overlaps the current open loan and
+    double-counts interest — e.g. a servicer transfer records two loans for
+    the same debt. This mirrors the Loan tab, which shows the current loan.
+    Reported 1098 / tax-return interest still overrides these estimates for
+    any year it exists.
+    """
+    loans = getattr(prop, "loans", None) or []
+    open_loans = [l for l in loans if not _is_closed_loan_status(getattr(l, "status", None))]
+    # If every loan is closed (e.g. paid-off property), fall back to all loans
+    # so historical years still project something rather than zero.
+    return open_loans if open_loans else list(loans)
+
+
 def _loan_record_label(loan: Any, index: int = 0) -> str:
     return str(getattr(loan, "lender_name", None) or f"Loan {index + 1}")
 
@@ -7898,11 +7915,11 @@ def get_performance(
     # Amortization-projected interest by year — fills years with no 1098
     # or statement interest on file.
     projected_interest_by_year: Dict[int, float] = {}
-    for _loan in prop.loans:
+    for _loan in _schedule_loans(prop):
         for _yr, _amt in _projected_interest_by_year(_loan).items():
             projected_interest_by_year[_yr] = round(projected_interest_by_year.get(_yr, 0) + _amt, 2)
     loan_yearly_by_year: Dict[int, List[Dict[str, Any]]] = {}
-    for _loan in prop.loans:
+    for _loan in _schedule_loans(prop):
         for _row in _scheduled_loan_years(_loan):
             loan_yearly_by_year.setdefault(_row["year"], []).append({
                 "loan_id": _loan.id,
@@ -8024,7 +8041,7 @@ def get_performance(
             principal_paid = round((ss[-1]["principal"] or 0) * months_owned, 2)
             source = "annualized"
         else:
-            principal_paid = round(sum(l.principal_due or 0 for l in prop.loans) * months_owned, 2)
+            principal_paid = round(sum(l.principal_due or 0 for l in _schedule_loans(prop)) * months_owned, 2)
             source = "estimated"
 
         cumulative_principal_paid = round(cumulative_principal_paid + principal_paid, 2)
@@ -8071,7 +8088,7 @@ def get_performance(
             if source == "estimated":
                 source = "annualized"
         else:
-            interest_paid = round(sum(l.interest_due or 0 for l in prop.loans) * months_owned, 2)
+            interest_paid = round(sum(l.interest_due or 0 for l in _schedule_loans(prop)) * months_owned, 2)
 
         if year in interest_by_year:
             interest_paid = interest_by_year[year]
@@ -8290,7 +8307,7 @@ def get_lifetime_summary(
     # Amortization-projected interest by year — fills years with no 1098
     # or statement interest on file.
     projected_interest_by_year: Dict[int, float] = {}
-    for _loan in prop.loans:
+    for _loan in _schedule_loans(prop):
         for _yr, _amt in _projected_interest_by_year(_loan).items():
             projected_interest_by_year[_yr] = round(projected_interest_by_year.get(_yr, 0) + _amt, 2)
 
@@ -8298,7 +8315,7 @@ def get_lifetime_summary(
 
     manual_property_tax_by_year = _property_tax_history(prop)
     loan_yearly_by_year: Dict[int, List[Dict[str, Any]]] = {}
-    for _loan in prop.loans:
+    for _loan in _schedule_loans(prop):
         for _row in _scheduled_loan_years(_loan):
             loan_yearly_by_year.setdefault(_row["year"], []).append({
                 "loan_id": _loan.id,
@@ -8405,7 +8422,7 @@ def get_lifetime_summary(
         elif (has_documents or year in interest_by_year or year in tax_by_year
               or year in rental_by_year or year == current_year
               or year in balance_by_year or year in tax_return_rent_by_year):
-            principal_paid = round(sum(l.principal_due or 0 for l in prop.loans) * months_owned, 2)
+            principal_paid = round(sum(l.principal_due or 0 for l in _schedule_loans(prop)) * months_owned, 2)
             source = "estimated"
         else:
             continue
@@ -8451,7 +8468,7 @@ def get_lifetime_summary(
             if source == "estimated":
                 source = "annualized"
         else:
-            interest_paid = round(sum(l.interest_due or 0 for l in prop.loans) * months_owned, 2)
+            interest_paid = round(sum(l.interest_due or 0 for l in _schedule_loans(prop)) * months_owned, 2)
 
         interest_source = "calculated" if loan_year_rows else source
         interest_note = "Calculated (approx) from loan terms."

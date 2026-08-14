@@ -617,14 +617,7 @@ const tabBadgeFor = (tab) => {
 
 return (
 <PageContainer>
-      {/* Top actions */}
-      <div className="flex justify-end">
-        <Link to={`/properties/${id}/edit`} className="btn-secondary inline-flex h-9 items-center gap-1.5 text-sm">
-          <Pencil className="h-4 w-4" aria-hidden="true" /> Edit
-        </Link>
-      </div>
-
-      {/* Header */}
+      {/* Header — Edit action sits inline on the header line */}
       <RentalPropertySummaryHeader
         prop={prop}
         presentation={topIsPrimary ? metricVault?.primarySummary : metricVault?.rentalSummary}
@@ -632,6 +625,11 @@ return (
         expanded={showAddress}
         onToggleDetails={() => setShowAddress((value) => !value)}
         badgeFallback={topIsPrimary ? 'Primary Residence' : 'Rental Property'}
+        headerRight={(
+          <Link to={`/properties/${id}/edit`} className="btn-secondary inline-flex h-7 items-center gap-1.5 text-xs">
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+          </Link>
+        )}
       />
 
       {/* Acquisition timeline — shown across all tabs */}

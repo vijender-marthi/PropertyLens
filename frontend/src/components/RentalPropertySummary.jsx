@@ -87,7 +87,7 @@ export function SummaryIcon({ name, tone = 'blue', className = '' }) {
   )
 }
 
-export function RentalPropertySummaryHeader({ prop, presentation, metrics, expanded, onToggleDetails, badgeFallback = 'Rental Property' }) {
+export function RentalPropertySummaryHeader({ prop, presentation, metrics, expanded, onToggleDetails, badgeFallback = 'Rental Property', headerRight = null }) {
   const header = presentation?.header || {}
   const occupancy = metrics?.[header.occupancyMetricKey]
   const address = [prop?.address, prop?.city, prop?.state, prop?.zip_code].filter(Boolean).join(', ')
@@ -135,11 +135,12 @@ export function RentalPropertySummaryHeader({ prop, presentation, metrics, expan
             {expanded ? 'Hide Details' : 'Show Details'}
           </button>
         </div>
-        <div className="flex shrink-0 items-center">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2.5 text-[11px] font-medium text-orange-700">
             As of {asOfDate ? formatMonthYear(asOfDate) : '—'}
             <CalendarDays className="h-3.5 w-3.5 text-orange-500" aria-hidden="true" />
           </span>
+          {headerRight}
         </div>
       </div>
       {expanded ? (
