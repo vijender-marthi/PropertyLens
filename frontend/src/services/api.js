@@ -112,6 +112,7 @@ export const propAPI = {
   scheduleEIgnore: (entryId) => api.post('/properties/analysis/schedule-e-ignore', { entry_id: entryId }),
   upsertYearEntry: (propId, data) => api.post(`/properties/${propId}/tax-entries`, data),
   taxComparison: () => api.get('/properties/tax-returns/comparison'),
+  form8582: (params = {}) => api.get('/properties/analysis/form-8582', { params }),
   // Rental periods
   rentalTimeline: (propId) => api.get(`/properties/${propId}/rental-timeline`),
   createRentalTimelinePeriod: (propId, data) => api.post(`/properties/${propId}/rental-timeline/periods`, data),

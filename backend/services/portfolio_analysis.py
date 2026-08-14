@@ -448,11 +448,51 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
             "status": "ESTIMATED",
         })
 
+    # Per-year aggregates (group-by-year) and property × year matrices for the
+    # property-tax and insurance widgets. Cells are None for years a property
+    # wasn't a rental so the UI shows a dash rather than a fabricated zero.
+    matrix_years = sorted(available_years)
+    property_tax_by_year: List[Dict[str, Any]] = []
+    insurance_by_year: List[Dict[str, Any]] = []
+    by_year_map: Dict[int, Dict[str, Decimal]] = {}
+    for prop in properties:
+        if str(prop.get("usage_type") or "Rental").lower() == "primary":
+            continue
+        schedule = schedules.get(prop.get("id")) or {}
+        name = prop.get("name") or prop.get("address") or f"Property {prop.get('id')}"
+        location = ", ".join(str(item) for item in (prop.get("city"), prop.get("state")) if item)
+        tax_cells: Dict[str, Any] = {}
+        ins_cells: Dict[str, Any] = {}
+        for year in matrix_years:
+            selected = _selected_schedule_row(schedule, year)
+            if selected:
+                tax_cells[str(year)] = _money(_metric_value(selected, "propertyTax"))
+                ins_cells[str(year)] = _money(_metric_value(selected, "insurance"))
+                comp = _tax_row_components(selected)
+                acc = by_year_map.setdefault(year, {key: Decimal("0") for key in _TAX_COMPONENT_KEYS})
+                for key in _TAX_COMPONENT_KEYS:
+                    acc[key] += comp[key]
+            else:
+                tax_cells[str(year)] = None
+                ins_cells[str(year)] = None
+        meta = {"propertyId": prop.get("id"), "propertyName": name, "location": location}
+        property_tax_by_year.append({**meta, "byYear": tax_cells})
+        insurance_by_year.append({**meta, "byYear": ins_cells})
+
+    by_year = [
+        {"year": year, **{key: _money(by_year_map.get(year, {}).get(key, Decimal("0"))) for key in _TAX_COMPONENT_KEYS}}
+        for year in matrix_years
+    ]
+
     return {
         "selectedYear": "all" if all_years else selected_year,
         "allYears": all_years,
         "availableYears": sorted(available_years, reverse=True),
+        "years": matrix_years,
         "rows": rows,
+        "byYear": by_year,
+        "propertyTaxByYear": property_tax_by_year,
+        "insuranceByYear": insurance_by_year,
         "totals": totals,
         "categories": categories,
         "trend": trend,

@@ -9090,6 +9090,7 @@ def _schedule_e_history_row(
         "operatingExpenses": _schedule_e_money(components.get("operating_expenses")),
         "deductibleInterest": _schedule_e_money(components.get("mortgage_interest")),
         "mortgageInterest": _schedule_e_money(components.get("mortgage_interest")),
+        "insurance": _schedule_e_money(components.get("insurance")),
         "propertyTax": _schedule_e_money(components.get("taxes")),
         "depreciation": _schedule_e_money(components.get("depreciation")),
         "totalExpenses": _schedule_e_money(components.get("total_expenses")),
@@ -12806,6 +12807,154 @@ def portfolio_analysis(
         occupancy_by_year=occupancy_by_year,
         all_years=all_years,
     )
+
+
+def _special_allowance(magi: float) -> float:
+    """$25,000 rental special allowance, reduced 50% for every dollar of MAGI
+    over $100,000 and fully phased out at $150,000 (Form 8582 Part II)."""
+    return round(max(0.0, min(25000.0, 25000.0 - max(0.0, float(magi or 0) - 100000.0) * 0.5)), 2)
+
+
+@router.get("/analysis/form-8582")
+def form_8582(
+    tax_year: Optional[int] = None,
+    magi: float = 0.0,
+    selected_property_ids: str = "",
+    selection_explicit: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Form 8582 passive activity loss limitation for the rental portfolio.
+
+    All computation is server-side: per-property Schedule E net by rental year
+    (rental-period and partial-year aware, sourced from the lifetime builder),
+    a year-over-year roll-forward of suspended losses against the special
+    allowance, and a per-property allocation of the allowed loss for the
+    selected year. Planning estimate — active participation is assumed.
+    """
+    own_props = db.query(models.Property).filter(models.Property.owner_id == current_user.id).all()
+    shared_owner_ids = [
+        share.owner_id
+        for share in db.query(models.UserSharing).filter(models.UserSharing.shared_with_id == current_user.id).all()
+    ]
+    shared_props = (
+        db.query(models.Property).filter(models.Property.owner_id.in_(shared_owner_ids)).all()
+        if shared_owner_ids else []
+    )
+    all_props = own_props + shared_props
+    requested_ids = {int(item) for item in (selected_property_ids or "").split(",") if item.strip().isdigit()}
+    if requested_ids or selection_explicit:
+        props = [p for p in all_props if p.id in requested_ids]
+    else:
+        props = [p for p in all_props if str(p.usage_type or "Rental").lower() != "primary"]
+
+    # Per-property Schedule E net and rented months by rental year.
+    net_by: Dict[int, Dict[int, float]] = {}
+    months_by: Dict[int, Dict[int, float]] = {}
+    names: Dict[int, Dict[str, Any]] = {}
+    years: set = set()
+    for prop in props:
+        if str(prop.usage_type or "Rental").lower() == "primary":
+            continue
+        try:
+            life = get_lifetime_summary(prop.id, db, current_user)
+        except Exception:
+            continue
+        names[prop.id] = {
+            "propertyId": prop.id,
+            "propertyName": prop.name or _default_property_name(prop.address, prop.id),
+            "location": ", ".join(str(x) for x in (prop.city, prop.state) if x),
+        }
+        yearly_by_year = {int(row["year"]): row for row in (life.get("yearly") or []) if row.get("year")}
+        # Authoritative rental gate: only years the property was actually rented,
+        # with partial (mid-year) months, from usage/lease periods or the
+        # always-rental fallback.
+        for yr, months in _rental_months_by_year(prop).items():
+            if not months or months <= 0:
+                continue
+            yr = int(yr)
+            row = yearly_by_year.get(yr)
+            net_by.setdefault(prop.id, {})[yr] = _schedule_e_number(row.get("taxable_income")) if row else 0.0
+            months_by.setdefault(prop.id, {})[yr] = round(float(months), 1)
+            years.add(yr)
+
+    years_sorted = sorted(years)
+    allowance = _special_allowance(magi)
+    current_year = date.today().year
+
+    # Year-over-year roll-forward of suspended losses against the allowance.
+    carry = 0.0
+    carry_in_by_year: Dict[int, float] = {}
+    series: List[Dict[str, Any]] = []
+    for yr in years_sorted:
+        carry_in_by_year[yr] = round(carry, 2)
+        current = sum(min(0.0, net_by.get(pid, {}).get(yr, 0.0)) for pid in net_by)
+        total = current + carry
+        allowed = min(abs(total), allowance)
+        carry = total + allowed
+        series.append({
+            "year": yr,
+            "currentLoss": round(current, 2),
+            "specialAllowance": allowance,
+            "allowed": round(allowed, 2),
+            "carryforward": round(carry, 2),
+        })
+
+    ty = int(tax_year) if tax_year else (years_sorted[-1] if years_sorted else current_year)
+    carry_in = carry_in_by_year.get(ty, 0.0)
+    prior_by_prop = {
+        pid: sum(min(0.0, yrs.get(y, 0.0)) for y in years_sorted if y < ty)
+        for pid, yrs in net_by.items()
+    }
+    prior_total = sum(prior_by_prop.values())
+    cur_by_prop = {pid: min(0.0, net_by.get(pid, {}).get(ty, 0.0)) for pid in net_by}
+    cur_total = sum(cur_by_prop.values())
+    total_all = cur_total + carry_in
+    allowed_all = min(abs(total_all), allowance)
+    carry_all = total_all + allowed_all
+
+    rows: List[Dict[str, Any]] = []
+    for pid in net_by:
+        prior_alloc = (carry_in * (prior_by_prop[pid] / prior_total)) if prior_total else 0.0
+        prop_total = cur_by_prop[pid] + prior_alloc
+        alloc = (allowed_all * (prop_total / total_all)) if total_all else 0.0
+        if prop_total == 0 and cur_by_prop[pid] == 0:
+            continue
+        rows.append({
+            **names.get(pid, {"propertyId": pid, "propertyName": f"Property {pid}", "location": ""}),
+            "currentLoss": round(cur_by_prop[pid], 2),
+            "priorUnallowed": round(prior_alloc, 2),
+            "totalLoss": round(prop_total, 2),
+            "allowed": round(alloc, 2),
+            "carryforward": round(prop_total + alloc, 2),
+            "rentalMonths": months_by.get(pid, {}).get(ty, 12),
+        })
+    rows.sort(key=lambda r: r["totalLoss"])
+
+    return {
+        "schemaVersion": "form-8582-v1",
+        "taxYear": ty,
+        "magi": round(float(magi or 0), 2),
+        "specialAllowance": allowance,
+        "availableYears": sorted(years_sorted, reverse=True),
+        "rows": rows,
+        "series": series,
+        "totals": {
+            "passiveLossThisYear": round(cur_total, 2),
+            "priorCarryforward": round(carry_in, 2),
+            "totalLoss": round(total_all, 2),
+            "allowedThisYear": round(allowed_all, 2),
+            "carryforwardToNext": round(carry_all, 2),
+        },
+        "assumptions": {
+            "specialAllowanceCap": 25000.0,
+            "phaseoutStart": 100000.0,
+            "phaseoutEnd": 150000.0,
+            "activeParticipation": True,
+            "label": "Planning estimate — active participation assumed",
+            "status": "ESTIMATED",
+        },
+    }
 
 
 # Deterministic per-home accent index (must match HOME_ACCENTS length in the UI),
