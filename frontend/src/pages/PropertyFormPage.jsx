@@ -1501,6 +1501,8 @@ export default function PropertyFormPage() {
       if (normalizedHomeType === 'other' && !String(form.property_type_raw || '').trim()) next.property_type_raw = 'Describe the home type.'
       if (toNumber(form.purchase_price) < 0) next.purchase_price = 'Purchase price cannot be negative.'
       if (toNumber(form.market_value) < 0) next.market_value = 'Market Price cannot be negative.'
+      if (toNumber(form.land_value) < 0) next.land_value = 'Land value cannot be negative.'
+      if (toNumber(form.land_value) > toNumber(form.purchase_price) && toNumber(form.purchase_price) > 0) next.land_value = 'Land value cannot exceed the purchase price.'
       if (form.purchase_date && Number.isNaN(Date.parse(form.purchase_date))) next.purchase_date = 'Enter a valid purchase date.'
       if (form.market_value_updated && Number.isNaN(Date.parse(form.market_value_updated))) next.market_value_updated = 'Enter a valid valuation date.'
       if (
@@ -3048,6 +3050,14 @@ export default function PropertyFormPage() {
 	              : 'Combined closing and title costs. A linked settlement statement supplies the backend-calculated breakdown.'}
 	            source={settlementSources.settlement_accounting_total || settlementSources.closing_costs}
 	          />
+              <MoneyInput
+                fieldKey="land_value"
+                label="Land value"
+                value={form.land_value}
+                onChange={(value) => setField('land_value', value, 'property')}
+                error={errors.land_value}
+                helper="Portion of the purchase price allocated to land (not depreciable). Leave blank to default to 25% of the purchase price."
+              />
               <ReadOnlyMoneyField
                 fieldKey="settlement_total_amount"
                 label="Settlement accounting total"

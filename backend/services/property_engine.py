@@ -383,7 +383,10 @@ class PropertyEngine:
         if self.usage_type(year) == "PRIMARY":
             return {"applicable": False, "amount": None, "source": "engine"}
         price = float(getattr(self.prop, "purchase_price", 0) or 0)
-        land = float(getattr(self.prop, "land_value", 0) or 0)
+        # Entered land value, or a 25% default when land wasn't broken out, so we
+        # never depreciate the whole purchase price.
+        _entered_land = float(getattr(self.prop, "land_value", 0) or 0)
+        land = _entered_land if _entered_land > 0 else round(price * 0.25, 2)
         basis = max(0.0, price - land)
         years = float(getattr(self.prop, "depreciation_years", 27.5) or 27.5)
         full_year = basis / years if basis > 0 and years > 0 else 0.0
@@ -404,7 +407,7 @@ class PropertyEngine:
         else:
             month_factor = 0.0
         amount = full_year * month_factor
-        warning = "land not split / basis may be overstated" if land <= 0 and price > 0 else None
+        warning = "land value not entered — using 25% default allocation" if _entered_land <= 0 and price > 0 else None
         return {
             "applicable": True,
             "basis": round(basis, 2),

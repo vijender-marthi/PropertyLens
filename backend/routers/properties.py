@@ -861,7 +861,7 @@ def _usage_days_by_year(prop: models.Property) -> Dict[int, Dict[str, int]]:
 
 
 def _active_rental_conversion_basis(prop: models.Property) -> Optional[float]:
-    purchase_basis = (getattr(prop, "purchase_price", 0) or 0) - (getattr(prop, "land_value", 0) or 0)
+    purchase_basis = (getattr(prop, "purchase_price", 0) or 0) - _effective_land_value(prop)
     purchase_basis += getattr(prop, "closing_costs", 0) or 0
     periods = _timeline_periods(prop)
     previous_type = None
@@ -899,6 +899,27 @@ def _usage_summary(prop: models.Property) -> Dict[str, Any]:
     }
 
 
+# Default share of the purchase price allocated to (non-depreciable) land when
+# the user hasn't entered a land value. A 25% land / 75% building split is a
+# common convention that keeps us from depreciating the whole price.
+DEFAULT_LAND_ALLOCATION = 0.25
+
+
+def _effective_land_value(prop) -> float:
+    """Land portion of the purchase, excluded from depreciation.
+
+    Uses the entered land value when it's a positive number; otherwise defaults
+    to 25% of the purchase price so we never depreciate land that simply wasn't
+    broken out. Kept in one place so the depreciable-basis calc and the
+    Depreciation schedule agree.
+    """
+    entered = getattr(prop, "land_value", 0) or 0
+    if entered and entered > 0:
+        return float(entered)
+    purchase_price = getattr(prop, "purchase_price", 0) or 0
+    return round(float(purchase_price) * DEFAULT_LAND_ALLOCATION, 2)
+
+
 def _depreciable_basis(prop) -> float:
     conversion_basis = _active_rental_conversion_basis(prop)
     if conversion_basis and conversion_basis > 0:
@@ -910,9 +931,10 @@ def _depreciable_basis(prop) -> float:
     if construction_price > 0:
         return construction_price + closing_costs
     # Total cost (purchase price + closing costs) less the non-depreciable land
-    # portion. Mirrors the Depreciation section so both agree.
+    # portion (entered, or a 25% default). Mirrors the Depreciation section so
+    # both agree.
     purchase_price = getattr(prop, "purchase_price", 0) or 0
-    land_value = getattr(prop, "land_value", 0) or 0
+    land_value = _effective_land_value(prop)
     return max((purchase_price + closing_costs) - land_value, 0.0)
 
 
@@ -3156,7 +3178,8 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
     currently_rental = _is_currently_rental(prop)
     purchase_price = float(prop.purchase_price or 0.0)
     closing_costs = float(prop.closing_costs or 0.0)
-    land_value = float(prop.land_value or 0.0)
+    # Entered land value, or a 25% default when the user hasn't broken land out.
+    land_value = _effective_land_value(prop)
     # Closing costs are capitalized into the property's cost basis, so the
     # depreciable amount is (purchase price + closing costs) less land value.
     total_cost = purchase_price + closing_costs
@@ -3172,11 +3195,15 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
             "description": "Building",
             "placed_in_service_date": base_placed,
             "cost_basis": total_cost,
-            "land_portion": (prop.land_value or 0.0),
+            "land_portion": land_value,
             "method": "SL",
             "recovery_period": prop.depreciation_years or 27.5,
             "prior_depreciation": 0.0,
-            "notes": "Derived from purchase price plus closing costs, less land value.",
+            "notes": (
+                "Derived from purchase price plus closing costs, less land value."
+                if (prop.land_value or 0) > 0
+                else "Derived from purchase price plus closing costs, less a 25% default land allocation (no land value entered)."
+            ),
         }, prop, tax_year, currently_rental, True))
 
     for row in prop.depreciation_assets:
@@ -3273,7 +3300,7 @@ def _depreciation_schedule_payload(prop, tax_year: Optional[int] = None) -> Dict
         if a["asset_type"] == "depreciation" and a.get("fully_depreciated_date")
     ]
     land_warning = (
-        "enter land value"
+        "Using a 25% land default — enter the actual land value to refine depreciation."
         if base_basis > 0 and not (prop.land_value or 0)
         else None
     )
@@ -9444,7 +9471,7 @@ def get_schedule_e_capture(
     if filed_entry:
         net_delta = _schedule_e_number(computed.get("net_income", 0) - _schedule_e_number(filed_entry.net_income))
     depreciable_basis = max(
-        float(prop.purchase_price or 0) + float(prop.closing_costs or 0) - float(prop.land_value or 0),
+        float(prop.purchase_price or 0) + float(prop.closing_costs or 0) - _effective_land_value(prop),
         0.0,
     )
     full_rental_rows = [

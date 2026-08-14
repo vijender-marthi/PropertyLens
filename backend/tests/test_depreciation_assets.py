@@ -86,16 +86,20 @@ def test_depreciation_spec_assertions_for_multi_year_residential_rental(client, 
 
     assert resp.status_code == 200
     data = resp.json()
-    annual = round(625_000 / 27.5, 2)
+    # No land value entered, so the depreciable basis defaults to 75% of the
+    # purchase price (25% land allocation).
+    building_basis = round(625_000 * 0.75, 2)
+    annual = round(building_basis / 27.5, 2)
     first_year = round(annual * 7.5 / 12, 2)
     expected_accumulated = round(first_year + annual * 3, 2)
     building = next(a for a in data["assets"] if a["description"] == "Building")
+    assert building["depreciable_basis"] == pytest.approx(building_basis, abs=0.01)
     assert building["annual_depreciation"] == pytest.approx(annual, abs=0.01)
     assert data["hero"]["currentYearDeduction"]["value"] == pytest.approx(annual, abs=0.01)
     assert building["accumulated_depreciation"] == pytest.approx(expected_accumulated, abs=0.01)
     assert data["hero"]["accumulatedDepreciation"]["value"] == pytest.approx(expected_accumulated, abs=0.01)
     assert data["hero"]["recaptureAtSale"]["value"] == pytest.approx(expected_accumulated * 0.25, abs=0.01)
-    assert data["hero"]["remainingBasis"]["value"] == pytest.approx(625_000 - expected_accumulated, abs=0.01)
+    assert data["hero"]["remainingBasis"]["value"] == pytest.approx(building_basis - expected_accumulated, abs=0.01)
     timeline_by_year = {row["year"]: row for row in data["timeline"]}
     assert timeline_by_year[2023]["Building"] == pytest.approx(first_year, abs=0.01)
     assert timeline_by_year[2024]["Building"] == pytest.approx(annual, abs=0.01)
@@ -103,7 +107,7 @@ def test_depreciation_spec_assertions_for_multi_year_residential_rental(client, 
     assert timeline_by_year[2026]["Building"] == pytest.approx(annual, abs=0.01)
     assert timeline_by_year[2051]["Building"] == pytest.approx(0, abs=0.01)
     assert all(assertion["passed"] for key, assertion in data["assertions"].items() if key != "A7")
-    assert "enter land value" in data["flags"]
+    assert any("land" in str(flag).lower() for flag in data["flags"])
 
 
 def test_improvement_timeline_starts_in_service_year_as_stacked_segment(client, db, user):

@@ -159,8 +159,9 @@ def test_golden_rental_expected_outputs():
 def test_golden_rental_negative_edges():
     no_land = _property(land_value=0.0)
     no_land_dep = build_property_engine(no_land, as_of=__import__("datetime").date(2024, 12, 31)).depreciation(2024)
-    assert no_land_dep["basis"] == pytest.approx(500_000, abs=2)
-    assert "land not split" in no_land_dep["warning"]
+    # No land entered → default 25% land allocation, so basis is 75% of price.
+    assert no_land_dep["basis"] == pytest.approx(375_000, abs=2)
+    assert "25% default" in no_land_dep["warning"]
 
     no_down = _property(down_payment=None)
     cash_on_cash = None if no_down.down_payment is None else -4_178.35 / (no_down.down_payment + no_down.closing_costs) * 100
