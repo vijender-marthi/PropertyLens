@@ -1141,11 +1141,11 @@ function OverviewTab({ model, group, yearLabel, selectedYear, controls }) {
       <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Tax year and grouping apply to this table" action={controls}>
         <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
       </Panel>
+      <SinglePropertyChart model={model} />
       <div className="grid gap-5 lg:grid-cols-2">
         <MatrixWidget title="Property taxes" kind="tax" icon={ReceiptText} data={model.propertyTaxByYear} years={model.years} selectedYear={selectedYear} />
         <MatrixWidget title="Insurance" kind="insurance" icon={Umbrella} data={model.insuranceByYear} years={model.years} selectedYear={selectedYear} />
       </div>
-      <SinglePropertyChart model={model} />
     </div>
   )
 }
