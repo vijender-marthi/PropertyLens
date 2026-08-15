@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { AlertTriangle, ArrowRight, CheckCircle2, Info } from 'lucide-react'
 import AuditAlerts from '../components/AuditAlerts'
 import PageContainer from '../components/PageContainer'
+import { HomeTimeline, PropertyFilter } from '../components/PortfolioEquityDashboard'
 import { propAPI } from '../services/api'
 import { formatCurrency, formatCurrencyCompact } from '../utils/formatters'
 
@@ -44,29 +45,36 @@ function monthsUntil(iso) {
 export default function LoansPage() {
   const [loading, setLoading] = useState(true)
   const [analysis, setAnalysis] = useState(null)
-  const [propertyFilter, setPropertyFilter] = useState('all')
+  const [available, setAvailable] = useState([])
+  const [selectedIds, setSelectedIds] = useState(new Set())
   const navigate = useNavigate()
+
+  const selectedKey = useMemo(() => Array.from(selectedIds).sort((a, b) => a - b).join(','), [selectedIds])
+  const allSelected = available.length > 0 && selectedIds.size === available.length
+  const filtered = available.length > 0 && !allSelected && selectedIds.size > 0
+
+  useEffect(() => {
+    propAPI.portfolioEquityCashflow({})
+      .then((r) => { const a = r.data?.availableProperties || []; setAvailable(a); setSelectedIds(new Set(a.map((p) => p.id))) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    propAPI.portfolioAnalysis({
-      selected_property_ids: propertyFilter === 'all' ? '' : propertyFilter,
-      selection_explicit: propertyFilter !== 'all',
-      include_primary_residence: true,
-      loan_status: 'Active',
-    }, { signal: controller.signal })
+    const params = { include_primary_residence: true, loan_status: 'Active' }
+    if (filtered) { params.selected_property_ids = selectedKey; params.selection_explicit = true }
+    propAPI.portfolioAnalysis(params, { signal: controller.signal })
       .then((r) => setAnalysis(r.data || null))
       .catch((e) => { if (e?.code !== 'ERR_CANCELED') toast.error('Failed to load loans') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [propertyFilter])
+  }, [selectedKey, allSelected])
 
   if (loading && !analysis) {
     return <PageContainer><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" /></div></PageContainer>
   }
 
-  const properties = analysis?.filterContext?.availableProperties || []
   const kpis = analysis?.loans?.kpis || {}
   const rows = (analysis?.loans?.allRows || []).filter((r) => r.status === 'Active' && num(r.balance) > 0)
 
@@ -97,20 +105,23 @@ export default function LoansPage() {
   return (
     <PageContainer className="max-w-[80rem]">
       <div className="space-y-1">
-        <div className="flex flex-wrap items-end justify-between gap-4 pb-2">
+        <div className="flex flex-wrap items-start justify-between gap-4 pb-1">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Loans</h1>
             <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">Your debt as a story — what happened, what's going on, and what's coming.</p>
           </div>
           <div className="flex items-center gap-2">
-            <select value={propertyFilter} onChange={(e) => setPropertyFilter(e.target.value)}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-white">
-              <option value="all">All properties</option>
-              {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            {available.length > 1 ? <PropertyFilter properties={available} selectedIds={selectedIds} setSelectedIds={setSelectedIds} /> : null}
             <AuditAlerts model={analysis?.taxCenter} onCta={() => navigate('/tax-center')} />
           </div>
         </div>
+
+        {available.length > 1 ? (
+          <HomeTimeline rows={available} selectedIds={selectedIds} onSelect={(home, additive) => setSelectedIds((cur) => {
+            if (additive) { const n = new Set(cur); if (n.has(home.id)) n.delete(home.id); else n.add(home.id); return n.size ? n : new Set(available.map((p) => p.id)) }
+            return cur.size === 1 && cur.has(home.id) ? new Set(available.map((p) => p.id)) : new Set([home.id])
+          })} />
+        ) : null}
 
         {/* PAST */}
         <section className="pt-4">
