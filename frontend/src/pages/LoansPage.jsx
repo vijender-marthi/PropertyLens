@@ -114,7 +114,7 @@ export default function LoansPage() {
   const progressRows = [...rows].sort((a, b) => num(b.paidPercent) - num(a.paidPercent))
 
   return (
-    <PageContainer className="max-w-[80rem]">
+    <PageContainer>
       <div className="space-y-1">
         <div className="flex flex-wrap items-start justify-between gap-4 pb-1">
           <div>

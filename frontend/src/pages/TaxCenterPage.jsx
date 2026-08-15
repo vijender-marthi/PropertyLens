@@ -956,7 +956,7 @@ function DeductionSummary({ model, group, yearLabel, selectedYear }) {
       <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
         <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
-            <tr><th className="px-4 py-3 text-left">Tax year</th><th className="px-4 py-3 text-right">Total ded.</th><th className="px-4 py-3 text-right">Depreciation</th><th className="px-4 py-3 text-right">Interest</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Operating</th><th className="px-4 py-3 text-right bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">Income</th><th className="px-4 py-3 text-right">Taxable inc.</th></tr>
+            <tr><th className="px-4 py-3 text-left">Tax year</th><th className="px-4 py-3 text-right">Total ded.</th><th className="px-4 py-3 text-right">Depreciation</th><th className="px-4 py-3 text-right">Interest</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Operating</th><th className="border-l border-gray-200 px-4 py-3 text-right text-blue-700 dark:border-neutral-800 dark:text-blue-300">Income</th><th className="px-4 py-3 text-right">Taxable inc.</th></tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white tabular-nums dark:divide-neutral-800 dark:bg-neutral-900">
             {rows.map((r) => (
@@ -967,7 +967,7 @@ function DeductionSummary({ model, group, yearLabel, selectedYear }) {
                 <td className="px-4 py-3 text-right">{money(r.mortgageInterest)}</td>
                 <td className="px-4 py-3 text-right">{money(r.propertyTax)}</td>
                 <td className="px-4 py-3 text-right">{money(r.operatingExpenses)}</td>
-                <td className="px-4 py-3 text-right bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">{money(r.rentalIncome)}</td>
+                <td className="border-l border-gray-200 px-4 py-3 text-right font-semibold text-blue-700 dark:border-neutral-800 dark:text-blue-300">{money(r.rentalIncome)}</td>
                 <td className={`px-4 py-3 text-right font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(r.taxableIncome)}</td>
               </tr>
             ))}
@@ -1526,7 +1526,7 @@ export default function TaxCenterPage() {
   }
 
   return (
-    <PageContainer className="max-w-[80rem]">
+    <PageContainer>
       <HomeAccentProvider available={available}>
       <div className="space-y-5">
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-neutral-800 lg:flex-row lg:items-start lg:justify-between">

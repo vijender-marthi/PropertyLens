@@ -154,7 +154,7 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <PageContainer className="max-w-[80rem]">
+    <PageContainer>
       <div className="space-y-1">
         <div className="flex flex-wrap items-start justify-between gap-4 pb-1">
           <div>

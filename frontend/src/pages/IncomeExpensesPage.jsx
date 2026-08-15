@@ -85,7 +85,7 @@ export default function IncomeExpensesPage() {
   const totals = rows.reduce((a, r) => ({ income: a.income + num(r.income), op: a.op + num(r.operatingExpenses), debt: a.debt + num(r.debtService), cf: a.cf + num(r.cashFlow) }), { income: 0, op: 0, debt: 0, cf: 0 })
 
   return (
-    <PageContainer className="max-w-[80rem]">
+    <PageContainer>
       <HomeAccentProvider available={available}>
       <div className="space-y-1">
         <div className="flex flex-wrap items-start justify-between gap-4 pb-1">
