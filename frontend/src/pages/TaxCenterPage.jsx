@@ -842,20 +842,41 @@ const METRIC_ICON_TONE = {
   red: 'text-red-600 dark:text-red-300',
   gray: 'text-gray-500 dark:text-neutral-400',
 }
-function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = false, valueClass = '', formula }) {
+// Small SVG doughnut for embedding inside a metric card. Segments are drawn as
+// dasharray arcs on stacked circles; values need not be pre-normalized.
+function Doughnut({ segments, size = 54, stroke = 9 }) {
+  const total = segments.reduce((s, x) => s + Math.max(x.value, 0), 0) || 1
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  let offset = 0
   return (
-    <div className={`relative rounded-xl border p-4 shadow-sm ${hero ? 'border-2 border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0" role="img" aria-label="Rent composition">
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-gray-100 dark:stroke-neutral-800" />
+        {segments.map((s, i) => {
+          const len = (Math.max(s.value, 0) / total) * c
+          const el = <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={stroke} strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-offset} />
+          offset += len
+          return el
+        })}
+      </g>
+    </svg>
+  )
+}
+function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = false, valueClass = '', formula, chart }) {
+  return (
+    <div className={`group relative rounded-xl border p-4 shadow-sm ${formula ? 'cursor-help' : ''} ${hero ? 'border-2 border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
       <div className="flex items-start justify-between gap-2">
-        <div className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide ${hero ? 'text-emerald-700 dark:text-emerald-300' : METRIC_ICON_TONE[tone]}`}><Icon className="h-4 w-4" />{label}</div>
-        {formula ? (
-          <span className="group relative shrink-0">
-            <Info className="h-3.5 w-3.5 cursor-help text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200" />
-            <span className="pointer-events-none absolute right-0 top-6 z-30 hidden w-60 whitespace-pre-line rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed text-gray-600 shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">{formula}</span>
-          </span>
-        ) : null}
+        <div className="min-w-0">
+          <div className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide ${hero ? 'text-emerald-700 dark:text-emerald-300' : METRIC_ICON_TONE[tone]}`}><Icon className="h-4 w-4" />{label}</div>
+          <p className={`mt-2 font-semibold tracking-tight ${hero ? 'text-3xl text-emerald-700 dark:text-emerald-200' : `text-2xl ${valueClass || 'text-gray-950 dark:text-white'}`}`}>{value}</p>
+          <p className={`mt-1 text-xs ${hero ? 'text-emerald-700/80 dark:text-emerald-300/80' : 'text-gray-500 dark:text-neutral-400'}`}>{note}</p>
+        </div>
+        {chart ? <div className="mt-0.5 shrink-0">{chart}</div> : null}
       </div>
-      <p className={`mt-2 font-semibold tracking-tight ${hero ? 'text-3xl text-emerald-700 dark:text-emerald-200' : `text-2xl ${valueClass || 'text-gray-950 dark:text-white'}`}`}>{value}</p>
-      <p className={`mt-1 text-xs ${hero ? 'text-emerald-700/80 dark:text-emerald-300/80' : 'text-gray-500 dark:text-neutral-400'}`}>{note}</p>
+      {formula ? (
+        <span className="pointer-events-none absolute left-0 right-0 top-full z-30 mt-1 hidden whitespace-pre-line rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed text-gray-600 shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">{formula}</span>
+      ) : null}
     </div>
   )
 }
@@ -876,6 +897,16 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
   const passiveLoss = used + suspended
   const depPct = deductions ? Math.round((depreciation / deductions) * 100) : 0
   const yrs = scopeLabel || 'your rental years'
+  // What happens to each rent dollar — the three slices always sum to rents:
+  // sheltered by depreciation, sheltered by cash deductions, then taxable kept.
+  const depSheltered = Math.min(depreciation, rents)
+  const cashSheltered = Math.min(cashDeductions, Math.max(rents - depreciation, 0))
+  const taxableKept = Math.max(rents - deductions, 0)
+  const rentSegments = [
+    { value: depSheltered, color: '#f59e0b', label: 'Sheltered by depreciation' },
+    { value: cashSheltered, color: '#a855f7', label: 'Sheltered by cash deductions' },
+    { value: taxableKept, color: '#10b981', label: 'Taxable income kept' },
+  ]
 
   return (
     <div className="space-y-4">
@@ -904,14 +935,15 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
           </div>
         </div>
         <p className="mt-4 flex items-center gap-1.5 border-t border-gray-100 pt-3 text-xs text-gray-400 dark:border-neutral-800 dark:text-neutral-500">
-          <Info className="h-3.5 w-3.5 shrink-0" /> The flow below reads left to right — rent in, deductions out, what's taxable, what it saves. Hover any <Info className="inline h-3 w-3 align-text-bottom" /> for its formula, or use the tabs to drill into a single year or property.
+          <Info className="h-3.5 w-3.5 shrink-0" /> The flow below reads left to right — rent in, deductions out, what's taxable, what it saves. Hover any card for its formula, or use the tabs to drill into a single year or property.
         </p>
       </div>
 
       {/* The flow: Rent → Deductions → Taxable → Savings → Suspended */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard icon={Wallet} tone="blue" label="Rent collected" value={compact(rents)} note={`gross rents · ${yrs}`}
-          formula={'Total rents received across all rental years — the top line of Schedule E, before any deductions.'} />
+          chart={<Doughnut segments={rentSegments} />}
+          formula={'Total rents received across all rental years — the top line of Schedule E, before any deductions.\n\nThe ring shows what happened to that rent: amber = sheltered by depreciation, purple = sheltered by cash deductions, green = taxable income kept. A full amber+purple ring means deductions absorbed all of it.'} />
         <MetricCard icon={ReceiptText} tone="purple" label="Total deductions" value={compact(deductions)} note={`incl. ${compact(depreciation)} depreciation`}
           formula={'Every deductible Schedule E expense — operating costs + mortgage interest + property tax + depreciation — summed across all rental years.'} />
         <MetricCard icon={FileSpreadsheet} tone={isLoss ? 'red' : 'gray'} label="Net taxable income" value={compact(taxable)} valueClass={isLoss ? 'text-red-600 dark:text-red-300' : ''} note={isLoss ? 'a passive loss on paper' : 'rent − deductions'}
@@ -1555,13 +1587,13 @@ export default function TaxCenterPage() {
           />
         ) : null}
 
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} throughYear={bankedYear} /> : null}
+
         <nav className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-neutral-800" aria-label="Tax center views">
           {TAX_TABS.map((name) => (
             <button key={name} type="button" onClick={() => setTab(name)} className={`min-w-max border-b-2 px-4 py-3 text-sm font-medium ${tab === name ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-100'}`}>{name}</button>
           ))}
         </nav>
-
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} throughYear={bankedYear} /> : null}
 
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (
