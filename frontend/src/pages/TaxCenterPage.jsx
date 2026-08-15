@@ -773,6 +773,9 @@ function TaxCenterPageLegacy() {
 const mnum = (x) => (x && typeof x === 'object' ? (x.value ?? 0) : (x ?? 0))
 const mdisp = (x) => (x && typeof x === 'object' ? (x.display ?? money(x.value)) : money(x))
 const heroCompact = (v) => formatCurrencyCompact(v, { threshold: 1_000, kDigits: 1, mDigits: 2 })
+// Subdued dusty-rose for loss / carryforward series — softer than the bright danger red.
+const LOSS_TONE = '#c98a8a'
+const LOSS_TONE_FILL = '#e7c4c4'
 
 function Segmented({ value, onChange, options }) {
   return (
@@ -927,7 +930,17 @@ function DeductionSummary({ model, group, yearLabel, selectedYear }) {
       </div>
     )
   }
-  return <DeductionTable rows={model.rows || []} />
+  // By property: 'all' uses the backend lifetime rows; a specific year pulls
+  // that year's per-property figures from the ledger (backend-computed).
+  let rows = model.rows || []
+  if (selectedYear !== 'all') {
+    const y = String(selectedYear)
+    rows = (model.propertyLedger || [])
+      .map((p) => { const d = (p.byYear || {})[y]; return d ? { propertyId: p.propertyId, propertyName: p.propertyName, location: p.location, ...d } : null })
+      .filter(Boolean)
+  }
+  if (!rows.length) return <EmptyState text={`No deductions for ${selectedYear === 'all' ? 'this scope' : selectedYear}.`} />
+  return <DeductionTable rows={rows} />
 }
 
 // ---- Property financials ledger (expandable) --------------------------------
@@ -1071,11 +1084,11 @@ function SinglePropertyChart({ model }) {
   const interestData = withData.map((y) => ({ year: String(y), interest: (prop.byYear[String(y)] || {}).mortgageInterest || 0 }))
   let cum = 0
   const lossData = withData.map((y) => { cum += Math.min(0, (prop.byYear[String(y)] || {}).taxableIncome || 0); return { year: String(y), carryforward: Math.round(cum) } })
-  const lossColor = chartColors.dangerStrong || chartColors.warningStrong
+  const lossColor = LOSS_TONE
 
   return (
     <Panel title="Single-property view" subtitle="Depreciation basis, mortgage interest, and passive-loss carryforward" action={selector}>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div key={prop.propertyId} className="grid gap-4 lg:grid-cols-3">
         {/* Depreciation & basis */}
         <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
           <div className="mb-2 flex items-center justify-between">
@@ -1131,10 +1144,10 @@ function SinglePropertyChart({ model }) {
 }
 
 // ---- Overview tab -----------------------------------------------------------
-function OverviewTab({ model, group, yearLabel, selectedYear }) {
+function OverviewTab({ model, group, yearLabel, selectedYear, controls }) {
   return (
     <div className="space-y-5">
-      <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="One row per property or year — the year/group toggle drives this">
+      <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Tax year and grouping apply to this table" action={controls}>
         <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
       </Panel>
       <div className="grid gap-5 lg:grid-cols-2">
@@ -1154,11 +1167,8 @@ function TaxTimeline() {
     return () => { active = false }
   }, [])
   if (available.length <= 1) return null
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white px-4 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <HomeTimeline rows={available} selectedIds={new Set()} onSelect={() => {}} hint="Acquisition timeline" />
-    </div>
-  )
+  // Embedded in the page — no card, transparent background.
+  return <HomeTimeline rows={available} selectedIds={new Set()} onSelect={() => {}} hint="Acquisition timeline" />
 }
 
 // ---- Schedule E tab ---------------------------------------------------------
@@ -1384,7 +1394,7 @@ function Form8582Tab({ selectedPropertyIds }) {
                   <Tooltip formatter={(v, n) => [money(v), n === 'carryforward' ? 'Carryforward balance' : 'Allowed that year']} contentStyle={chartTooltipStyle(false)} />
                   <ReferenceLine y={0} stroke={chartColors.neutral} />
                   <Legend />
-                  <Bar dataKey="carryforward" name="Carryforward balance" fill={chartColors.dangerStrong || chartColors.warningStrong} radius={[0, 0, 4, 4]} />
+                  <Bar dataKey="carryforward" name="Carryforward balance" fill={LOSS_TONE} fillOpacity={0.85} radius={[0, 0, 4, 4]} />
                   <Line type="monotone" dataKey="allowed" name="Allowed that year" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -1409,18 +1419,30 @@ export default function TaxCenterPage() {
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
-    propAPI.portfolioAnalysis({ tax_year: isAll ? undefined : year, all_years: isAll, include_primary_residence: false }, { signal: controller.signal })
+    // Always fetch the full (all-years) picture — the tax-year filter below is
+    // local to the Deduction summary table, computed from per-year data.
+    propAPI.portfolioAnalysis({ all_years: true, include_primary_residence: false }, { signal: controller.signal })
       .then((r) => setAnalysis(r.data || null))
       .catch((e) => { if (e?.code !== 'ERR_CANCELED') toast.error('Failed to load tax center') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [year])
+  }, [])
 
   const model = analysis?.taxCenter || { rows: [], byYear: [], propertyLedger: [], totals: {}, categories: [], trend: [], assumptions: {}, years: [], availableYears: [] }
   const properties = analysis?.properties || []
-  const availableYears = model.availableYears?.length ? model.availableYears : []
+  const dedYears = (model.years || []).slice().reverse()
   const yearLabel = isAll ? 'All years' : year
-  const showGlobalBar = tab === 'Overview' || tab === 'Deduction Summary'
+
+  // Tax year + grouping — scoped to the Deduction summary, rendered in its header.
+  const deductionControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <select className={selectCls} value={isAll ? 'all' : year} onChange={(e) => setYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
+        <option value="all">All years</option>
+        {dedYears.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+      <Segmented value={group} onChange={setGroup} options={[{ value: 'property', label: 'Property' }, { value: 'year', label: 'Year' }]} />
+    </div>
+  )
 
   if (loading && !analysis) {
     return <PageContainer><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" /></div></PageContainer>
@@ -1445,20 +1467,12 @@ export default function TaxCenterPage() {
           ))}
         </nav>
 
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={isAll ? 'Lifetime · all years' : `Tax year ${year}`} /> : null}
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel="Lifetime · all years" /> : null}
 
-        {showGlobalBar ? (
-          <Toolbar>
-            <Field label="Tax year"><select className={selectCls} value={isAll ? 'all' : year} onChange={(e) => setYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}><option value="all">All years</option>{availableYears.map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
-            <Field label="Group by"><Segmented value={group} onChange={setGroup} options={[{ value: 'property', label: 'Property' }, { value: 'year', label: 'Year' }]} /></Field>
-            <span className="ml-auto text-xs text-gray-500 dark:text-neutral-400">Showing {isAll ? 'all years combined' : `tax year ${year}`} · {properties.filter((p) => !p.isPrimary).length} rentals</span>
-          </Toolbar>
-        ) : null}
-
-        {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} onGoto={setTab} /> : null}
+        {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (
           <div className="space-y-5">
-            <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Export-ready, one row per property or year">
+            <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Tax year and grouping apply to this table" action={deductionControls}>
               <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={year} />
             </Panel>
             <Panel title="Deduction details" subtitle="Click a property to expand its taxes, insurance, and operating costs over time">
