@@ -938,6 +938,27 @@ def _depreciable_basis(prop) -> float:
     return max((purchase_price + closing_costs) - land_value, 0.0)
 
 
+def _property_depreciation_summary(prop) -> Dict[str, Any]:
+    """Static depreciation inputs for the single-property view. Accumulated /
+    remaining / recapture are finished off in the tax service from the actual
+    per-rental-year depreciation."""
+    purchase = float(getattr(prop, "purchase_price", 0) or 0)
+    closing = float(getattr(prop, "closing_costs", 0) or 0)
+    land = _effective_land_value(prop)
+    basis = _depreciable_basis(prop)
+    years = float(getattr(prop, "depreciation_years", 27.5) or 27.5)
+    annual = round(basis / years, 2) if basis > 0 and years else 0.0
+    return {
+        "purchasePrice": round(purchase, 2),
+        "closingCosts": round(closing, 2),
+        "landValue": round(land, 2),
+        "landDefaulted": not (getattr(prop, "land_value", 0) or 0),
+        "buildingBasis": round(basis, 2),
+        "annualDepreciation": annual,
+        "recoveryYears": years,
+    }
+
+
 def resolve_property_tax(prop: models.Property, year: Optional[int] = None) -> dict:
     target_year = int(year or date.today().year)
     annual_expense = _annual_expense_for_year(prop, target_year)
@@ -12766,6 +12787,7 @@ def portfolio_analysis(
             "occupancy_available_months": _avail_m,
             "occupancy_occupied_months": _occ_m,
             "metrics": canonical.get("metrics") or {},
+            "depreciation": _property_depreciation_summary(prop),
             **raw,
         })
         debts[prop.id] = get_debt(prop.id, db, current_user)
@@ -12792,6 +12814,7 @@ def portfolio_analysis(
                     "state": prop.state,
                     "usage_type": prop.usage_type or "Primary",
                     "hasRentalHistory": True,
+                    "depreciation": _property_depreciation_summary(prop),
                 })
 
     yearly_trends = _portfolio_income_expense_yearly_trends(props)

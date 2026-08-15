@@ -508,7 +508,21 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
         meta = {"propertyId": prop.get("id"), "propertyName": name, "location": location}
         property_tax_by_year.append({**meta, "byYear": tax_cells})
         insurance_by_year.append({**meta, "byYear": ins_cells})
-        property_ledger.append({**meta, "byYear": ledger_years})
+        # Finish the depreciation summary from the actual per-rental-year figures.
+        dep_static = prop.get("depreciation") or {}
+        accumulated = round(sum((yd.get("depreciation") or 0) for yd in ledger_years.values()), 2)
+        basis = float(dep_static.get("buildingBasis") or 0)
+        annual = float(dep_static.get("annualDepreciation") or 0)
+        remaining = round(max(basis - accumulated, 0.0), 2)
+        years_left = int(-(-remaining // annual)) if annual else None
+        depreciation_summary = {
+            **dep_static,
+            "accumulated": accumulated,
+            "remaining": remaining,
+            "yearsLeft": years_left,
+            "recaptureIfSold": round(accumulated * 0.25, 2),
+        }
+        property_ledger.append({**meta, "depreciation": depreciation_summary, "byYear": ledger_years})
 
     by_year = [
         {"year": year, **{key: _money(by_year_map.get(year, {}).get(key, Decimal("0"))) for key in _TAX_COMPONENT_KEYS}}

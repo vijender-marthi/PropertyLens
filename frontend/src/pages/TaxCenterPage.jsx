@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import {
   AlertTriangle,
   ArrowRight,
+  Bell,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -54,6 +55,7 @@ import {
   YAxis,
 } from 'recharts'
 import PageContainer from '../components/PageContainer'
+import { HomeTimeline } from '../components/PortfolioEquityDashboard'
 import { propAPI } from '../services/api'
 import { exportTaxWorkbook } from '../utils/taxExport'
 import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
@@ -849,39 +851,52 @@ function buildTriggers(model) {
   return [...warnings, ...opts].slice(0, 6)
 }
 
-function AuditTriggersPanel({ model, onGoto }) {
+function AuditAlerts({ model, onGoto }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
   const triggers = buildTriggers(model)
+  const warnCount = triggers.filter((t) => t.type === 'warning').length
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+  const badgeCls = warnCount > 0 ? 'bg-amber-500 text-white' : triggers.length > 0 ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-700'
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-300"><Sparkles className="h-4 w-4" /></span>
-          <h2 className="text-base font-semibold text-gray-950 dark:text-white">AI audit triggers &amp; optimization alerts</h2>
-        </div>
-        <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">{triggers.length} found</span>
-      </div>
-      {triggers.length === 0 ? <EmptyState text="No audit triggers — deductions look complete for this scope." /> : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {triggers.map((t, i) => {
-            const warn = t.type === 'warning'
-            const Icon = warn ? AlertTriangle : Lightbulb
-            return (
-              <div key={i} className={`flex gap-3 rounded-xl border p-3 ${warn ? 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20' : 'border-blue-200 bg-blue-50 dark:border-blue-900/50 dark:bg-blue-950/20'}`}>
-                <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${warn ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'}`}><Icon className="h-4 w-4" /></span>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${warn ? 'bg-amber-200/70 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200' : 'bg-blue-200/70 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200'}`}>{warn ? 'Warning' : 'Optimization'}</span>
+    <div className="relative" ref={ref}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={`${triggers.length} audit alerts`}
+        className="relative inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800">
+        <Bell className="h-4 w-4" /> Alerts
+        {triggers.length > 0 ? <span className={`inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-xs font-semibold ${badgeCls}`}>{triggers.length}</span> : null}
+      </button>
+      {open ? (
+        <div className="absolute right-0 z-30 mt-2 w-[22rem] max-h-[75vh] overflow-auto rounded-xl border border-gray-200 bg-white p-3 shadow-lg dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="mb-2 flex items-center gap-2 px-1">
+            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-300"><Sparkles className="h-3.5 w-3.5" /></span>
+            <h3 className="text-sm font-semibold text-gray-950 dark:text-white">AI audit triggers &amp; optimization alerts</h3>
+          </div>
+          {triggers.length === 0 ? <div className="px-1 py-6 text-center text-sm text-gray-500 dark:text-neutral-400">All clear — deductions look complete for this scope.</div> : (
+            <div className="space-y-2">
+              {triggers.map((t, i) => {
+                const warn = t.type === 'warning'
+                const Icon = warn ? AlertTriangle : Lightbulb
+                return (
+                  <div key={i} className={`flex gap-2.5 rounded-lg border p-2.5 ${warn ? 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20' : 'border-blue-200 bg-blue-50 dark:border-blue-900/50 dark:bg-blue-950/20'}`}>
+                    <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${warn ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'}`}><Icon className="h-3.5 w-3.5" /></span>
+                    <div className="min-w-0">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${warn ? 'bg-amber-200/70 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200' : 'bg-blue-200/70 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200'}`}>{warn ? 'Warning' : 'Optimization'}</span>
+                      <p className="mt-1 text-sm font-medium text-gray-950 dark:text-white">{t.title}</p>
+                      <p className="mt-0.5 text-xs text-gray-600 dark:text-neutral-300">{t.body}</p>
+                      {t.cta ? <button type="button" onClick={() => { onGoto?.('Form 8582'); setOpen(false) }} className="mt-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">{t.cta} →</button> : null}
+                    </div>
                   </div>
-                  <p className="mt-1 text-sm font-medium text-gray-950 dark:text-white">{t.title}</p>
-                  <p className="mt-0.5 text-xs text-gray-600 dark:text-neutral-300">{t.body}</p>
-                  {t.cta ? <button type="button" onClick={() => onGoto?.('Form 8582')} className="mt-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">{t.cta} →</button> : null}
-                </div>
-              </div>
-            )
-          })}
+                )
+              })}
+            </div>
+          )}
         </div>
-      )}
-    </section>
+      ) : null}
+    </div>
   )
 }
 
@@ -1028,55 +1043,97 @@ function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
 }
 
 // ---- Single-property chart (modernized) -------------------------------------
+function DepRow({ label, value, cls = '', badge }) {
+  return (
+    <div className="flex items-center justify-between border-b border-gray-100 py-1.5 last:border-0 dark:border-neutral-800">
+      <span className="text-xs text-gray-500 dark:text-neutral-400">{label}{badge}</span>
+      <span className={`text-sm font-medium tabular-nums ${cls || 'text-gray-950 dark:text-white'}`}>{value}</span>
+    </div>
+  )
+}
+
 function SinglePropertyChart({ model }) {
   const ledger = model.propertyLedger || []
   const [pid, setPid] = useState(ledger[0]?.propertyId)
   useEffect(() => { if (!ledger.find((p) => p.propertyId === pid)) setPid(ledger[0]?.propertyId) }, [ledger, pid])
   const prop = ledger.find((p) => p.propertyId === pid) || ledger[0]
+  const selector = (
+    <select className={selectCls} value={pid || ''} onChange={(e) => setPid(Number(e.target.value))}>
+      {ledger.map((p) => <option key={p.propertyId} value={p.propertyId}>{p.propertyName}</option>)}
+    </select>
+  )
   if (!prop) {
-    return <Panel title="Single-property view" subtitle="Deductible interest and depreciation over the rental years"><EmptyState text="No rental property in this scope." /></Panel>
+    return <Panel title="Single-property view" subtitle="Depreciation basis, mortgage interest, and passive-loss carryforward"><EmptyState text="No rental property in this scope." /></Panel>
   }
   const years = model.years || []
-  const data = years.filter((y) => prop.byYear[String(y)]).map((y) => ({ year: String(y), interest: (prop.byYear[String(y)] || {}).mortgageInterest || 0, depreciation: (prop.byYear[String(y)] || {}).depreciation || 0 }))
-  const sum = (k) => data.reduce((s, d) => s + (d[k] || 0), 0)
-  const netTotal = years.reduce((s, y) => s + ((prop.byYear[String(y)] || {}).taxableIncome || 0), 0)
+  const withData = years.filter((y) => prop.byYear[String(y)])
+  const dep = prop.depreciation || {}
+  const interestData = withData.map((y) => ({ year: String(y), interest: (prop.byYear[String(y)] || {}).mortgageInterest || 0 }))
+  let cum = 0
+  const lossData = withData.map((y) => { cum += Math.min(0, (prop.byYear[String(y)] || {}).taxableIncome || 0); return { year: String(y), carryforward: Math.round(cum) } })
+  const lossColor = chartColors.dangerStrong || chartColors.warningStrong
+
   return (
-    <Panel title="Single-property view" subtitle="Deductible interest and depreciation over the rental years" action={(
-      <select className={selectCls} value={pid} onChange={(e) => setPid(Number(e.target.value))}>
-        {ledger.map((p) => <option key={p.propertyId} value={p.propertyId}>{p.propertyName}</option>)}
-      </select>
-    )}>
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg bg-gray-50 p-3 dark:bg-neutral-950/40"><p className="text-xs text-gray-500 dark:text-neutral-400">Rental years</p><p className="mt-1 text-lg font-semibold text-gray-950 dark:text-white">{data.length}</p></div>
-        <div className="rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30"><p className="text-xs text-blue-700 dark:text-blue-300">Total interest</p><p className="mt-1 text-lg font-semibold text-blue-700 dark:text-blue-200">{compact(sum('interest'))}</p></div>
-        <div className="rounded-lg bg-purple-50 p-3 dark:bg-purple-950/30"><p className="text-xs text-purple-700 dark:text-purple-300">Total depreciation</p><p className="mt-1 text-lg font-semibold text-purple-700 dark:text-purple-200">{compact(sum('depreciation'))}</p></div>
-        <div className={`rounded-lg p-3 ${netTotal < 0 ? 'bg-red-50 dark:bg-red-950/30' : 'bg-emerald-50 dark:bg-emerald-950/30'}`}><p className={`text-xs ${netTotal < 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}`}>Net (Sch E)</p><p className={`mt-1 text-lg font-semibold ${netTotal < 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-200'}`}>{compact(netTotal)}</p></div>
-      </div>
-      <div className="h-64">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
-            <defs>
-              <linearGradient id="spInterestFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={chartColors.primary} stopOpacity={0.3} /><stop offset="95%" stopColor={chartColors.primary} stopOpacity={0.03} /></linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-            <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
-            <Tooltip formatter={(v, n) => [money(v), n === 'interest' ? 'Mortgage interest' : 'Depreciation']} contentStyle={chartTooltipStyle(false)} />
-            <Legend />
-            <Area type="monotone" dataKey="interest" name="Mortgage interest" stroke={chartColors.primary} strokeWidth={2.5} fill="url(#spInterestFill)" />
-            <Area type="monotone" dataKey="depreciation" name="Depreciation" stroke={chartColors.purple} strokeWidth={2} fill={chartColors.primaryTint} />
-          </AreaChart>
-        </ResponsiveContainer>
+    <Panel title="Single-property view" subtitle="Depreciation basis, mortgage interest, and passive-loss carryforward" action={selector}>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Depreciation & basis */}
+        <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-950 dark:text-white">Depreciation &amp; basis</h3>
+            {dep.landDefaulted ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">25% land default</span> : null}
+          </div>
+          <DepRow label="Purchase price" value={money(dep.purchasePrice)} />
+          <DepRow label={dep.landDefaulted ? 'Land (25% default)' : 'Land value'} value={money(dep.landValue)} />
+          <DepRow label="Building basis" value={money(dep.buildingBasis)} />
+          <DepRow label="Annual depreciation" value={money(dep.annualDepreciation)} cls="text-emerald-600" />
+          <DepRow label="Accumulated" value={money(dep.accumulated)} />
+          <DepRow label="Remaining basis" value={money(dep.remaining)} />
+          <DepRow label="Years left" value={`${dep.yearsLeft ?? '—'} of ${dep.recoveryYears ?? 27.5}`} />
+          <DepRow label="Recapture if sold" value={money(dep.recaptureIfSold)} cls="text-red-600" />
+        </div>
+        {/* Mortgage interest by year */}
+        <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
+          <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">Mortgage interest by year</h3>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={interestData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+                <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
+                <Tooltip formatter={(v) => [money(v), 'Mortgage interest']} contentStyle={chartTooltipStyle(false)} />
+                <Bar dataKey="interest" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        {/* Passive loss carryforward */}
+        <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
+          <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">Passive loss carryforward</h3>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={lossData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="spLossFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={lossColor} stopOpacity={0.05} /><stop offset="95%" stopColor={lossColor} stopOpacity={0.3} /></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+                <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
+                <Tooltip formatter={(v) => [money(v), 'Carryforward']} contentStyle={chartTooltipStyle(false)} />
+                <ReferenceLine y={0} stroke={chartColors.neutral} />
+                <Area type="monotone" dataKey="carryforward" stroke={lossColor} strokeWidth={2.5} fill="url(#spLossFill)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
     </Panel>
   )
 }
 
 // ---- Overview tab -----------------------------------------------------------
-function OverviewTab({ model, group, yearLabel, selectedYear, onGoto }) {
+function OverviewTab({ model, group, yearLabel, selectedYear }) {
   return (
     <div className="space-y-5">
-      <AuditTriggersPanel model={model} onGoto={onGoto} />
       <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="One row per property or year — the year/group toggle drives this">
         <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
       </Panel>
@@ -1085,10 +1142,21 @@ function OverviewTab({ model, group, yearLabel, selectedYear, onGoto }) {
         <MatrixWidget title="Insurance" kind="insurance" icon={Umbrella} data={model.insuranceByYear} years={model.years} selectedYear={selectedYear} />
       </div>
       <SinglePropertyChart model={model} />
-      <Panel title="Property financials ledger" subtitle="Click a property to expand its taxes, insurance, and operating costs over time">
-        <PropertyLedger model={model} />
-      </Panel>
-      <Panel title="Deductions by category" subtitle="Proportional breakdown"><DeductionBars categories={model.categories || []} /></Panel>
+    </div>
+  )
+}
+
+function TaxTimeline() {
+  const [available, setAvailable] = useState([])
+  useEffect(() => {
+    let active = true
+    propAPI.portfolioEquityCashflow({}).then((r) => { if (active) setAvailable(r.data?.availableProperties || []) }).catch(() => {})
+    return () => { active = false }
+  }, [])
+  if (available.length <= 1) return null
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-4 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <HomeTimeline rows={available} selectedIds={new Set()} onSelect={() => {}} hint="Acquisition timeline" />
     </div>
   )
 }
@@ -1366,7 +1434,10 @@ export default function TaxCenterPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Tax Center</h1>
             <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">Every deduction, by year and by property — with the lifetime picture in one place.</p>
           </div>
+          <AuditAlerts model={model} onGoto={setTab} />
         </header>
+
+        <TaxTimeline />
 
         <nav className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-neutral-800" aria-label="Tax center views">
           {TAX_TABS.map((name) => (
@@ -1386,9 +1457,14 @@ export default function TaxCenterPage() {
 
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} onGoto={setTab} /> : null}
         {tab === 'Deduction Summary' ? (
-          <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Export-ready, one row per property or year">
-            <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={year} />
-          </Panel>
+          <div className="space-y-5">
+            <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Export-ready, one row per property or year">
+              <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={year} />
+            </Panel>
+            <Panel title="Deduction details" subtitle="Click a property to expand its taxes, insurance, and operating costs over time">
+              <PropertyLedger model={model} />
+            </Panel>
+          </div>
         ) : null}
         {tab === 'Schedule E' ? <ScheduleETab properties={properties} /> : null}
         {tab === 'Schedule E Compare' ? <ScheduleECompareTab properties={properties} /> : null}
