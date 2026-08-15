@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import AuditAlerts from '../components/AuditAlerts'
+import { HomeAccentProvider, HomeName } from '../components/HomeLabel'
 import PageContainer from '../components/PageContainer'
 import { HomeTimeline, PropertyFilter } from '../components/PortfolioEquityDashboard'
 import { propAPI } from '../services/api'
@@ -85,6 +86,7 @@ export default function IncomeExpensesPage() {
 
   return (
     <PageContainer className="max-w-[80rem]">
+      <HomeAccentProvider available={available}>
       <div className="space-y-1">
         <div className="flex flex-wrap items-start justify-between gap-4 pb-1">
           <div>
@@ -138,7 +140,7 @@ export default function IncomeExpensesPage() {
                   return (
                     <Fragment key={r.id}>
                       <tr className="cursor-pointer border-t border-gray-100 bg-white hover:bg-gray-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800/60" onClick={() => setOpen((o) => ({ ...o, [r.id]: !o[r.id] }))}>
-                        <td className="px-4 py-3"><span className="flex items-center gap-1.5">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}<Link to={`/properties/${r.id}/income`} onClick={(e) => e.stopPropagation()} className="font-medium text-gray-950 hover:text-emerald-700 dark:text-white dark:hover:text-emerald-400">{r.name}</Link></span><span className="ml-5 text-[11.5px] text-gray-400">{[r.city, r.state].filter(Boolean).join(', ')}</span></td>
+                        <td className="px-4 py-3"><span className="flex items-center gap-1.5">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}<Link to={`/properties/${r.id}/income`} onClick={(e) => e.stopPropagation()} className="font-medium text-gray-950 hover:text-emerald-700 dark:text-white dark:hover:text-emerald-400"><HomeName id={r.id} name={r.name} /></Link></span><span className="ml-5 text-[11.5px] text-gray-400">{[r.city, r.state].filter(Boolean).join(', ')}</span></td>
                         <td className="px-4 py-3 text-right">{money(sm(num(r.income)))}</td>
                         <td className="px-4 py-3 text-right">{money(sm(num(r.operatingExpenses)))}</td>
                         <td className="px-4 py-3 text-right">{money(sm(num(r.debtService)))}</td>
@@ -208,6 +210,7 @@ export default function IncomeExpensesPage() {
             : 'Portfolio income, expenses, and NOI by year (after-debt cash flow isn’t tracked historically per year — see the By property view for current cash flow). Values shown ' + (period === 'yr' ? 'annually' : 'as a monthly average') + '.'}
         </p>
       </div>
+      </HomeAccentProvider>
     </PageContainer>
   )
 }

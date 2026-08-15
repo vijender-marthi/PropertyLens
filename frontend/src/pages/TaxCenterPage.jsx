@@ -49,6 +49,7 @@ import {
   ComposedChart,
   Legend,
   Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -56,6 +57,7 @@ import {
   YAxis,
 } from 'recharts'
 import AuditAlerts from '../components/AuditAlerts'
+import { HomeAccentProvider, HomeName } from '../components/HomeLabel'
 import PageContainer from '../components/PageContainer'
 import { HomeTimeline, PropertyFilter } from '../components/PortfolioEquityDashboard'
 import { propAPI } from '../services/api'
@@ -154,32 +156,19 @@ function SavingsTrend({ data }) {
 }
 
 function DeductionBars({ categories }) {
+  if (!categories.length) return <EmptyState text="No deduction categories for this scope." />
+  const max = Math.max(...categories.map((c) => c.value), 1)
   return (
-    <div className="space-y-4">
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={categories} layout="vertical" margin={{ left: 8, right: 24, top: 6, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={chartColors.gridLight} />
-            <XAxis type="number" tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <YAxis type="category" dataKey="label" width={120} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-            <Tooltip formatter={(value) => money(value)} contentStyle={chartTooltipStyle(false)} />
-            <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-              {categories.map((row) => <Cell key={row.key} fill={CATEGORY_COLORS[row.key] || chartColors.neutral} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="space-y-2">
-        {categories.map((row) => (
-          <div key={row.key} className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex items-center gap-2 text-gray-600 dark:text-neutral-300">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[row.key] || chartColors.neutral }} />
-              {row.label}
-            </span>
-            <span className="font-medium text-gray-950 dark:text-white">{money(row.value)} <span className="text-xs text-gray-400">({formatPercent(row.percentage, { maximumFractionDigits: 1 })})</span></span>
+    <div className="space-y-3.5">
+      {categories.map((row) => (
+        <div key={row.key}>
+          <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
+            <span className="flex items-center gap-2 text-gray-600 dark:text-neutral-300"><span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: CATEGORY_COLORS[row.key] || chartColors.neutral }} />{row.label}</span>
+            <span className="font-medium tabular-nums text-gray-950 dark:text-white">{money(row.value)} <span className="text-xs font-normal text-gray-400">({formatPercent(row.percentage, { maximumFractionDigits: 1 })})</span></span>
           </div>
-        ))}
-      </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-gray-100 dark:bg-neutral-800"><div className="h-full rounded-full" style={{ width: `${row.value / max * 100}%`, backgroundColor: CATEGORY_COLORS[row.key] || chartColors.neutral }} /></div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -189,13 +178,13 @@ function SavingsAcrossYears({ data }) {
   return (
     <div className="h-64">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
+        <LineChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
           <XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
           <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
           <Tooltip formatter={(v) => [money(v), 'Estimated savings']} contentStyle={chartTooltipStyle(false)} />
-          <Bar dataKey="estimatedSavings" fill={chartColors.positive} radius={[4, 4, 0, 0]} />
-        </BarChart>
+          <Line type="monotone" dataKey="estimatedSavings" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+        </LineChart>
       </ResponsiveContainer>
     </div>
   )
@@ -227,7 +216,7 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
           {rows.map((row) => (
             <tr key={row.propertyId}>
               <td className="px-4 py-3">
-                <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300">{row.propertyName}</Link><MixedBadge show={row.mixedUse} />
+                <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300"><HomeName id={row.propertyId} name={row.propertyName} /></Link><MixedBadge show={row.mixedUse} />
                 <p className="text-xs text-gray-400">{row.location || row.sourceLabel}</p>
               </td>
               {cols.map((id) => {
@@ -961,7 +950,7 @@ function PropertyLedger({ model }) {
               <Fragment key={p.propertyId}>
                 <tr className="cursor-pointer bg-white hover:bg-gray-50 dark:bg-neutral-900 dark:hover:bg-neutral-800/60" onClick={() => setOpen((o) => ({ ...o, [p.propertyId]: !o[p.propertyId] }))}>
                   <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}{p.propertyName}<MixedBadge show={p.mixedUse} /></span>
+                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}<HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} /></span>
                     <span className="ml-5 text-xs text-gray-400">{p.location}</span>
                   </td>
                   <td className="px-4 py-3 text-right">{money(totals.propertyTax)}</td>
@@ -1026,7 +1015,7 @@ function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
                 let total = 0
                 return (
                   <tr key={p.propertyId}>
-                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{p.propertyName}<MixedBadge show={p.mixedUse} /></td>
+                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white"><HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} /></td>
                     {cols.map((y) => { const v = (p.byYear || {})[String(y)]; if (v != null) total += v; return <td key={y} className={`px-3 py-2 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''} ${v == null ? 'text-gray-300 dark:text-neutral-600' : 'text-gray-700 dark:text-neutral-200'}`}>{v == null ? '—' : money(v)}</td> })}
                     <td className="px-3 py-2 text-right font-medium">{money(total)}</td>
                   </tr>
@@ -1055,17 +1044,19 @@ function DepRow({ label, value, cls = '', badge }) {
 
 function SinglePropertyChart({ model }) {
   const ledger = model.propertyLedger || []
-  const [pid, setPid] = useState(ledger[0]?.propertyId)
-  useEffect(() => { if (!ledger.find((p) => p.propertyId === pid)) setPid(ledger[0]?.propertyId) }, [ledger, pid])
-  const prop = ledger.find((p) => p.propertyId === pid) || ledger[0]
-  const selector = (
-    <select className={selectCls} value={pid || ''} onChange={(e) => setPid(Number(e.target.value))}>
-      {ledger.map((p) => <option key={p.propertyId} value={p.propertyId}>{p.propertyName}</option>)}
-    </select>
-  )
+  // Driven by the global property filter (timeline / dropdown), not a separate
+  // selector — filter to one property up top to focus this view.
+  const prop = ledger[0]
+  const multi = ledger.length > 1
   if (!prop) {
     return <Panel title="Single-property view" subtitle="Depreciation basis, mortgage interest, and passive-loss carryforward"><EmptyState text="No rental property in this scope." /></Panel>
   }
+  const selector = (
+    <div className="flex items-center gap-2">
+      <HomeName id={prop.propertyId} name={prop.propertyName} className="text-sm font-medium text-gray-900 dark:text-white" />
+      {multi ? <span className="text-xs text-gray-400">· filter to one property above</span> : null}
+    </div>
+  )
   const years = model.years || []
   const withData = years.filter((y) => prop.byYear[String(y)])
   const dep = prop.depreciation || {}
@@ -1341,7 +1332,7 @@ function Form8582Tab({ selectedPropertyIds }) {
                   <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400"><tr><th className="px-4 py-3 text-left">Property</th><th className="px-4 py-3 text-right">Current loss</th><th className="px-4 py-3 text-right">Prior unallowed</th><th className="px-4 py-3 text-right">Total loss</th><th className="px-4 py-3 text-right">Allowed</th><th className="px-4 py-3 text-right">Carryforward</th></tr></thead>
                   <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
                     {(data.rows || []).map((r) => (
-                      <tr key={r.propertyId}><td className="px-4 py-3"><span className="font-medium text-gray-950 dark:text-white">{r.propertyName}</span>{r.rentalMonths < 12 ? <span className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{r.rentalMonths} mo</span> : null}</td>
+                      <tr key={r.propertyId}><td className="px-4 py-3"><span className="font-medium text-gray-950 dark:text-white"><HomeName id={r.propertyId} name={r.propertyName} /></span>{r.rentalMonths < 12 ? <span className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{r.rentalMonths} mo</span> : null}</td>
                         <td className="px-4 py-3 text-right text-red-600">{money(r.currentLoss)}</td><td className="px-4 py-3 text-right text-red-600">{money(r.priorUnallowed)}</td><td className="px-4 py-3 text-right text-red-600">{money(r.totalLoss)}</td>
                         <td className="px-4 py-3 text-right text-emerald-600">{money(r.allowed)}</td><td className="px-4 py-3 text-right text-red-600">{money(r.carryforward)}</td></tr>
                     ))}
@@ -1445,6 +1436,7 @@ export default function TaxCenterPage() {
 
   return (
     <PageContainer className="max-w-[112rem]">
+      <HomeAccentProvider available={available}>
       <div className="space-y-5">
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-neutral-800 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -1499,6 +1491,7 @@ export default function TaxCenterPage() {
         {tab === 'Schedule E Compare' ? <ScheduleECompareTab properties={properties} /> : null}
         {tab === 'Form 8582' ? <Form8582Tab selectedPropertyIds={filtered ? selectedKey : null} /> : null}
       </div>
+      </HomeAccentProvider>
     </PageContainer>
   )
 }
