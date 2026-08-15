@@ -1121,7 +1121,10 @@ function SinglePropertyChart({ model }) {
         </div>
         {/* Passive loss carryforward */}
         <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
-          <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">Passive loss carryforward</h3>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-950 dark:text-white">Passive loss carryforward</h3>
+            <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">Form 8582</span>
+          </div>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={lossData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
