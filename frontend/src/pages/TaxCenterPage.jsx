@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
@@ -7,18 +7,24 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Download,
   FileSpreadsheet,
   FileText,
   Files,
+  History,
   Home,
   Landmark,
+  Lightbulb,
   Percent,
   ReceiptText,
+  Scale,
   ShieldCheck,
   Sparkles,
   TrendingDown,
+  Umbrella,
   Upload,
+  Wallet,
 } from 'lucide-react'
 
 const SCHEDULE_E_LINE_DECOR = {
@@ -38,7 +44,10 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
+  Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -46,10 +55,11 @@ import {
 } from 'recharts'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
+import { exportTaxWorkbook } from '../utils/taxExport'
 import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
 import { formatChartCurrency, formatCurrency, formatCurrencyCompact, formatFixed, formatPercent } from '../utils/formatters'
 
-const TAX_TABS = ['Overview', 'Schedule E', 'Deductions', 'Depreciation', 'Property Taxes', 'Documents', 'Estimated Taxes', 'Tax Reports', 'History']
+const TAX_TABS = ['Overview', 'Deduction Summary', 'Schedule E', 'Schedule E Compare', 'Form 8582']
 
 const CATEGORY_COLORS = {
   depreciation: chartColors.purple,
@@ -518,7 +528,8 @@ function ScheduleEReconciliation({ properties, year }) {
   )
 }
 
-export default function TaxCenterPage() {
+// eslint-disable-next-line no-unused-vars
+function TaxCenterPageLegacy() {
   const [loading, setLoading] = useState(true)
   const [analysis, setAnalysis] = useState(null)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear() - 1)
@@ -748,6 +759,591 @@ export default function TaxCenterPage() {
             </Panel>
           </aside>
         </div>
+      </div>
+    </PageContainer>
+  )
+}
+
+// ============================================================================
+// Redesigned Tax Center — 5 tabs, per-tab toolbars, all calculations backend.
+// ============================================================================
+
+const mnum = (x) => (x && typeof x === 'object' ? (x.value ?? 0) : (x ?? 0))
+const mdisp = (x) => (x && typeof x === 'object' ? (x.display ?? money(x.value)) : money(x))
+const heroCompact = (v) => formatCurrencyCompact(v, { threshold: 1_000, kDigits: 1, mDigits: 2 })
+
+function Segmented({ value, onChange, options }) {
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-neutral-700 dark:bg-neutral-950">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          aria-pressed={value === opt.value}
+          className={`rounded-md px-3 py-1.5 text-sm transition ${value === opt.value ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:text-gray-900 dark:text-neutral-300'}`}
+        >{opt.label}</button>
+      ))}
+    </div>
+  )
+}
+
+function Toolbar({ children }) {
+  return <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">{children}</div>
+}
+
+function Field({ label, children }) {
+  return <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-neutral-400">{label}{children}</label>
+}
+
+const selectCls = 'rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-normal normal-case text-gray-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-white'
+const exportBtnCls = 'inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-emerald-700'
+
+function ExportButton({ onClick, label = 'Export to Excel' }) {
+  return <button type="button" onClick={onClick} className={exportBtnCls}><FileSpreadsheet className="h-4 w-4" /> {label}</button>
+}
+
+// ---- Hero KPI row -----------------------------------------------------------
+function TaxKpis({ totals, assumptions, scopeLabel }) {
+  const taxable = totals.taxableIncome || 0
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+      <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-4 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30">
+        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300"><ShieldCheck className="h-5 w-5" /><span className="text-xs font-medium uppercase tracking-wide">Estimated tax savings</span></div>
+        <p className="mt-2 text-3xl font-bold tracking-tight text-emerald-700 dark:text-emerald-200">{heroCompact(totals.estimatedSavings)}</p>
+        <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/80">deductions × {formatFixed(assumptions?.effectiveTaxRate || 0, 1)}%</p>
+      </div>
+      <KpiCard icon={ReceiptText} label="Total deductions" value={compact(totals.totalDeductions)} note={scopeLabel} tone="purple" />
+      <KpiCard icon={Landmark} label="Depreciation" value={compact(totals.depreciation)} note="non-cash" tone="amber" />
+      <KpiCard icon={Percent} label="Mortgage interest" value={compact(totals.mortgageInterest)} note="de-duplicated" tone="blue" />
+      <div className={`rounded-xl border p-4 shadow-sm ${taxable < 0 ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
+        <div className={`flex items-center gap-2 ${taxable < 0 ? 'text-red-600 dark:text-red-300' : 'text-gray-500 dark:text-neutral-400'}`}><FileSpreadsheet className="h-5 w-5" /><span className="text-xs font-medium uppercase tracking-wide">Net taxable income</span></div>
+        <p className={`mt-2 text-2xl font-semibold tracking-tight ${taxable < 0 ? 'text-red-600 dark:text-red-300' : 'text-gray-950 dark:text-white'}`}>{compact(taxable)}</p>
+        <p className={`mt-1 text-xs ${taxable < 0 ? 'text-red-500/80 dark:text-red-300/70' : 'text-gray-500 dark:text-neutral-400'}`}>Schedule E total</p>
+      </div>
+      <KpiCard icon={Scale} label="Est. tax liability" value={compact(totals.estimatedLiability)} note="rough planning" tone={totals.estimatedLiability > 0 ? 'amber' : 'emerald'} />
+    </div>
+  )
+}
+
+// ---- AI Audit Triggers & Optimization Alerts --------------------------------
+function buildTriggers(model) {
+  const triggers = []
+  const rows = model.rows || []
+  const passive = rows.filter((r) => (r.taxableIncome || 0) < 0)
+  const passiveTotal = passive.reduce((s, r) => s + (r.taxableIncome || 0), 0)
+  const years = model.years || []
+  const latest = years.length ? years[years.length - 1] : null
+  if (latest != null) {
+    for (const p of model.propertyLedger || []) {
+      const d = (p.byYear || {})[String(latest)]
+      if (!d) continue
+      if ((d.propertyTax || 0) === 0) triggers.push({ type: 'warning', title: `Missing property tax — ${p.propertyName}`, body: `No property tax on file for ${latest}. Add the bill to capture the deduction.` })
+      if ((d.insurance || 0) === 0) triggers.push({ type: 'warning', title: `Missing insurance — ${p.propertyName}`, body: `No insurance premium on file for ${latest}.` })
+    }
+  }
+  if (passiveTotal < 0) triggers.push({ type: 'optimization', title: 'Passive losses may be suspended', body: `${passive.length} propert${passive.length === 1 ? 'y' : 'ies'} show passive losses totaling ${money(passiveTotal)}. Form 8582 may carry them forward unless you qualify as a real-estate professional.`, cta: 'Review Form 8582' })
+  if ((model.totals?.depreciation || 0) > 0) triggers.push({ type: 'optimization', title: 'Depreciation is sheltering income', body: `${money(model.totals.depreciation)} of non-cash depreciation reduces taxable income in this scope.` })
+  const warnings = triggers.filter((t) => t.type === 'warning')
+  const opts = triggers.filter((t) => t.type !== 'warning')
+  return [...warnings, ...opts].slice(0, 6)
+}
+
+function AuditTriggersPanel({ model, onGoto }) {
+  const triggers = buildTriggers(model)
+  return (
+    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 text-purple-600 dark:bg-purple-950/40 dark:text-purple-300"><Sparkles className="h-4 w-4" /></span>
+          <h2 className="text-base font-semibold text-gray-950 dark:text-white">AI audit triggers &amp; optimization alerts</h2>
+        </div>
+        <span className="rounded-full bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">{triggers.length} found</span>
+      </div>
+      {triggers.length === 0 ? <EmptyState text="No audit triggers — deductions look complete for this scope." /> : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {triggers.map((t, i) => {
+            const warn = t.type === 'warning'
+            const Icon = warn ? AlertTriangle : Lightbulb
+            return (
+              <div key={i} className={`flex gap-3 rounded-xl border p-3 ${warn ? 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20' : 'border-blue-200 bg-blue-50 dark:border-blue-900/50 dark:bg-blue-950/20'}`}>
+                <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${warn ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'}`}><Icon className="h-4 w-4" /></span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${warn ? 'bg-amber-200/70 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200' : 'bg-blue-200/70 text-blue-800 dark:bg-blue-900/60 dark:text-blue-200'}`}>{warn ? 'Warning' : 'Optimization'}</span>
+                  </div>
+                  <p className="mt-1 text-sm font-medium text-gray-950 dark:text-white">{t.title}</p>
+                  <p className="mt-0.5 text-xs text-gray-600 dark:text-neutral-300">{t.body}</p>
+                  {t.cta ? <button type="button" onClick={() => onGoto?.('Form 8582')} className="mt-1.5 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300">{t.cta} →</button> : null}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ---- Deduction summary (property or year) -----------------------------------
+function DeductionSummary({ model, group, yearLabel, selectedYear }) {
+  if (group === 'year') {
+    const rows = model.byYear || []
+    return (
+      <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
+        <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
+          <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
+            <tr><th className="px-4 py-3 text-left">Tax year</th><th className="px-4 py-3 text-right">Total ded.</th><th className="px-4 py-3 text-right">Depreciation</th><th className="px-4 py-3 text-right">Interest</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Operating</th><th className="px-4 py-3 text-right">Taxable inc.</th></tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 bg-white tabular-nums dark:divide-neutral-800 dark:bg-neutral-900">
+            {rows.map((r) => (
+              <tr key={r.year} className={selectedYear !== 'all' && Number(selectedYear) === r.year ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
+                <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{r.year}</td>
+                <td className="px-4 py-3 text-right font-semibold">{money(r.totalDeductions)}</td>
+                <td className="px-4 py-3 text-right">{money(r.depreciation)}</td>
+                <td className="px-4 py-3 text-right">{money(r.mortgageInterest)}</td>
+                <td className="px-4 py-3 text-right">{money(r.propertyTax)}</td>
+                <td className="px-4 py-3 text-right">{money(r.operatingExpenses)}</td>
+                <td className={`px-4 py-3 text-right font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(r.taxableIncome)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+  return <DeductionTable rows={model.rows || []} />
+}
+
+// ---- Property financials ledger (expandable) --------------------------------
+const LEDGER_LINES = [
+  ['rentalIncome', 'Rental income', Home],
+  ['mortgageInterest', 'Mortgage interest', Landmark],
+  ['propertyTax', 'Property tax', ReceiptText],
+  ['insurance', 'Insurance', Umbrella],
+  ['operatingExpenses', 'Operating', Wallet],
+  ['depreciation', 'Depreciation', TrendingDown],
+]
+function PropertyLedger({ model }) {
+  const [open, setOpen] = useState({})
+  const years = model.years || []
+  const ledger = model.propertyLedger || []
+  const rowsById = Object.fromEntries((model.rows || []).map((r) => [r.propertyId, r]))
+  if (!ledger.length) return <EmptyState text="No rental property financials for this scope." />
+  return (
+    <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
+          <tr><th className="px-4 py-3 text-left">Property</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Insurance</th><th className="px-4 py-3 text-right">Operating</th><th className="px-4 py-3 text-right">Total ded.</th><th className="px-2 py-3" /></tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
+          {ledger.map((p) => {
+            const totals = rowsById[p.propertyId] || {}
+            const isOpen = !!open[p.propertyId]
+            const yearsWithData = years.filter((y) => (p.byYear || {})[String(y)])
+            return (
+              <Fragment key={p.propertyId}>
+                <tr className="cursor-pointer bg-white hover:bg-gray-50 dark:bg-neutral-900 dark:hover:bg-neutral-800/60" onClick={() => setOpen((o) => ({ ...o, [p.propertyId]: !o[p.propertyId] }))}>
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}{p.propertyName}</span>
+                    <span className="ml-5 text-xs text-gray-400">{p.location}</span>
+                  </td>
+                  <td className="px-4 py-3 text-right">{money(totals.propertyTax)}</td>
+                  <td className="px-4 py-3 text-right">{money((totals.operatingExpenses != null) ? sumLedger(p, 'insurance') : 0)}</td>
+                  <td className="px-4 py-3 text-right">{money(totals.operatingExpenses)}</td>
+                  <td className="px-4 py-3 text-right font-semibold">{money(totals.totalDeductions)}</td>
+                  <td className="px-2 py-3 text-right text-xs text-gray-400">{yearsWithData.length} yr</td>
+                </tr>
+                {isOpen ? (
+                  <tr className="bg-gray-50/70 dark:bg-neutral-950/40">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead className="text-[11px] uppercase tracking-wide text-gray-400">
+                            <tr><th className="py-1 pr-3 text-left">Line</th>{yearsWithData.map((y) => <th key={y} className="py-1 pl-3 text-right">{y}</th>)}</tr>
+                          </thead>
+                          <tbody className="tabular-nums">
+                            {LEDGER_LINES.map(([key, label, Icon]) => (
+                              <tr key={key} className="border-t border-gray-100 dark:border-neutral-800">
+                                <td className="py-1.5 pr-3 text-gray-600 dark:text-neutral-300"><span className="inline-flex items-center gap-1.5"><Icon className="h-3.5 w-3.5 text-gray-400" />{label}</span></td>
+                                {yearsWithData.map((y) => <td key={y} className="py-1.5 pl-3 text-right text-gray-700 dark:text-neutral-200">{money((p.byYear[String(y)] || {})[key])}</td>)}
+                              </tr>
+                            ))}
+                            <tr className="border-t border-gray-200 dark:border-neutral-700">
+                              <td className="py-1.5 pr-3 font-medium text-gray-900 dark:text-white">Net (Sch E)</td>
+                              {yearsWithData.map((y) => { const t = (p.byYear[String(y)] || {}).taxableIncome || 0; return <td key={y} className={`py-1.5 pl-3 text-right font-medium ${t < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(t)}</td> })}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+function sumLedger(p, key) { return Object.values(p.byYear || {}).reduce((s, d) => s + (d[key] || 0), 0) }
+
+// ---- Single-property chart (modernized) -------------------------------------
+function SinglePropertyChart({ model }) {
+  const ledger = model.propertyLedger || []
+  const [pid, setPid] = useState(ledger[0]?.propertyId)
+  useEffect(() => { if (!ledger.find((p) => p.propertyId === pid)) setPid(ledger[0]?.propertyId) }, [ledger, pid])
+  const prop = ledger.find((p) => p.propertyId === pid) || ledger[0]
+  if (!prop) return null
+  const years = model.years || []
+  const data = years.filter((y) => prop.byYear[String(y)]).map((y) => ({ year: String(y), interest: (prop.byYear[String(y)] || {}).mortgageInterest || 0, depreciation: (prop.byYear[String(y)] || {}).depreciation || 0 }))
+  return (
+    <Panel title="Single-property trend" subtitle="Deductible interest and depreciation over the rental years" action={(
+      <select className={selectCls} value={pid} onChange={(e) => setPid(Number(e.target.value))}>
+        {ledger.map((p) => <option key={p.propertyId} value={p.propertyId}>{p.propertyName}</option>)}
+      </select>
+    )}>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
+            <defs>
+              <linearGradient id="spInterestFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={chartColors.primary} stopOpacity={0.3} /><stop offset="95%" stopColor={chartColors.primary} stopOpacity={0.03} /></linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+            <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+            <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
+            <Tooltip formatter={(v, n) => [money(v), n === 'interest' ? 'Mortgage interest' : 'Depreciation']} contentStyle={chartTooltipStyle(false)} />
+            <Legend />
+            <Area type="monotone" dataKey="interest" name="Mortgage interest" stroke={chartColors.primary} strokeWidth={2.5} fill="url(#spInterestFill)" />
+            <Area type="monotone" dataKey="depreciation" name="Depreciation" stroke={chartColors.purple} strokeWidth={2} fill={chartColors.primaryTint} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </Panel>
+  )
+}
+
+// ---- Overview tab -----------------------------------------------------------
+function OverviewTab({ model, group, yearLabel, selectedYear, onGoto }) {
+  return (
+    <div className="space-y-5">
+      <AuditTriggersPanel model={model} onGoto={onGoto} />
+      <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="One row per property or year — the year/group toggle drives this">
+        <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
+      </Panel>
+      <Panel title="Property financials ledger" subtitle="Click a property to expand its taxes, insurance, and operating costs over time">
+        <PropertyLedger model={model} />
+      </Panel>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Panel title="Deductions by category" subtitle="Proportional breakdown"><DeductionBars categories={model.categories || []} /></Panel>
+        <Panel title="Tax savings over time" subtitle="From backend yearly tax rows"><SavingsTrend data={model.trend || []} /></Panel>
+      </div>
+      <SinglePropertyChart model={model} />
+    </div>
+  )
+}
+
+// ---- Schedule E tab ---------------------------------------------------------
+function ScheduleETab({ properties }) {
+  const rentals = properties.filter((p) => !p.isPrimary && String(p.usageType || 'Rental').toLowerCase() !== 'primary')
+  const [scope, setScope] = useState('all')
+  const [propId, setPropId] = useState(rentals[0]?.id)
+  const nowYear = new Date().getFullYear()
+  const [year, setYear] = useState(nowYear - 1)
+  const [dataByProp, setDataByProp] = useState({})
+  const [loading, setLoading] = useState(false)
+  useEffect(() => { if (!rentals.find((p) => p.id === propId)) setPropId(rentals[0]?.id) }, [rentals, propId])
+  const targets = scope === 'single' ? rentals.filter((p) => p.id === propId) : rentals
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    Promise.all(targets.map((p) => propAPI.scheduleE(p.id, year).then((r) => [p.id, r.data]).catch(() => [p.id, null])))
+      .then((entries) => { if (active) setDataByProp(Object.fromEntries(entries)) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [scope, propId, year, properties.length])
+
+  const doExport = () => {
+    const sheets = targets.map((p) => {
+      const lines = (dataByProp[p.id]?.lines) || []
+      return {
+        name: `${p.name} ${year}`,
+        meta: [['Property', `${p.name}${p.address ? ` · ${p.address}` : ''}`], ['Tax year', String(year)], ['Form', 'Schedule E (Form 1040)']],
+        headers: ['Line', 'Description', 'Amount'],
+        rows: lines.map((l) => [String(l.lineNumber), l.lineItem, mnum(l.computed)]),
+      }
+    }).filter((s) => s.rows.length)
+    if (!sheets.length) { toast.error('No Schedule E data to export'); return }
+    exportTaxWorkbook(scope === 'single' ? `ScheduleE_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_AllProperties_${year}`, sheets)
+  }
+
+  return (
+    <div>
+      <Toolbar>
+        <Segmented value={scope} onChange={setScope} options={[{ value: 'all', label: 'All properties' }, { value: 'single', label: 'Single property' }]} />
+        {scope === 'single' ? <select className={selectCls} value={propId} onChange={(e) => setPropId(Number(e.target.value))}>{rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select> : null}
+        <Field label="Tax year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{Array.from({ length: 8 }, (_, i) => nowYear - i).map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
+        <div className="ml-auto"><ExportButton onClick={doExport} /></div>
+      </Toolbar>
+      {loading && !Object.keys(dataByProp).length ? <EmptyState text="Loading Schedule E…" /> : (
+        <div className="space-y-4">
+          {targets.map((p) => {
+            const lines = (dataByProp[p.id]?.lines) || []
+            if (!lines.length) return null
+            return (
+              <Panel key={p.id} title={p.name} subtitle={`${p.address || ''} · tax year ${year}`}>
+                <ScheduleELines lines={lines} showCompare={false} />
+              </Panel>
+            )
+          })}
+          {targets.every((p) => !((dataByProp[p.id]?.lines) || []).length) ? <EmptyState text={`No Schedule E entries for ${year} in this scope.`} /> : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---- Schedule E compare tab -------------------------------------------------
+function ScheduleECompareTab({ properties }) {
+  const rentals = properties.filter((p) => !p.isPrimary && String(p.usageType || 'Rental').toLowerCase() !== 'primary')
+  const [scope, setScope] = useState('single')
+  const [propId, setPropId] = useState(rentals[0]?.id)
+  const nowYear = new Date().getFullYear()
+  const [year, setYear] = useState(nowYear - 1)
+  const [dataByProp, setDataByProp] = useState({})
+  const [loading, setLoading] = useState(false)
+  useEffect(() => { if (!rentals.find((p) => p.id === propId)) setPropId(rentals[0]?.id) }, [rentals, propId])
+  const targets = scope === 'single' ? rentals.filter((p) => p.id === propId) : rentals
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    Promise.all(targets.map((p) => propAPI.scheduleE(p.id, year).then((r) => [p.id, r.data]).catch(() => [p.id, null])))
+      .then((entries) => { if (active) setDataByProp(Object.fromEntries(entries)) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [scope, propId, year, properties.length])
+
+  const netOf = (lines) => { const l = (lines || []).find((x) => x.key === 'net_income'); return l ? { filed: mnum(l.filed), computed: mnum(l.computed), hasFiled: l.filed != null } : { filed: 0, computed: 0, hasFiled: false } }
+
+  const doExport = () => {
+    const sheets = targets.map((p) => {
+      const lines = (dataByProp[p.id]?.lines) || []
+      return {
+        name: `${p.name} ${year}`,
+        meta: [['Property', `${p.name}${p.address ? ` · ${p.address}` : ''}`], ['Tax year', String(year)], ['Comparison', 'Filed 1040 vs PropertyLens · comparison only']],
+        headers: ['Line', 'Description', 'Filed 1040', 'PropertyLens', 'Difference'],
+        rows: lines.map((l) => [String(l.lineNumber), l.lineItem, l.filed != null ? mnum(l.filed) : '—', mnum(l.computed), l.delta != null ? mnum(l.delta) : '—']),
+      }
+    }).filter((s) => s.rows.length)
+    if (!sheets.length) { toast.error('No comparison data to export'); return }
+    exportTaxWorkbook(scope === 'single' ? `ScheduleE_Compare_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_Compare_AllProperties_${year}`, sheets)
+  }
+
+  return (
+    <div>
+      <Toolbar>
+        <Segmented value={scope} onChange={setScope} options={[{ value: 'single', label: 'Single property' }, { value: 'all', label: 'All properties' }]} />
+        {scope === 'single' ? <select className={selectCls} value={propId} onChange={(e) => setPropId(Number(e.target.value))}>{rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select> : null}
+        <Field label="Filed year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{Array.from({ length: 8 }, (_, i) => nowYear - i).map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
+        <div className="ml-auto flex items-center gap-2">
+          <button type="button" onClick={() => toast('Upload a filed 1040 Schedule E on the Documents page', { icon: '↥' })} className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"><Upload className="h-4 w-4" /> Upload filed 1040</button>
+          <ExportButton onClick={doExport} />
+        </div>
+      </Toolbar>
+      <p className="mb-3 text-xs text-gray-500 dark:text-neutral-400">Comparison only — filed figures never replace PropertyLens values.</p>
+      {loading && !Object.keys(dataByProp).length ? <EmptyState text="Loading comparison…" /> : (
+        scope === 'all' ? (
+          <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
+            <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
+              <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400"><tr><th className="px-4 py-3 text-left">Property</th><th className="px-4 py-3 text-right">Filed net (L26)</th><th className="px-4 py-3 text-right">PropertyLens net</th><th className="px-4 py-3 text-right">Difference</th><th className="px-4 py-3 text-right">Status</th></tr></thead>
+              <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
+                {rentals.map((p) => { const n = netOf(dataByProp[p.id]?.lines); const d = n.filed - n.computed; return (
+                  <tr key={p.id}><td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{p.name}</td>
+                    <td className="px-4 py-3 text-right">{n.hasFiled ? money(n.filed) : '—'}</td>
+                    <td className="px-4 py-3 text-right">{money(n.computed)}</td>
+                    <td className={`px-4 py-3 text-right ${!n.hasFiled ? 'text-gray-400' : Math.abs(d) < 1 ? 'text-emerald-600' : 'text-amber-600'}`}>{n.hasFiled ? money(d) : '—'}</td>
+                    <td className="px-4 py-3 text-right">{!n.hasFiled ? <span className="text-xs text-gray-400">No filed return</span> : Math.abs(d) < 1 ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">Matches</span> : <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">Review</span>}</td>
+                  </tr>
+                ) })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {targets.map((p) => {
+              const lines = (dataByProp[p.id]?.lines) || []
+              if (!lines.length) return <EmptyState key={p.id} text={`No Schedule E for ${p.name} in ${year}.`} />
+              return <Panel key={p.id} title={p.name} subtitle={`Filed 1040 vs PropertyLens · ${year}`}><ScheduleELines lines={lines} showCompare /></Panel>
+            })}
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ---- Form 8582 tab ----------------------------------------------------------
+function Form8582Tab({ selectedPropertyIds }) {
+  const nowYear = new Date().getFullYear()
+  const [year, setYear] = useState(nowYear - 1)
+  const [magi, setMagi] = useState(130000)
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    propAPI.form8582({ tax_year: year, magi, ...(selectedPropertyIds ? { selected_property_ids: selectedPropertyIds, selection_explicit: true } : {}) })
+      .then((r) => { if (active) setData(r.data) })
+      .catch(() => { if (active) toast.error('Failed to load Form 8582') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [year, magi, selectedPropertyIds])
+
+  const doExport = () => {
+    if (!data) return
+    exportTaxWorkbook(`Form8582_${year}`, [{
+      name: `Form 8582 ${year}`,
+      meta: [['Form', 'Form 8582 — passive activity loss limitations'], ['Tax year', String(year)], ['MAGI', String(Math.round(magi))], ['Special allowance', String(Math.round(data.specialAllowance))]],
+      headers: ['Property', 'Current-year loss', 'Prior unallowed', 'Total loss', 'Allowed', 'Carryforward'],
+      rows: (data.rows || []).map((r) => [r.propertyName, r.currentLoss, r.priorUnallowed, r.totalLoss, r.allowed, r.carryforward]),
+      total: ['Portfolio total', data.totals.passiveLossThisYear, data.totals.priorCarryforward, data.totals.totalLoss, data.totals.allowedThisYear, data.totals.carryforwardToNext],
+    }])
+  }
+
+  const availableYears = data?.availableYears?.length ? data.availableYears : [year]
+  const t = data?.totals || {}
+  const series = (data?.series || []).map((s) => ({ year: String(s.year), carryforward: s.carryforward, allowed: s.allowed }))
+  return (
+    <div>
+      <Toolbar>
+        <Field label="Tax year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{availableYears.map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
+        <Field label="MAGI"><input type="number" step="1000" className={`${selectCls} w-32`} value={magi} onChange={(e) => setMagi(Number(e.target.value) || 0)} /></Field>
+        <div className="ml-auto"><ExportButton onClick={doExport} /></div>
+      </Toolbar>
+      {loading && !data ? <EmptyState text="Loading Form 8582…" /> : !data ? <EmptyState text="No passive activity data." /> : (
+        <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <KpiCard icon={TrendingDown} label="Passive loss this year" value={compact(t.passiveLossThisYear)} note={`tax year ${data.taxYear}`} tone="red" />
+            <KpiCard icon={History} label="Prior-year carryforward" value={compact(t.priorCarryforward)} note="suspended" tone="amber" />
+            <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-4 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30">
+              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-5 w-5" /><span className="text-xs font-medium uppercase tracking-wide">Allowed this year</span></div>
+              <p className="mt-2 text-2xl font-bold text-emerald-700 dark:text-emerald-200">{compact(t.allowedThisYear)}</p>
+              <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/80">special allowance {money(data.specialAllowance)}</p>
+            </div>
+            <KpiCard icon={ArrowRight} label="Carryforward to next year" value={compact(t.carryforwardToNext)} note="suspended losses" tone="purple" />
+          </div>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <Panel title="Passive loss by property" subtitle={`Allocated against the ${money(data.specialAllowance)} special allowance`}>
+              <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
+                <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
+                  <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400"><tr><th className="px-4 py-3 text-left">Property</th><th className="px-4 py-3 text-right">Current loss</th><th className="px-4 py-3 text-right">Prior unallowed</th><th className="px-4 py-3 text-right">Total loss</th><th className="px-4 py-3 text-right">Allowed</th><th className="px-4 py-3 text-right">Carryforward</th></tr></thead>
+                  <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
+                    {(data.rows || []).map((r) => (
+                      <tr key={r.propertyId}><td className="px-4 py-3"><span className="font-medium text-gray-950 dark:text-white">{r.propertyName}</span>{r.rentalMonths < 12 ? <span className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{r.rentalMonths} mo</span> : null}</td>
+                        <td className="px-4 py-3 text-right text-red-600">{money(r.currentLoss)}</td><td className="px-4 py-3 text-right text-red-600">{money(r.priorUnallowed)}</td><td className="px-4 py-3 text-right text-red-600">{money(r.totalLoss)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600">{money(r.allowed)}</td><td className="px-4 py-3 text-right text-red-600">{money(r.carryforward)}</td></tr>
+                    ))}
+                    <tr className="border-t border-gray-200 bg-gray-50 font-medium dark:border-neutral-700 dark:bg-neutral-950/40"><td className="px-4 py-3">Portfolio total</td><td className="px-4 py-3 text-right text-red-600">{money(t.passiveLossThisYear)}</td><td className="px-4 py-3 text-right text-red-600">{money(t.priorCarryforward)}</td><td className="px-4 py-3 text-right text-red-600">{money(t.totalLoss)}</td><td className="px-4 py-3 text-right text-emerald-600">{money(t.allowedThisYear)}</td><td className="px-4 py-3 text-right text-red-600">{money(t.carryforwardToNext)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+            <Panel title="8582 worksheet" subtitle="Parts I–II">
+              <div className="space-y-2 text-sm">
+                {[['1a Net income (passive)', money(0)], ['1b Net loss (passive)', money(t.passiveLossThisYear)], ['1c Prior unallowed', money(t.priorCarryforward)], ['1d Combine', money(t.totalLoss)], ['Special allowance cap', money(25000)], ['MAGI phaseout', magi > 100000 ? money(-Math.min(25000, (magi - 100000) * 0.5)) : money(0)], ['Line 10 · special allowance', money(data.specialAllowance)], ['Allowed loss', money(t.allowedThisYear)], ['Unallowed → carryforward', money(t.carryforwardToNext)]].map(([k, v], i) => (
+                  <div key={i} className="flex items-center justify-between border-b border-gray-100 py-1.5 last:border-0 dark:border-neutral-800"><span className="text-gray-500 dark:text-neutral-400">{k}</span><span className="font-medium tabular-nums text-gray-950 dark:text-white">{v}</span></div>
+                ))}
+              </div>
+            </Panel>
+          </div>
+          <Panel title="Carryforward — year over year" subtitle="Roll-forward of suspended losses against the special allowance">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={series} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+                  <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} />
+                  <Tooltip formatter={(v, n) => [money(v), n === 'carryforward' ? 'Carryforward balance' : 'Allowed that year']} contentStyle={chartTooltipStyle(false)} />
+                  <ReferenceLine y={0} stroke={chartColors.neutral} />
+                  <Legend />
+                  <Bar dataKey="carryforward" name="Carryforward balance" fill={chartColors.dangerStrong || chartColors.warningStrong} radius={[0, 0, 4, 4]} />
+                  <Line type="monotone" dataKey="allowed" name="Allowed that year" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+          <p className="text-xs text-gray-500 dark:text-neutral-400">{data.assumptions?.label || 'Planning estimate'} — the $25,000 special allowance drops 50% of MAGI over $100,000 and is gone at $150,000. Rental-period and partial-year aware. Planning only.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---- Page orchestrator ------------------------------------------------------
+export default function TaxCenterPage() {
+  const [analysis, setAnalysis] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('Overview')
+  const [year, setYear] = useState('all')
+  const [group, setGroup] = useState('property')
+  const isAll = year === 'all'
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setLoading(true)
+    propAPI.portfolioAnalysis({ tax_year: isAll ? undefined : year, all_years: isAll, include_primary_residence: false }, { signal: controller.signal })
+      .then((r) => setAnalysis(r.data || null))
+      .catch((e) => { if (e?.code !== 'ERR_CANCELED') toast.error('Failed to load tax center') })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [year])
+
+  const model = analysis?.taxCenter || { rows: [], byYear: [], propertyLedger: [], totals: {}, categories: [], trend: [], assumptions: {}, years: [], availableYears: [] }
+  const properties = analysis?.properties || []
+  const availableYears = model.availableYears?.length ? model.availableYears : []
+  const yearLabel = isAll ? 'All years' : year
+  const showGlobalBar = tab === 'Overview' || tab === 'Deduction Summary'
+
+  if (loading && !analysis) {
+    return <PageContainer><div className="flex h-64 items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent" /></div></PageContainer>
+  }
+
+  return (
+    <PageContainer className="max-w-[112rem]">
+      <div className="space-y-5">
+        <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-neutral-800 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Tax Center</h1>
+            <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">Every deduction, by year and by property — with the lifetime picture in one place.</p>
+          </div>
+        </header>
+
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={isAll ? 'Lifetime · all years' : `Tax year ${year}`} /> : null}
+
+        <nav className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-neutral-800" aria-label="Tax center views">
+          {TAX_TABS.map((name) => (
+            <button key={name} type="button" onClick={() => setTab(name)} className={`min-w-max border-b-2 px-4 py-3 text-sm font-medium ${tab === name ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-100'}`}>{name}</button>
+          ))}
+        </nav>
+
+        {showGlobalBar ? (
+          <Toolbar>
+            <Field label="Tax year"><select className={selectCls} value={isAll ? 'all' : year} onChange={(e) => setYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}><option value="all">All years</option>{availableYears.map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
+            <Field label="Group by"><Segmented value={group} onChange={setGroup} options={[{ value: 'property', label: 'Property' }, { value: 'year', label: 'Year' }]} /></Field>
+            <span className="ml-auto text-xs text-gray-500 dark:text-neutral-400">Showing {isAll ? 'all years combined' : `tax year ${year}`} · {properties.filter((p) => !p.isPrimary).length} rentals</span>
+          </Toolbar>
+        ) : null}
+
+        {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} onGoto={setTab} /> : null}
+        {tab === 'Deduction Summary' ? (
+          <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Export-ready, one row per property or year">
+            <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={year} />
+          </Panel>
+        ) : null}
+        {tab === 'Schedule E' ? <ScheduleETab properties={properties} /> : null}
+        {tab === 'Schedule E Compare' ? <ScheduleECompareTab properties={properties} /> : null}
+        {tab === 'Form 8582' ? <Form8582Tab selectedPropertyIds={null} /> : null}
       </div>
     </PageContainer>
   )
