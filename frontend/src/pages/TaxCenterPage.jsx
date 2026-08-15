@@ -794,6 +794,10 @@ function TaxCenterPageLegacy() {
 const mnum = (x) => (x && typeof x === 'object' ? (x.value ?? 0) : (x ?? 0))
 const mdisp = (x) => (x && typeof x === 'object' ? (x.display ?? money(x.value)) : money(x))
 const heroCompact = (v) => formatCurrencyCompact(v, { threshold: 1_000, kDigits: 2, mDigits: 2, trim: false })
+// Shared Form 8582 defaults so the Overview "Banked" card and the 8582 tab agree
+// on first load. MAGI drives the $25k special-allowance phaseout ($100k–$150k),
+// so both views must assume the same MAGI or their carryforwards won't match.
+const DEFAULT_MAGI = 130000
 // Subdued dusty-rose for loss / carryforward series — softer than the bright danger red.
 const LOSS_TONE = '#c98a8a'
 const LOSS_TONE_FILL = '#e7c4c4'
@@ -856,7 +860,7 @@ function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = fals
   )
 }
 
-function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate }) {
+function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, throughYear }) {
   const rate = formatFixed(assumptions?.effectiveTaxRate || 0, 1)
   const taxable = totals.taxableIncome || 0
   const deductions = totals.totalDeductions || 0
@@ -914,8 +918,8 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate }) 
           formula={'Schedule E bottom line = rents received − total deductions, across all rental years. Negative means a passive loss.'} />
         <MetricCard hero icon={ShieldCheck} label="Estimated tax savings" value={heroCompact(savings)} note={`deductions × ${rate}%`}
           formula={`What your deductions save in federal tax.\n\n= Total deductions × ${rate}% assumed marginal rate.\n\nCumulative across all rental years.`} />
-        <MetricCard icon={Landmark} tone="emerald" label="Banked for a future sale" value={carryforward == null ? '—' : compact(suspended)} note="Form 8582 · released when you sell"
-          formula={'Passive losses you could not use yet — banked under Form 8582, not lost. In a fully taxable sale the whole balance is released to offset your capital gain and other income. (After the $25,000 special allowance, phased out between $100k and $150k MAGI. Set your MAGI on the Form 8582 tab to refine this.)'} />
+        <MetricCard icon={Landmark} tone="emerald" label="Banked for a future sale" value={carryforward == null ? '—' : compact(suspended)} note={`Form 8582 · at $130k MAGI${throughYear ? ` · thru ${throughYear}` : ''}`}
+          formula={`Passive losses you could not use yet — banked under Form 8582, not lost. In a fully taxable sale the whole balance is released to offset your capital gain and other income.\n\nShown at $130k MAGI through ${throughYear || 'the latest year'} — the same default as the Form 8582 tab, so the two match. At $130k the $25,000 special allowance is phased down to $10k/yr, so more loss banks each year. Change MAGI on the Form 8582 tab to refine.`} />
       </div>
 
       {/* Close the loop: the paper loss isn't only "banked" — part already offset
@@ -1341,16 +1345,15 @@ function ScheduleECompareTab({ properties }) {
 
 // ---- Form 8582 tab ----------------------------------------------------------
 function Form8582Tab({ selectedPropertyIds }) {
-  const nowYear = new Date().getFullYear()
-  const [year, setYear] = useState(nowYear - 1)
-  const [magi, setMagi] = useState(130000)
+  const [year, setYear] = useState(null)  // null → latest rental year (backend default), matching the Overview
+  const [magi, setMagi] = useState(DEFAULT_MAGI)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     let active = true
     setLoading(true)
-    propAPI.form8582({ tax_year: year, magi, ...(selectedPropertyIds ? { selected_property_ids: selectedPropertyIds, selection_explicit: true } : {}) })
-      .then((r) => { if (active) setData(r.data) })
+    propAPI.form8582({ ...(year != null ? { tax_year: year } : {}), magi, ...(selectedPropertyIds ? { selected_property_ids: selectedPropertyIds, selection_explicit: true } : {}) })
+      .then((r) => { if (active) { setData(r.data); if (year == null && r.data?.taxYear != null) setYear(r.data.taxYear) } })
       .catch(() => { if (active) toast.error('Failed to load Form 8582') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
@@ -1367,7 +1370,7 @@ function Form8582Tab({ selectedPropertyIds }) {
     }])
   }
 
-  const availableYears = data?.availableYears?.length ? data.availableYears : [year]
+  const availableYears = data?.availableYears?.length ? data.availableYears : (year != null ? [year] : [])
   const t = data?.totals || {}
   const series = (data?.series || []).map((s) => ({ year: String(s.year), banked: s.banked ?? Math.abs(s.carryforward || 0), allowed: Math.abs(s.allowed || 0), taxValue: s.taxValueAtSale ?? 0 }))
   const bankedTotal = t.bankedLosses ?? Math.abs(t.carryforwardToNext || 0)
@@ -1376,7 +1379,7 @@ function Form8582Tab({ selectedPropertyIds }) {
   return (
     <div>
       <Toolbar>
-        <Field label="Tax year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{availableYears.map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
+        <Field label="Tax year"><select className={selectCls} value={year ?? ''} onChange={(e) => setYear(Number(e.target.value))}>{availableYears.map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
         <Field label="MAGI"><input type="number" step="1000" className={`${selectCls} w-32`} value={magi} onChange={(e) => setMagi(Number(e.target.value) || 0)} /></Field>
         <div className="ml-auto"><ExportButton onClick={doExport} /></div>
       </Toolbar>
@@ -1487,12 +1490,17 @@ export default function TaxCenterPage() {
 
   const [carryforward, setCarryforward] = useState(null)
   const [usedToDate, setUsedToDate] = useState(null)
+  const [bankedYear, setBankedYear] = useState(null)
   useEffect(() => {
-    const params = { magi: 0 }
+    // Latest rental year (backend default when tax_year is omitted) at the shared
+    // MAGI, so the lifetime banked balance reconciles with Net taxable income and
+    // matches the Form 8582 tab (which also defaults to the latest year).
+    const params = { magi: DEFAULT_MAGI }
     if (filtered) { params.selected_property_ids = selectedKey; params.selection_explicit = true }
     propAPI.form8582(params).then((r) => {
       setCarryforward(r.data?.totals?.carryforwardToNext ?? null)
       setUsedToDate(r.data?.totals?.allowedToDate ?? null)
+      setBankedYear(r.data?.taxYear ?? null)
     }).catch(() => {})
   }, [selectedKey, allSelected])
 
@@ -1552,7 +1560,7 @@ export default function TaxCenterPage() {
           ))}
         </nav>
 
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} /> : null}
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} throughYear={bankedYear} /> : null}
 
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (
