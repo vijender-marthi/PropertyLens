@@ -15,6 +15,7 @@ import {
   Files,
   History,
   Home,
+  Info,
   Landmark,
   Lightbulb,
   Percent,
@@ -827,25 +828,53 @@ function ExportButton({ onClick, label = 'Export to Excel' }) {
 }
 
 // ---- Hero KPI row -----------------------------------------------------------
+const METRIC_ICON_TONE = {
+  emerald: 'text-emerald-600 dark:text-emerald-300',
+  purple: 'text-purple-600 dark:text-purple-300',
+  amber: 'text-amber-600 dark:text-amber-300',
+  blue: 'text-blue-600 dark:text-blue-300',
+  red: 'text-red-600 dark:text-red-300',
+  gray: 'text-gray-500 dark:text-neutral-400',
+}
+function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = false, valueClass = '', formula }) {
+  return (
+    <div className={`relative rounded-xl border p-4 shadow-sm ${hero ? 'border-2 border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide ${hero ? 'text-emerald-700 dark:text-emerald-300' : METRIC_ICON_TONE[tone]}`}><Icon className="h-4 w-4" />{label}</div>
+        {formula ? (
+          <span className="group relative shrink-0">
+            <Info className="h-3.5 w-3.5 cursor-help text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200" />
+            <span className="pointer-events-none absolute right-0 top-6 z-30 hidden w-60 whitespace-pre-line rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed text-gray-600 shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">{formula}</span>
+          </span>
+        ) : null}
+      </div>
+      <p className={`mt-2 font-semibold tracking-tight ${hero ? 'text-3xl text-emerald-700 dark:text-emerald-200' : `text-2xl ${valueClass || 'text-gray-950 dark:text-white'}`}`}>{value}</p>
+      <p className={`mt-1 text-xs ${hero ? 'text-emerald-700/80 dark:text-emerald-300/80' : 'text-gray-500 dark:text-neutral-400'}`}>{note}</p>
+    </div>
+  )
+}
+
 function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
   const taxable = totals.taxableIncome || 0
+  const rate = formatFixed(assumptions?.effectiveTaxRate || 0, 1)
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
-      <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50 p-4 shadow-sm dark:border-emerald-500/70 dark:bg-emerald-950/30">
-        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300"><ShieldCheck className="h-5 w-5" /><span className="text-xs font-medium uppercase tracking-wide">Estimated tax savings</span></div>
-        <p className="mt-2 text-3xl font-bold tracking-tight text-emerald-700 dark:text-emerald-200">{heroCompact(totals.estimatedSavings)}</p>
-        <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/80">deductions × {formatFixed(assumptions?.effectiveTaxRate || 0, 1)}%</p>
+    <div>
+      <div className="mb-3 flex items-start gap-2 text-sm text-gray-500 dark:text-neutral-400">
+        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>Lifetime tax position — cumulative across all rental years{scopeLabel ? ` (${scopeLabel})` : ''}. Hover the <Info className="inline h-3.5 w-3.5 align-text-bottom" /> on any card for its formula. Use the tabs below to drill into a single year or property.</span>
       </div>
-      <KpiCard icon={ReceiptText} label="Total deductions" value={compact(totals.totalDeductions)} note={scopeLabel} tone="purple" />
-      <KpiCard icon={Landmark} label="Depreciation" value={compact(totals.depreciation)} note="non-cash" tone="amber" />
-      <KpiCard icon={Percent} label="Mortgage interest" value={compact(totals.mortgageInterest)} note="de-duplicated" tone="blue" />
-      <div className={`rounded-xl border p-4 shadow-sm ${taxable < 0 ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
-        <div className={`flex items-center gap-2 ${taxable < 0 ? 'text-red-600 dark:text-red-300' : 'text-gray-500 dark:text-neutral-400'}`}><FileSpreadsheet className="h-5 w-5" /><span className="text-xs font-medium uppercase tracking-wide">Net taxable income</span></div>
-        <p className={`mt-2 text-2xl font-semibold tracking-tight ${taxable < 0 ? 'text-red-600 dark:text-red-300' : 'text-gray-950 dark:text-white'}`}>{compact(taxable)}</p>
-        <p className={`mt-1 text-xs ${taxable < 0 ? 'text-red-500/80 dark:text-red-300/70' : 'text-gray-500 dark:text-neutral-400'}`}>Schedule E total</p>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <MetricCard hero icon={ShieldCheck} label="Estimated tax savings" value={heroCompact(totals.estimatedSavings)} note={`deductions × ${rate}%`}
+          formula={`What your deductions save in federal tax.\n\n= Total deductions × ${rate}% assumed marginal rate.\n\nCumulative across all rental years.`} />
+        <MetricCard icon={ReceiptText} tone="purple" label="Total deductions" value={compact(totals.totalDeductions)} note={scopeLabel ? `lifetime · ${scopeLabel}` : 'lifetime'}
+          formula={'Every deductible Schedule E expense — operating costs + mortgage interest + property tax + depreciation — summed across all rental years.'} />
+        <MetricCard icon={Landmark} tone="amber" label="Depreciation" value={compact(totals.depreciation)} note="non-cash, lifetime"
+          formula={'Non-cash write-off of the building basis (purchase + closing − land) ÷ 27.5 years, prorated by rented months. Summed across all rental years.'} />
+        <MetricCard icon={FileSpreadsheet} tone={taxable < 0 ? 'red' : 'gray'} label="Net taxable income" value={compact(taxable)} valueClass={taxable < 0 ? 'text-red-600 dark:text-red-300' : ''} note="Schedule E total, lifetime"
+          formula={'Schedule E bottom line = rents received − total deductions, across all rental years. Negative means a passive loss.'} />
+        <MetricCard icon={ArrowRight} tone="red" label="Carryforward to next year" value={carryforward == null ? '—' : compact(carryforward)} valueClass="text-red-600 dark:text-red-300" note="Form 8582 · suspended"
+          formula={'Passive losses you could not use, carried forward under Form 8582 — after the $25,000 special allowance (phased out between $100k and $150k MAGI). Set your MAGI on the Form 8582 tab to refine this.'} />
       </div>
-      <KpiCard icon={Scale} label="Est. tax liability" value={compact(totals.estimatedLiability)} note={`max(0, taxable) × ${formatFixed(assumptions?.effectiveTaxRate || 0, 1)}%`} tone={totals.estimatedLiability > 0 ? 'amber' : 'emerald'} />
-      <KpiCard icon={ArrowRight} label="Carryforward to next year" value={carryforward == null ? '—' : compact(carryforward)} note="Form 8582 · suspended" tone="red" />
     </div>
   )
 }
@@ -1185,14 +1214,11 @@ function OverviewTab({ model, group, yearLabel, selectedYear, controls }) {
 // ---- Schedule E tab ---------------------------------------------------------
 function ScheduleETab({ properties }) {
   const rentals = properties.filter((p) => !p.isPrimary && String(p.usageType || 'Rental').toLowerCase() !== 'primary')
-  const [scope, setScope] = useState('all')
-  const [propId, setPropId] = useState(rentals[0]?.id)
   const nowYear = new Date().getFullYear()
   const [year, setYear] = useState(nowYear - 1)
   const [dataByProp, setDataByProp] = useState({})
   const [loading, setLoading] = useState(false)
-  useEffect(() => { if (!rentals.find((p) => p.id === propId)) setPropId(rentals[0]?.id) }, [rentals, propId])
-  const targets = scope === 'single' ? rentals.filter((p) => p.id === propId) : rentals
+  const targets = rentals
   useEffect(() => {
     let active = true
     setLoading(true)
@@ -1200,7 +1226,7 @@ function ScheduleETab({ properties }) {
       .then((entries) => { if (active) setDataByProp(Object.fromEntries(entries)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [scope, propId, year, properties.length])
+  }, [year, properties.length])
 
   const doExport = () => {
     const sheets = targets.map((p) => {
@@ -1213,14 +1239,13 @@ function ScheduleETab({ properties }) {
       }
     }).filter((s) => s.rows.length)
     if (!sheets.length) { toast.error('No Schedule E data to export'); return }
-    exportTaxWorkbook(scope === 'single' ? `ScheduleE_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_AllProperties_${year}`, sheets)
+    exportTaxWorkbook(targets.length === 1 ? `ScheduleE_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_${year}`, sheets)
   }
 
   return (
     <div>
       <Toolbar>
-        <Segmented value={scope} onChange={setScope} options={[{ value: 'all', label: 'All properties' }, { value: 'single', label: 'Single property' }]} />
-        {scope === 'single' ? <select className={selectCls} value={propId} onChange={(e) => setPropId(Number(e.target.value))}>{rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select> : null}
+        <span className="text-xs text-gray-500 dark:text-neutral-400">{targets.length} propert{targets.length === 1 ? 'y' : 'ies'} · filter from the timeline above</span>
         <Field label="Tax year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{Array.from({ length: 8 }, (_, i) => nowYear - i).map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
         <div className="ml-auto"><ExportButton onClick={doExport} /></div>
       </Toolbar>
@@ -1245,14 +1270,11 @@ function ScheduleETab({ properties }) {
 // ---- Schedule E compare tab -------------------------------------------------
 function ScheduleECompareTab({ properties }) {
   const rentals = properties.filter((p) => !p.isPrimary && String(p.usageType || 'Rental').toLowerCase() !== 'primary')
-  const [scope, setScope] = useState('single')
-  const [propId, setPropId] = useState(rentals[0]?.id)
   const nowYear = new Date().getFullYear()
   const [year, setYear] = useState(nowYear - 1)
   const [dataByProp, setDataByProp] = useState({})
   const [loading, setLoading] = useState(false)
-  useEffect(() => { if (!rentals.find((p) => p.id === propId)) setPropId(rentals[0]?.id) }, [rentals, propId])
-  const targets = scope === 'single' ? rentals.filter((p) => p.id === propId) : rentals
+  const targets = rentals
   useEffect(() => {
     let active = true
     setLoading(true)
@@ -1260,7 +1282,7 @@ function ScheduleECompareTab({ properties }) {
       .then((entries) => { if (active) setDataByProp(Object.fromEntries(entries)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [scope, propId, year, properties.length])
+  }, [year, properties.length])
 
   const [expanded, setExpanded] = useState({})
   const netOf = (lines) => { const l = (lines || []).find((x) => x.key === 'net_income'); return l ? { filed: mnum(l.filed), computed: mnum(l.computed), hasFiled: l.filed != null } : { filed: 0, computed: 0, hasFiled: false } }
@@ -1276,23 +1298,21 @@ function ScheduleECompareTab({ properties }) {
       }
     }).filter((s) => s.rows.length)
     if (!sheets.length) { toast.error('No comparison data to export'); return }
-    exportTaxWorkbook(scope === 'single' ? `ScheduleE_Compare_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_Compare_AllProperties_${year}`, sheets)
+    exportTaxWorkbook(targets.length === 1 ? `ScheduleE_Compare_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_Compare_${year}`, sheets)
   }
 
   return (
     <div>
       <Toolbar>
-        <Segmented value={scope} onChange={setScope} options={[{ value: 'single', label: 'Single property' }, { value: 'all', label: 'All properties' }]} />
-        {scope === 'single' ? <select className={selectCls} value={propId} onChange={(e) => setPropId(Number(e.target.value))}>{rentals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select> : null}
+        <span className="text-xs text-gray-500 dark:text-neutral-400">{targets.length} propert{targets.length === 1 ? 'y' : 'ies'} · filter from the timeline above</span>
         <Field label="Filed year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{Array.from({ length: 8 }, (_, i) => nowYear - i).map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
         <div className="ml-auto flex items-center gap-2">
           <button type="button" onClick={() => toast('Upload a filed 1040 Schedule E on the Documents page', { icon: '↥' })} className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"><Upload className="h-4 w-4" /> Upload filed 1040</button>
           <ExportButton onClick={doExport} />
         </div>
       </Toolbar>
-      <p className="mb-3 text-xs text-gray-500 dark:text-neutral-400">Comparison only — filed figures never replace PropertyLens values.</p>
+      <p className="mb-3 text-xs text-gray-500 dark:text-neutral-400">Comparison only — filed figures never replace PropertyLens values. Expand a property for the line-by-line detail.</p>
       {loading && !Object.keys(dataByProp).length ? <EmptyState text="Loading comparison…" /> : (
-        scope === 'all' ? (
           <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
             <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
               <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400"><tr><th className="px-2 py-3" /><th className="px-4 py-3 text-left">Property</th><th className="px-4 py-3 text-right">Filed net (L26)</th><th className="px-4 py-3 text-right">PropertyLens net</th><th className="px-4 py-3 text-right">Difference</th><th className="px-4 py-3 text-right">Status</th></tr></thead>
@@ -1319,15 +1339,6 @@ function ScheduleECompareTab({ properties }) {
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {targets.map((p) => {
-              const lines = (dataByProp[p.id]?.lines) || []
-              if (!lines.length) return <EmptyState key={p.id} text={`No Schedule E for ${p.name} in ${year}.`} />
-              return <Panel key={p.id} title={p.name} subtitle={`Filed 1040 vs PropertyLens · ${year}`}><ScheduleELines lines={lines} showCompare /></Panel>
-            })}
-          </div>
-        )
       )}
     </div>
   )
@@ -1527,7 +1538,7 @@ export default function TaxCenterPage() {
           ))}
         </nav>
 
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel="Lifetime · all years" carryforward={carryforward} /> : null}
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} /> : null}
 
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (
