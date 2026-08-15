@@ -82,6 +82,13 @@ function compact(value) {
   return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 1, mDigits: 1 })
 }
 
+// Marks a home that was a rental for only part of the time (now a primary
+// residence) — only its rental years count on Schedule E.
+function MixedBadge({ show }) {
+  if (!show) return null
+  return <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" title="Mixed use — rented for part of the time; only rental years are on Schedule E">Mixed</span>
+}
+
 function KpiCard({ icon: Icon, label, value, note, tone = 'emerald' }) {
   const tones = {
     emerald: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -220,7 +227,7 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
           {rows.map((row) => (
             <tr key={row.propertyId}>
               <td className="px-4 py-3">
-                <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300">{row.propertyName}</Link>
+                <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300">{row.propertyName}</Link><MixedBadge show={row.mixedUse} />
                 <p className="text-xs text-gray-400">{row.location || row.sourceLabel}</p>
               </td>
               {cols.map((id) => {
@@ -953,7 +960,7 @@ function PropertyLedger({ model }) {
               <Fragment key={p.propertyId}>
                 <tr className="cursor-pointer bg-white hover:bg-gray-50 dark:bg-neutral-900 dark:hover:bg-neutral-800/60" onClick={() => setOpen((o) => ({ ...o, [p.propertyId]: !o[p.propertyId] }))}>
                   <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}{p.propertyName}</span>
+                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}{p.propertyName}<MixedBadge show={p.mixedUse} /></span>
                     <span className="ml-5 text-xs text-gray-400">{p.location}</span>
                   </td>
                   <td className="px-4 py-3 text-right">{money(totals.propertyTax)}</td>
@@ -1018,7 +1025,7 @@ function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
                 let total = 0
                 return (
                   <tr key={p.propertyId}>
-                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{p.propertyName}</td>
+                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{p.propertyName}<MixedBadge show={p.mixedUse} /></td>
                     {cols.map((y) => { const v = (p.byYear || {})[String(y)]; if (v != null) total += v; return <td key={y} className={`px-3 py-2 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''} ${v == null ? 'text-gray-300 dark:text-neutral-600' : 'text-gray-700 dark:text-neutral-200'}`}>{v == null ? '—' : money(v)}</td> })}
                     <td className="px-3 py-2 text-right font-medium">{money(total)}</td>
                   </tr>
