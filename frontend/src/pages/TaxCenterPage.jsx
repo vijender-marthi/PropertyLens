@@ -856,7 +856,7 @@ function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = fals
   )
 }
 
-function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
+function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate }) {
   const rate = formatFixed(assumptions?.effectiveTaxRate || 0, 1)
   const taxable = totals.taxableIncome || 0
   const deductions = totals.totalDeductions || 0
@@ -866,6 +866,10 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
   const cashDeductions = Math.max(deductions - depreciation, 0)
   const isLoss = taxable < 0
   const suspended = carryforward != null && carryforward < 0 ? Math.abs(carryforward) : 0
+  // The paper loss splits two ways: what already offset income (special allowance
+  // drawn each year, backend allowedToDate) and what's banked for a sale.
+  const used = usedToDate != null ? usedToDate : (isLoss ? Math.max(Math.abs(taxable) - suspended, 0) : 0)
+  const passiveLoss = used + suspended
   const depPct = deductions ? Math.round((depreciation / deductions) * 100) : 0
   const yrs = scopeLabel || 'your rental years'
 
@@ -913,6 +917,25 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
         <MetricCard icon={Landmark} tone="emerald" label="Banked for a future sale" value={carryforward == null ? '—' : compact(suspended)} note="Form 8582 · released when you sell"
           formula={'Passive losses you could not use yet — banked under Form 8582, not lost. In a fully taxable sale the whole balance is released to offset your capital gain and other income. (After the $25,000 special allowance, phased out between $100k and $150k MAGI. Set your MAGI on the Form 8582 tab to refine this.)'} />
       </div>
+
+      {/* Close the loop: the paper loss isn't only "banked" — part already offset
+          income. Answers "where did the difference go?" between the two cards. */}
+      {isLoss && passiveLoss > 0 ? (
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p className="text-sm text-gray-700 dark:text-neutral-300">Where your <b className="font-semibold text-gray-950 dark:text-white">{compact(passiveLoss)}</b> paper loss actually went</p>
+            <p className="text-xs text-gray-400">paper loss = used against income + banked</p>
+          </div>
+          <div className="mt-2.5 flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
+            <div className="h-full bg-blue-500" style={{ width: `${passiveLoss ? (used / passiveLoss) * 100 : 0}%` }} />
+            <div className="h-full bg-emerald-500" style={{ width: `${passiveLoss ? (suspended / passiveLoss) * 100 : 0}%` }} />
+          </div>
+          <div className="mt-2.5 grid gap-1.5 text-xs text-gray-600 dark:text-neutral-300 sm:grid-cols-2">
+            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-blue-500" />Already used against income · <b className="tabular-nums text-gray-900 dark:text-white">{compact(used)}</b> — deducted in past years via the $25k/yr special allowance</span>
+            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />Banked for a future sale · <b className="tabular-nums text-gray-900 dark:text-white">{compact(suspended)}</b> — released when you sell</span>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -1463,10 +1486,14 @@ export default function TaxCenterPage() {
   }, [selectedKey, allSelected])
 
   const [carryforward, setCarryforward] = useState(null)
+  const [usedToDate, setUsedToDate] = useState(null)
   useEffect(() => {
     const params = { magi: 0 }
     if (filtered) { params.selected_property_ids = selectedKey; params.selection_explicit = true }
-    propAPI.form8582(params).then((r) => setCarryforward(r.data?.totals?.carryforwardToNext ?? null)).catch(() => {})
+    propAPI.form8582(params).then((r) => {
+      setCarryforward(r.data?.totals?.carryforwardToNext ?? null)
+      setUsedToDate(r.data?.totals?.allowedToDate ?? null)
+    }).catch(() => {})
   }, [selectedKey, allSelected])
 
   const model = analysis?.taxCenter || { rows: [], byYear: [], propertyLedger: [], totals: {}, categories: [], trend: [], assumptions: {}, years: [], availableYears: [] }
@@ -1525,7 +1552,7 @@ export default function TaxCenterPage() {
           ))}
         </nav>
 
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} /> : null}
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} /> : null}
 
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (

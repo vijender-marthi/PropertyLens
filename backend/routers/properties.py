@@ -13041,6 +13041,10 @@ def form_8582(
             "totalLoss": round(total_all, 2),
             "allowedThisYear": round(allowed_all, 2),
             "carryforwardToNext": round(carry_all, 2),
+            # Cumulative losses already released against income across every rental
+            # year (sum of the yearly special-allowance draws). Lets the UI close
+            # the loop: total loss = used to date + still banked.
+            "allowedToDate": round(sum(s["allowed"] for s in series), 2),
             # Suspended losses reframed as a benefit: the balance banked to date
             # and the tax it would offset in a fully taxable sale.
             "bankedLosses": round(abs(carry_all), 2),
