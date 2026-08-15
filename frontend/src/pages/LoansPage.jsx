@@ -10,6 +10,7 @@ const money = (v) => formatCurrency(v || 0)
 const compact = (v) => formatCurrencyCompact(v || 0, { threshold: 100_000, kDigits: 1, mDigits: 1 })
 const num = (v) => (v && typeof v === 'object' ? (v.value ?? 0) : (v ?? 0))
 const metric = (kpis, key) => num(kpis?.[key])
+const label = (kpis, key, fallback) => kpis?.[key]?.label || fallback
 
 const KIND = {
   fixed: { label: 'Fixed', cls: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
@@ -134,9 +135,9 @@ export default function LoansPage() {
           <div className="grid gap-4 lg:grid-cols-[1fr_1.9fr]">
             <Card>
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-gray-50 p-3.5 dark:bg-neutral-950/50"><p className="text-xs text-gray-500 dark:text-neutral-400">Balance owed</p><p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{compact(balance)}</p></div>
-                <div className="rounded-xl bg-gray-50 p-3.5 dark:bg-neutral-950/50"><p className="text-xs text-gray-500 dark:text-neutral-400">Blended rate</p><p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{weightedRate.toFixed(2)}%</p></div>
-                <div className="col-span-2 rounded-xl bg-gray-50 p-3.5 dark:bg-neutral-950/50"><p className="text-xs text-gray-500 dark:text-neutral-400">Monthly principal + interest</p><p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{money(monthlyPI)}<span className="text-sm font-normal text-gray-400"> /mo</span></p></div>
+                <div className="rounded-xl bg-gray-50 p-3.5 dark:bg-neutral-950/50"><p className="text-xs text-gray-500 dark:text-neutral-400">{label(kpis, 'totalBalance', 'Total loan balance')}</p><p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{compact(balance)}</p></div>
+                <div className="rounded-xl bg-gray-50 p-3.5 dark:bg-neutral-950/50"><p className="text-xs text-gray-500 dark:text-neutral-400">{label(kpis, 'weightedRate', 'Weighted average interest rate')}</p><p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{weightedRate.toFixed(2)}%</p></div>
+                <div className="col-span-2 rounded-xl bg-gray-50 p-3.5 dark:bg-neutral-950/50"><p className="text-xs text-gray-500 dark:text-neutral-400">{label(kpis, 'monthlyPI', 'Total monthly P&I')}</p><p className="mt-1 text-2xl font-semibold tabular-nums text-gray-950 dark:text-white">{money(monthlyPI)}<span className="text-sm font-normal text-gray-400"> /mo</span></p></div>
               </div>
               {dscr != null ? (
                 <div className={`mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${dscr >= 1.2 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'}`}>
