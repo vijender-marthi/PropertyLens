@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { ArrowDownToLine, Building2, Home, RefreshCw, Star, TrendingDown } from 'lucide-react'
 import AuditAlerts from '../components/AuditAlerts'
@@ -174,7 +174,7 @@ export default function AnalyticsPage() {
                     return (
                       <tr key={r.id} className="border-t border-gray-100 dark:border-neutral-800">
                         <td className="px-4 py-3"><span className={`inline-grid h-6 w-6 place-items-center rounded-full text-[11.5px] font-semibold ${rank === 1 ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-500 dark:bg-neutral-800 dark:text-neutral-300'}`}>{rank}</span></td>
-                        <td className="px-4 py-3"><span className="font-medium text-gray-950 dark:text-white"><HomeLabel id={r.id} name={r.name} /></span></td>
+                        <td className="px-4 py-3"><Link to={`/properties/${r.id}`} className="font-medium text-gray-950 hover:text-violet-600 dark:text-white dark:hover:text-violet-400"><HomeLabel id={r.id} name={r.name} /></Link></td>
                         <td className="px-4 py-3 text-right">{compact(r.equity)}</td>
                         <td className={`px-4 py-3 text-right ${r.coc < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatFixed(r.coc, 1)}%</td>
                         <td className="px-4 py-3 text-right">{formatFixed(r.cap, 1)}%</td>

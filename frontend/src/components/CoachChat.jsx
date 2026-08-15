@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { coachAPI } from '../services/api'
 import toast from 'react-hot-toast'
 import { Send, Trash2, Sparkles } from 'lucide-react'
@@ -12,7 +12,28 @@ const SUGGESTIONS = [
   'How can I improve my portfolio cash flow?',
 ]
 
+// Map the active route to a human page name the coach can key off of.
+const PAGE_NAMES = [
+  ['/tax-center', 'Tax Center'],
+  ['/loans', 'Loans'],
+  ['/income-expenses', 'Income & Expenses'],
+  ['/analytics', 'Analytics'],
+  ['/portfolio-equity', 'Portfolio'],
+  ['/payoff-planner', 'Payoff planner'],
+  ['/exit-planner', 'Exit planner'],
+  ['/properties/new', 'Add property'],
+  ['/properties/', 'Property detail'],
+  ['/properties', 'Portfolio Manager'],
+  ['/reports', 'Portfolio report'],
+  ['/uploads', 'Documents'],
+]
+function activePageName(pathname) {
+  const hit = PAGE_NAMES.find(([prefix]) => pathname.startsWith(prefix))
+  return hit ? hit[1] : 'the app'
+}
+
 export default function CoachChat({ compact = false }) {
+  const location = useLocation()
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -34,7 +55,7 @@ export default function CoachChat({ compact = false }) {
     setMessages((m) => [...m, { role: 'user', content: msg }])
     setSending(true)
     try {
-      const { data } = await coachAPI.chat(msg)
+      const { data } = await coachAPI.chat(msg, activePageName(location.pathname))
       setMessages((m) => [...m, { role: 'assistant', content: data.reply }])
     } catch (e) {
       const detail = e.response?.data?.detail || 'Something went wrong.'

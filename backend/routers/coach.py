@@ -46,6 +46,7 @@ class SettingsIn(BaseModel):
 
 class ChatIn(BaseModel):
     message: str
+    page: Optional[str] = None
 
 
 def _money(v) -> str:
@@ -197,6 +198,12 @@ def chat(body: ChatIn, db: Session = Depends(get_db), current_user: models.User 
     convo.append({"role": "user", "content": message})
 
     system = SYSTEM_PROMPT + "\n\n" + _portfolio_context(db, current_user)
+    if body.page:
+        system += (
+            f"\n\nThe user is currently on the '{body.page}' page of PropertyLens. "
+            "If their question is general or ambiguous, assume it's about what that page shows. "
+            "If they explicitly mention a different area (taxes, loans, income, a specific property), answer about that instead."
+        )
     if provider == "claude":
         reply = _call_claude(key, model, system, convo)
     elif provider == "openai":

@@ -205,7 +205,7 @@ export const coachAPI = {
   saveSettings: (data) => api.post('/coach/settings', data),
   history: () => api.get('/coach/history'),
   clearHistory: () => api.delete('/coach/history'),
-  chat: (message) => api.post('/coach/chat', { message }),
+  chat: (message, page) => api.post('/coach/chat', { message, page }),
 }
 
 export default api

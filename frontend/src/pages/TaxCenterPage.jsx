@@ -1358,13 +1358,16 @@ function Form8582Tab({ selectedPropertyIds }) {
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={series} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="cfAreaFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={LOSS_TONE} stopOpacity={0.05} /><stop offset="95%" stopColor={LOSS_TONE} stopOpacity={0.35} /></linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
                   <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} />
                   <Tooltip formatter={(v, n) => [money(v), n === 'carryforward' ? 'Carryforward balance' : 'Allowed that year']} contentStyle={chartTooltipStyle(false)} />
                   <ReferenceLine y={0} stroke={chartColors.neutral} />
                   <Legend />
-                  <Bar dataKey="carryforward" name="Carryforward balance" fill={LOSS_TONE} fillOpacity={0.85} radius={[0, 0, 4, 4]} />
+                  <Area type="monotone" dataKey="carryforward" name="Carryforward balance" stroke={LOSS_TONE} strokeWidth={2.5} fill="url(#cfAreaFill)" />
                   <Line type="monotone" dataKey="allowed" name="Allowed that year" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} />
                 </ComposedChart>
               </ResponsiveContainer>
