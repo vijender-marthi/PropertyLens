@@ -175,6 +175,23 @@ function DeductionBars({ categories }) {
   )
 }
 
+function SavingsAcrossYears({ data }) {
+  if (!data.length) return <EmptyState text="No yearly savings yet." />
+  return (
+    <div className="h-64">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+          <XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+          <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
+          <Tooltip formatter={(v) => [money(v), 'Estimated savings']} contentStyle={chartTooltipStyle(false)} />
+          <Bar dataKey="estimatedSavings" fill={chartColors.positive} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 const DEDUCTION_COLUMNS = {
   totalDeductions: { header: 'Total deductions', get: (r) => money(r.totalDeductions), className: () => 'font-semibold text-gray-950 dark:text-white' },
   depreciation: { header: 'Depreciation', get: (r) => money(r.depreciation) },
@@ -1475,6 +1492,10 @@ export default function TaxCenterPage() {
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (
           <div className="space-y-5">
+            <div className="grid gap-5 lg:grid-cols-2">
+              <Panel title="Deductions by category" subtitle="Proportional breakdown"><DeductionBars categories={model.categories || []} /></Panel>
+              <Panel title="Savings across years" subtitle={`Estimated at ${formatFixed(model.assumptions?.effectiveTaxRate || 0, 1)}%`}><SavingsAcrossYears data={model.trend || []} /></Panel>
+            </div>
             <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Tax year and grouping apply to this table" action={deductionControls}>
               <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={year} />
             </Panel>
