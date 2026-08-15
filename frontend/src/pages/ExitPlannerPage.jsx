@@ -298,7 +298,10 @@ function ExitCharts({ rows, breakEven }) {
   )
 }
 
-function Waterfall({ row }) {
+// Horizontal waterfall: sale price steps down through costs, loan, and cash
+// invested to land on profit. Reads top-to-bottom so each step's running
+// total lines up under the last — clearer than stacked vertical columns.
+function Waterfall({ row, maxSale }) {
   const sale = row.salePrice.value
   const costs = row.sellingCosts.value
   const loan = row.loanPayoff.value
@@ -308,32 +311,40 @@ function Waterfall({ row }) {
   const profit = preProfit(row)
   const c1 = sale - costs, c2 = c1 - loan, af = cash + flow
   const bars = [
-    { l: 'Sale', v: sale, col: '#378ADD', bot: 0, top: sale, end: sale },
-    { l: 'Costs', v: costs, sub: true, col: '#BA7517', bot: c1, top: sale, end: c1 },
-    { l: 'Loan', v: loan, sub: true, col: '#7F77DD', bot: c2, top: c1, end: c2 },
-    { l: 'Cash', v: cash, col: '#1D9E75', bot: 0, top: cash, end: cash },
-    { l: 'Cash flow', v: Math.abs(flow), sub: flow < 0, col: flow < 0 ? '#E24B4A' : '#639922', bot: Math.min(cash, af), top: Math.max(cash, af), end: af },
-    { l: 'Invested', v: invested, sub: true, col: '#888780', bot: af - invested, top: af, end: af - invested },
-    { l: 'Profit', v: profit, col: profit < 0 ? '#E24B4A' : '#639922', bot: Math.min(profit, 0), top: Math.max(profit, 0), end: profit },
+    { l: 'Sale price', v: sale, total: true, col: '#378ADD', bot: 0, top: sale, end: sale },
+    { l: 'Selling costs', v: costs, sub: true, col: '#BA7517', bot: c1, top: sale, end: c1 },
+    { l: 'Loan payoff', v: loan, sub: true, col: '#7F77DD', bot: c2, top: c1, end: c2 },
+    { l: 'Cash to account', v: cash, total: true, col: '#1D9E75', bot: 0, top: cash, end: cash },
+    { l: 'Rental cash flow', v: Math.abs(flow), sub: flow < 0, col: flow < 0 ? '#E24B4A' : '#639922', bot: Math.min(cash, af), top: Math.max(cash, af), end: af },
+    { l: 'Cash invested', v: invested, sub: true, col: '#888780', bot: af - invested, top: af, end: af - invested },
+    { l: 'Profit', v: profit, total: true, col: profit < 0 ? '#E24B4A' : '#639922', bot: Math.min(profit, 0), top: Math.max(profit, 0), end: profit, running: profit, signed: true },
   ]
-  const W = 760, H = 300, topPad = 32, botPad = 40, n = bars.length
-  const colW = W / n, bw = colW * 0.62
-  const maxLvl = Math.max(...bars.map((b) => b.top))
+  const n = bars.length
+  const W = 720, rowH = 40, topPad = 6
+  const H = topPad * 2 + n * rowH
+  const LW = 118, RW = 92                          // label gutter, value column
+  const plot = W - LW - RW
+  const maxLvl = Math.max(maxSale || 0, ...bars.map((b) => b.top))
   const minLvl = Math.min(0, ...bars.map((b) => b.bot))
   const span = (maxLvl - minLvl) || 1
-  const scale = (H - topPad - botPad) / span
-  const y = (lvl) => (H - botPad) - (lvl - minLvl) * scale
+  const x = (lvl) => LW + ((lvl - minLvl) / span) * plot
+  const zeroX = x(0)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full text-gray-400 dark:text-gray-500" style={{ height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
+    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full" style={{ height: 'auto' }} role="img" aria-label="Sale price to profit waterfall">
+      <line x1={zeroX} y1={topPad + 2} x2={zeroX} y2={H - topPad - 2} strokeWidth="1" strokeDasharray="2 3" className="stroke-gray-300 dark:stroke-neutral-700" />
       {bars.map((b, i) => {
-        const x = i * colW + (colW - bw) / 2
-        const yTop = y(b.top), h = Math.max((b.top - b.bot) * scale, 2)
+        const yTop = topPad + i * rowH
+        const barH = rowH - 18
+        const barY = yTop + (rowH - barH) / 2
+        const x1 = x(b.bot), x2 = x(b.top)
+        const bw = Math.max(x2 - x1, 2)
+        const labelValue = `${b.sub ? '−' : b.signed && b.v < 0 ? '−' : ''}${formatChartCurrency(Math.abs(b.v))}`
         return (
           <g key={i}>
-            {i < n - 1 ? <line x1={x + bw} y1={y(b.end)} x2={(i + 1) * colW + (colW - bw) / 2} y2={y(b.end)} stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" /> : null}
-            <rect x={x} y={yTop} width={bw} height={h} rx="3" fill={b.col} />
-            <text x={x + bw / 2} y={yTop - 8} textAnchor="middle" fontSize="14" fontWeight="500" fill="currentColor">{b.sub ? '−' : ''}{formatChartCurrency(b.v)}</text>
-            <text x={x + bw / 2} y={H - 12} textAnchor="middle" fontSize="13" fill="currentColor">{b.l}</text>
+            {i < n - 1 ? <line x1={x(b.end)} y1={barY + barH} x2={x(b.end)} y2={barY + rowH - (rowH - barH) / 2 + 2} strokeWidth="1" strokeDasharray="3 3" className="stroke-gray-300 dark:stroke-neutral-600" /> : null}
+            <rect x={x1} y={barY} width={bw} height={barH} rx="3" fill={b.col} fillOpacity={b.total ? 1 : 0.9} />
+            <text x={LW - 12} y={barY + barH / 2} textAnchor="end" dominantBaseline="central" fontSize="13" fontWeight={b.total ? 600 : 400} className="fill-gray-700 dark:fill-neutral-200">{b.l}</text>
+            <text x={W - 6} y={barY + barH / 2} textAnchor="end" dominantBaseline="central" fontSize="13" fontWeight="600" className="fill-gray-900 dark:fill-white tabular-nums">{labelValue}</text>
           </g>
         )
       })}
