@@ -9,7 +9,8 @@ import { propAPI } from '../services/api'
 import { formatCurrency, formatCurrencyCompact } from '../utils/formatters'
 
 const money = (v) => formatCurrency(v || 0)
-const compact = (v) => formatCurrencyCompact(v || 0, { threshold: 100_000, kDigits: 1, mDigits: 1 })
+// Uniform compact: K/M with 2 decimals for any amount >= $1,000.
+const compact = (v) => formatCurrencyCompact(v || 0, { threshold: 1_000, kDigits: 2, mDigits: 2, trim: false })
 const num = (v) => (v && typeof v === 'object' ? (v.value ?? 0) : (v ?? 0))
 const flowCls = (v) => (v < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')
 

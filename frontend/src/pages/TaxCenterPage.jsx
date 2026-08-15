@@ -61,7 +61,7 @@ import { HomeTimeline, PropertyFilter } from '../components/PortfolioEquityDashb
 import { propAPI } from '../services/api'
 import { exportTaxWorkbook } from '../utils/taxExport'
 import { chartColors, chartTooltipStyle, chartTypography } from '../utils/chartTokens'
-import { formatChartCurrency, formatCurrency, formatCurrencyCompact, formatFixed, formatPercent } from '../utils/formatters'
+import { formatChartCurrency, formatCurrency, formatCurrencyCompact, formatFixed, formatMetricCurrency, formatPercent } from '../utils/formatters'
 
 const TAX_TABS = ['Overview', 'Deduction Summary', 'Schedule E', 'Schedule E Compare', 'Form 8582']
 
@@ -79,7 +79,7 @@ function money(value) {
 }
 
 function compact(value) {
-  return formatCurrencyCompact(value, { threshold: 100_000, kDigits: 1, mDigits: 1 })
+  return formatCurrencyCompact(value, { threshold: 1_000, kDigits: 2, mDigits: 2, trim: false })
 }
 
 // Marks a home that was a rental for only part of the time (now a primary
@@ -799,7 +799,7 @@ function TaxCenterPageLegacy() {
 
 const mnum = (x) => (x && typeof x === 'object' ? (x.value ?? 0) : (x ?? 0))
 const mdisp = (x) => (x && typeof x === 'object' ? (x.display ?? money(x.value)) : money(x))
-const heroCompact = (v) => formatCurrencyCompact(v, { threshold: 1_000, kDigits: 1, mDigits: 2 })
+const heroCompact = (v) => formatCurrencyCompact(v, { threshold: 1_000, kDigits: 2, mDigits: 2, trim: false })
 // Subdued dusty-rose for loss / carryforward series — softer than the bright danger red.
 const LOSS_TONE = '#c98a8a'
 const LOSS_TONE_FILL = '#e7c4c4'
