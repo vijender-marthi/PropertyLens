@@ -8,6 +8,7 @@ contracts.  React components must not reconstruct these calculations.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -173,6 +174,22 @@ def _active(loan: Dict[str, Any]) -> bool:
     return str(loan.get("status") or "OPEN").upper() not in CLOSED_STATUSES
 
 
+def _year_of(value: Any) -> Optional[int]:
+    if not value:
+        return None
+    match = re.search(r"(?:19|20)\d{2}", str(value))
+    return int(match.group(0)) if match else None
+
+
+def _loan_kind(loan_type: Any) -> str:
+    t = str(loan_type or "").upper()
+    if "ARM" in t or "ADJUST" in t:
+        return "arm"
+    if "BALLOON" in t:
+        return "balloon"
+    return "fixed"
+
+
 def _loan_row(property_row: Dict[str, Any], loan: Dict[str, Any]) -> Dict[str, Any]:
     payment = loan.get("payment") or {}
     current_ytd = loan.get("current_year_ytd") or {}
@@ -200,6 +217,15 @@ def _loan_row(property_row: Dict[str, Any], loan: Dict[str, Any]) -> Dict[str, A
         "interestYtd": _money(current_ytd.get("interest")),
         "interestToDate": _money(loan.get("accumulated_interest")),
         "nextPayment": loan.get("payment_due_date") or loan.get("statement_date") or loan.get("maturityDateDisplay"),
+        "maturityDate": loan.get("maturity_date"),
+        "maturityDisplay": loan.get("maturityDateDisplay"),
+        "payoffYear": _year_of(loan.get("maturity_date")),
+        "originationDate": loan.get("origination_date"),
+        "loanKind": _loan_kind(loan.get("loan_type")),
+        "isArm": _loan_kind(loan.get("loan_type")) == "arm",
+        "isBalloon": _loan_kind(loan.get("loan_type")) == "balloon",
+        "armResetDate": loan.get("arm_reset_date"),
+        "armIndex": loan.get("arm_index"),
         "status": "Active" if _active(loan) else "Closed",
         "source": loan.get("source") or "Loan record",
         "sourceStatus": loan.get("estimated_vs_reported") or "reported",

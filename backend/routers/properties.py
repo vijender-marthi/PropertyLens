@@ -1730,6 +1730,29 @@ def _display_loan_date(value: Optional[str]) -> str:
     return parsed.strftime("%b %d, %Y") if parsed else (str(value) if value else "")
 
 
+def _arm_first_reset_date(loan: Any, members: Optional[list] = None) -> Optional[str]:
+    """First rate-adjustment date for an ARM = origination + initial fixed period.
+    None for non-ARM loans or when the inputs aren't on file."""
+    if str(getattr(loan, "loan_type", "") or "").upper() != "ARM":
+        return None
+    initial = getattr(loan, "arm_initial_period", None)
+    origin = None
+    if members:
+        origin = getattr(members[0], "origination_date", None)
+    origin = origin or getattr(loan, "origination_date", None)
+    parsed = _parse_setup_date(origin)
+    if not initial or not parsed:
+        return None
+    try:
+        try:
+            reset = parsed.replace(year=parsed.year + int(initial))
+        except ValueError:  # Feb 29 origination
+            reset = parsed.replace(year=parsed.year + int(initial), day=28)
+        return reset.isoformat()
+    except Exception:
+        return None
+
+
 def _loan_chain_group_key(loan: Any) -> str:
     explicit = getattr(loan, "loan_group_id", None)
     if explicit:
@@ -6783,6 +6806,10 @@ def _compat_loan_payload(loan: Any, debt: Dict[str, Any], members: List[Any]) ->
         "replacementLoanId": getattr(loan, "replacement_loan_id", None),
         "maturity_date": getattr(loan, "maturity_date", None),
         "maturityDateDisplay": _display_loan_date(getattr(loan, "maturity_date", None)),
+        "arm_initial_period": getattr(loan, "arm_initial_period", None),
+        "arm_margin": getattr(loan, "arm_margin", None),
+        "arm_index": getattr(loan, "arm_index", None),
+        "arm_reset_date": _arm_first_reset_date(loan, members),
         "servicerSegments": debt.get("servicerSegments") or [],
     }
     payload.update(debt)
