@@ -798,9 +798,6 @@ const heroCompact = (v) => formatCurrencyCompact(v, { threshold: 1_000, kDigits:
 // on first load. MAGI drives the $25k special-allowance phaseout ($100k–$150k),
 // so both views must assume the same MAGI or their carryforwards won't match.
 const DEFAULT_MAGI = 130000
-// Subdued dusty-rose for loss / carryforward series — softer than the bright danger red.
-const LOSS_TONE = '#c98a8a'
-const LOSS_TONE_FILL = '#e7c4c4'
 
 function Segmented({ value, onChange, options }) {
   return (
@@ -910,35 +907,6 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
 
   return (
     <div className="space-y-4">
-      {/* The story — plain English, the way the Loans page reads */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-        <div className="grid gap-x-10 gap-y-5 lg:grid-cols-[1.4fr_1fr] lg:items-center">
-          <p className="text-[17px] leading-relaxed text-gray-800 dark:text-neutral-200">
-            Across {scopeLabel ? <>your rental years <b className="font-semibold">({scopeLabel})</b></> : 'your rental years'} you collected{' '}
-            <b className="font-semibold">{compact(rents)}</b> in rent and claimed <b className="font-semibold">{compact(deductions)}</b> in deductions —{' '}
-            <b className="font-semibold">{compact(depreciation)}</b> of it depreciation you never paid out of pocket. That{' '}
-            {isLoss
-              ? <>turned your rentals into a <b className="font-semibold text-red-600 dark:text-red-300">{compact(Math.abs(taxable))}</b> paper loss, trimming your federal tax by about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b>.</>
-              : <>left <b className="font-semibold">{compact(taxable)}</b> of net taxable income, with about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b> of tax sheltered by your deductions.</>}
-            {suspended > 0 ? <> And <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(suspended)}</b> of those losses aren't lost — they're banked under Form 8582 and released to offset future rental income or a sale.</> : null}
-          </p>
-          <div>
-            <div className="mb-1.5 flex justify-between text-xs text-gray-500 dark:text-neutral-400"><span>How your deductions break down</span><span className="tabular-nums">{compact(deductions)}</span></div>
-            <div className="flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
-              <div className="h-full bg-amber-500" style={{ width: `${deductions ? (depreciation / deductions) * 100 : 0}%` }} />
-              <div className="h-full bg-purple-500" style={{ width: `${deductions ? (cashDeductions / deductions) * 100 : 0}%` }} />
-            </div>
-            <div className="mt-3 grid grid-cols-1 gap-1.5 text-xs text-gray-600 dark:text-neutral-300 sm:grid-cols-2 lg:grid-cols-1">
-              <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />Depreciation (non-cash) · <span className="tabular-nums">{compact(depreciation)}</span> · {depPct}%</span>
-              <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-purple-500" />Cash deductions · <span className="tabular-nums">{compact(cashDeductions)}</span> · {100 - depPct}%</span>
-            </div>
-          </div>
-        </div>
-        <p className="mt-4 flex items-center gap-1.5 border-t border-gray-100 pt-3 text-xs text-gray-400 dark:border-neutral-800 dark:text-neutral-500">
-          <Info className="h-3.5 w-3.5 shrink-0" /> The flow below reads left to right — rent in, deductions out, what's taxable, what it saves. Hover any card for its formula, or use the tabs to drill into a single year or property.
-        </p>
-      </div>
-
       {/* The flow: Rent → Deductions → Taxable → Savings → Suspended */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <MetricCard icon={Wallet} tone="blue" label="Rent collected" value={compact(rents)} note={`gross rents · ${yrs}`}
@@ -972,6 +940,35 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
           </div>
         </div>
       ) : null}
+
+      {/* The story — plain English, the way the Loans page reads */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="grid gap-x-10 gap-y-5 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+          <p className="text-[17px] leading-relaxed text-gray-800 dark:text-neutral-200">
+            Across {scopeLabel ? <>your rental years <b className="font-semibold">({scopeLabel})</b></> : 'your rental years'} you collected{' '}
+            <b className="font-semibold">{compact(rents)}</b> in rent and claimed <b className="font-semibold">{compact(deductions)}</b> in deductions —{' '}
+            <b className="font-semibold">{compact(depreciation)}</b> of it depreciation you never paid out of pocket. That{' '}
+            {isLoss
+              ? <>turned your rentals into a <b className="font-semibold text-red-600 dark:text-red-300">{compact(Math.abs(taxable))}</b> paper loss, trimming your federal tax by about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b>.</>
+              : <>left <b className="font-semibold">{compact(taxable)}</b> of net taxable income, with about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b> of tax sheltered by your deductions.</>}
+            {suspended > 0 ? <> And <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(suspended)}</b> of those losses aren't lost — they're banked under Form 8582 and released to offset future rental income or a sale.</> : null}
+          </p>
+          <div>
+            <div className="mb-1.5 flex justify-between text-xs text-gray-500 dark:text-neutral-400"><span>How your deductions break down</span><span className="tabular-nums">{compact(deductions)}</span></div>
+            <div className="flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
+              <div className="h-full bg-amber-500" style={{ width: `${deductions ? (depreciation / deductions) * 100 : 0}%` }} />
+              <div className="h-full bg-purple-500" style={{ width: `${deductions ? (cashDeductions / deductions) * 100 : 0}%` }} />
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-1.5 text-xs text-gray-600 dark:text-neutral-300 sm:grid-cols-2 lg:grid-cols-1">
+              <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />Depreciation (non-cash) · <span className="tabular-nums">{compact(depreciation)}</span> · {depPct}%</span>
+              <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-purple-500" />Cash deductions · <span className="tabular-nums">{compact(cashDeductions)}</span> · {100 - depPct}%</span>
+            </div>
+          </div>
+        </div>
+        <p className="mt-4 flex items-center gap-1.5 border-t border-gray-100 pt-3 text-xs text-gray-400 dark:border-neutral-800 dark:text-neutral-500">
+          <Info className="h-3.5 w-3.5 shrink-0" /> The flow above reads left to right — rent in, deductions out, what's taxable, what it saves. Hover any card for its formula, or use the tabs to drill into a single year or property.
+        </p>
+      </div>
     </div>
   )
 }
@@ -1133,99 +1130,6 @@ function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
   )
 }
 
-// ---- Single-property chart (modernized) -------------------------------------
-function DepRow({ label, value, cls = '', badge }) {
-  return (
-    <div className="flex items-center justify-between border-b border-gray-100 py-1.5 last:border-0 dark:border-neutral-800">
-      <span className="text-xs text-gray-500 dark:text-neutral-400">{label}{badge}</span>
-      <span className={`text-sm font-medium tabular-nums ${cls || 'text-gray-950 dark:text-white'}`}>{value}</span>
-    </div>
-  )
-}
-
-function SinglePropertyChart({ model }) {
-  const ledger = model.propertyLedger || []
-  // Driven by the global property filter (timeline / dropdown), not a separate
-  // selector — filter to one property up top to focus this view.
-  const prop = ledger[0]
-  const multi = ledger.length > 1
-  if (!prop) {
-    return <Panel title="Single-property view" subtitle="Depreciation basis, mortgage interest, and passive-loss carryforward"><EmptyState text="No rental property in this scope." /></Panel>
-  }
-  const selector = (
-    <div className="flex items-center gap-2">
-      <HomeName id={prop.propertyId} name={prop.propertyName} className="text-sm font-medium text-gray-900 dark:text-white" />
-      {multi ? <span className="text-xs text-gray-400">· filter to one property above</span> : null}
-    </div>
-  )
-  const years = model.years || []
-  const withData = years.filter((y) => prop.byYear[String(y)])
-  const dep = prop.depreciation || {}
-  const interestData = withData.map((y) => ({ year: String(y), interest: (prop.byYear[String(y)] || {}).mortgageInterest || 0 }))
-  let cum = 0
-  const lossData = withData.map((y) => { cum += Math.min(0, (prop.byYear[String(y)] || {}).taxableIncome || 0); return { year: String(y), carryforward: Math.round(cum) } })
-  const lossColor = LOSS_TONE
-
-  return (
-    <Panel title="Single-property view" subtitle="Depreciation basis, mortgage interest, and passive-loss carryforward" action={selector}>
-      <div key={prop.propertyId} className="grid gap-4 lg:grid-cols-3">
-        {/* Depreciation & basis */}
-        <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-950 dark:text-white">Depreciation &amp; basis</h3>
-            {dep.landDefaulted ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">25% land default</span> : null}
-          </div>
-          <DepRow label="Purchase price" value={money(dep.purchasePrice)} />
-          <DepRow label={dep.landDefaulted ? 'Land (25% default)' : 'Land value'} value={money(dep.landValue)} />
-          <DepRow label="Building basis" value={money(dep.buildingBasis)} />
-          <DepRow label="Annual depreciation" value={money(dep.annualDepreciation)} cls="text-emerald-600" />
-          <DepRow label="Accumulated" value={money(dep.accumulated)} />
-          <DepRow label="Remaining basis" value={money(dep.remaining)} />
-          <DepRow label="Years left" value={`${dep.yearsLeft ?? '—'} of ${dep.recoveryYears ?? 27.5}`} />
-          <DepRow label="Recapture if sold" value={money(dep.recaptureIfSold)} cls="text-red-600" />
-        </div>
-        {/* Mortgage interest by year */}
-        <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
-          <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">Mortgage interest by year</h3>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={interestData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-                <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
-                <Tooltip formatter={(v) => [money(v), 'Mortgage interest']} contentStyle={chartTooltipStyle(false)} />
-                <Line type="monotone" dataKey="interest" stroke={chartColors.primary} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-        {/* Passive loss carryforward */}
-        <div className="rounded-xl border border-gray-200 p-4 dark:border-neutral-800">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-950 dark:text-white">Passive loss carryforward</h3>
-            <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700 dark:bg-purple-950/40 dark:text-purple-300">Form 8582</span>
-          </div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={lossData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="spLossFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={lossColor} stopOpacity={0.05} /><stop offset="95%" stopColor={lossColor} stopOpacity={0.3} /></linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-                <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
-                <Tooltip formatter={(v) => [money(v), 'Carryforward']} contentStyle={chartTooltipStyle(false)} />
-                <ReferenceLine y={0} stroke={chartColors.neutral} />
-                <Area type="monotone" dataKey="carryforward" stroke={lossColor} strokeWidth={2.5} fill="url(#spLossFill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-    </Panel>
-  )
-}
-
 // ---- Overview tab -----------------------------------------------------------
 function OverviewTab({ model, group, yearLabel, selectedYear, controls }) {
   return (
@@ -1233,7 +1137,6 @@ function OverviewTab({ model, group, yearLabel, selectedYear, controls }) {
       <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Tax year and grouping apply to this table" action={controls}>
         <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
       </Panel>
-      <SinglePropertyChart model={model} />
       <div className="grid gap-5 lg:grid-cols-2">
         <MatrixWidget title="Property taxes" kind="tax" icon={ReceiptText} data={model.propertyTaxByYear} years={model.years} selectedYear={selectedYear} />
         <MatrixWidget title="Insurance" kind="insurance" icon={Umbrella} data={model.insuranceByYear} years={model.years} selectedYear={selectedYear} />
@@ -1587,13 +1490,13 @@ export default function TaxCenterPage() {
           />
         ) : null}
 
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} throughYear={bankedYear} /> : null}
-
         <nav className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-neutral-800" aria-label="Tax center views">
           {TAX_TABS.map((name) => (
             <button key={name} type="button" onClick={() => setTab(name)} className={`min-w-max border-b-2 px-4 py-3 text-sm font-medium ${tab === name ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-100'}`}>{name}</button>
           ))}
         </nav>
+
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={(model.years || []).length ? `${model.years[0]}–${model.years[model.years.length - 1]}` : ''} carryforward={carryforward} usedToDate={usedToDate} throughYear={bankedYear} /> : null}
 
         {tab === 'Overview' ? <OverviewTab model={model} group={group} yearLabel={yearLabel} selectedYear={year} controls={deductionControls} /> : null}
         {tab === 'Deduction Summary' ? (

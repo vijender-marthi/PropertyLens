@@ -640,7 +640,11 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
   const egiOf = (p) => p.rent + p.vacancy
   const noiOf = (p) => egiOf(p) + p.opex
   const cfCols = [
-    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => p.name },
+    { key: 'name', label: 'Property', align: 'left', sortVal: (p) => p.name, render: (p) => {
+      const accent = HOME_ACCENTS[(p.accentIndex ?? 0) % HOME_ACCENTS.length]
+      const Icon = p.type === 'primary' ? Home : Building2
+      return <span className="inline-flex items-center gap-1.5"><Icon className={`h-3.5 w-3.5 shrink-0 ${accent.text}`} aria-hidden="true" />{p.name}</span>
+    } },
     { key: 'rent', label: 'Rent', align: 'right', sortVal: (p) => p.rent, render: (p) => fullMoney(p.rent * factor) },
     { key: 'opex', label: 'OpEx', align: 'right', sortVal: (p) => -p.opex, render: (p) => fullMoney(-p.opex * factor) },
     { key: 'opexRatio', label: 'OpEx %', align: 'right', tone: PCT_TONE, hint: 'OpEx Ratio = Operating Expenses ÷ Effective Gross Income (rent − vacancy)', sortVal: (p) => (egiOf(p) ? -p.opex / egiOf(p) : 0), render: (p) => pct1(egiOf(p) ? -p.opex / egiOf(p) : 0) },
