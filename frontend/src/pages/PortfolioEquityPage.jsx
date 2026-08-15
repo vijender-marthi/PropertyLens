@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import AuditAlerts from '../components/AuditAlerts'
 import PageContainer from '../components/PageContainer'
 import PortfolioEquityDashboard, { PropertyFilter, HomeTimeline } from '../components/PortfolioEquityDashboard'
 import { propAPI } from '../services/api'
@@ -9,7 +11,9 @@ export default function PortfolioEquityPage() {
   const [available, setAvailable] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [taxModel, setTaxModel] = useState(null)
   const initialized = useRef(false)
+  const navigate = useNavigate()
 
   const selectedKey = useMemo(() => Array.from(selectedIds).sort((a, b) => a - b).join(','), [selectedIds])
 
@@ -34,6 +38,15 @@ export default function PortfolioEquityPage() {
     return () => { active = false }
   }, [selectedKey])
 
+  // Tax model for the shared audit-alerts bell (same triggers as the Tax Center).
+  useEffect(() => {
+    let active = true
+    propAPI.portfolioAnalysis({ all_years: true, include_primary_residence: false })
+      .then((r) => { if (active) setTaxModel(r.data?.taxCenter || null) })
+      .catch(() => {})
+    return () => { active = false }
+  }, [])
+
   if ((loading && !data) || !data?.totals) {
     return (
       <PageContainer>
@@ -47,7 +60,10 @@ export default function PortfolioEquityPage() {
 
   const headerRight = (
     <div className="flex flex-col items-start gap-1.5 lg:items-end">
-      <PropertyFilter properties={available} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
+      <div className="flex items-center gap-2">
+        <PropertyFilter properties={available} selectedIds={selectedIds} setSelectedIds={setSelectedIds} />
+        <AuditAlerts model={taxModel} onCta={() => navigate('/tax-center')} />
+      </div>
       {selectedNames.length && !allSelected
         ? <p className="max-w-xs text-xs text-gray-500 dark:text-gray-400 lg:max-w-md lg:text-right">{selectedNames.join(', ')}</p>
         : null}
