@@ -860,9 +860,10 @@ function Doughnut({ segments, size = 54, stroke = 9 }) {
     </svg>
   )
 }
-function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = false, valueClass = '', formula, chart }) {
+function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = false, valueClass = '', formula, tooltip, chart }) {
+  const hasTip = tooltip || formula
   return (
-    <div className={`group relative rounded-xl border p-4 shadow-sm ${formula ? 'cursor-help' : ''} ${hero ? 'border-2 border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
+    <div className={`group relative rounded-xl border p-4 shadow-sm ${hasTip ? 'cursor-help' : ''} ${hero ? 'border-2 border-emerald-500 bg-emerald-50 dark:border-emerald-500/70 dark:bg-emerald-950/30' : 'border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className={`flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide ${hero ? 'text-emerald-700 dark:text-emerald-300' : METRIC_ICON_TONE[tone]}`}><Icon className="h-4 w-4" />{label}</div>
@@ -871,8 +872,8 @@ function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = fals
         </div>
         {chart ? <div className="mt-0.5 shrink-0">{chart}</div> : null}
       </div>
-      {formula ? (
-        <span className="pointer-events-none absolute left-0 right-0 top-full z-30 mt-1 hidden whitespace-pre-line rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed text-gray-600 shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">{formula}</span>
+      {hasTip ? (
+        <span className={`pointer-events-none absolute top-full z-30 mt-1 hidden rounded-lg border border-gray-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed text-gray-600 shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 ${tooltip ? 'right-0 w-80 max-w-[calc(100vw-2rem)]' : 'left-0 right-0 whitespace-pre-line'}`}>{tooltip || formula}</span>
       ) : null}
     </div>
   )
@@ -904,6 +905,21 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
     { value: cashSheltered, color: '#a855f7', label: 'Sheltered by cash deductions' },
     { value: taxableKept, color: '#10b981', label: 'Taxable income kept' },
   ]
+  // The paper-loss reconciliation, shown on hover of the Banked card (used to be
+  // a strip on the page): total loss = used against income + banked.
+  const bankedTooltip = (isLoss && passiveLoss > 0) ? (
+    <div className="space-y-2">
+      <p className="font-semibold text-gray-900 dark:text-white">Where your {compact(passiveLoss)} paper loss actually went</p>
+      <p className="text-[11px] text-gray-400">paper loss = used against income + banked</p>
+      <div className="flex h-2.5 overflow-hidden rounded bg-gray-100 dark:bg-neutral-800">
+        <div className="h-full bg-blue-500" style={{ width: `${passiveLoss ? (used / passiveLoss) * 100 : 0}%` }} />
+        <div className="h-full bg-emerald-500" style={{ width: `${passiveLoss ? (suspended / passiveLoss) * 100 : 0}%` }} />
+      </div>
+      <p><i className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-blue-500 align-middle" />Already used against income · <b className="text-gray-900 dark:text-white">{compact(used)}</b> — deducted in past years via the $25k/yr special allowance</p>
+      <p><i className="mr-1.5 inline-block h-2 w-2 rounded-sm bg-emerald-500 align-middle" />Banked for a future sale · <b className="text-gray-900 dark:text-white">{compact(suspended)}</b> — released when you sell</p>
+      <p className="border-t border-gray-100 pt-2 text-[11px] text-gray-400 dark:border-neutral-800">Under Form 8582 at $130k MAGI{throughYear ? ` thru ${throughYear}` : ''}. Change MAGI on the Form 8582 tab to refine.</p>
+    </div>
+  ) : null
 
   return (
     <div className="space-y-4">
@@ -919,27 +935,9 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
         <MetricCard hero icon={ShieldCheck} label="Estimated tax savings" value={heroCompact(savings)} note={`deductions × ${rate}%`}
           formula={`What your deductions save in federal tax.\n\n= Total deductions × ${rate}% assumed marginal rate.\n\nCumulative across all rental years.`} />
         <MetricCard icon={Landmark} tone="emerald" label="Banked for a future sale" value={carryforward == null ? '—' : compact(suspended)} note={`Form 8582 · at $130k MAGI${throughYear ? ` · thru ${throughYear}` : ''}`}
+          tooltip={bankedTooltip}
           formula={`Passive losses you could not use yet — banked under Form 8582, not lost. In a fully taxable sale the whole balance is released to offset your capital gain and other income.\n\nShown at $130k MAGI through ${throughYear || 'the latest year'} — the same default as the Form 8582 tab, so the two match. At $130k the $25,000 special allowance is phased down to $10k/yr, so more loss banks each year. Change MAGI on the Form 8582 tab to refine.`} />
       </div>
-
-      {/* Close the loop: the paper loss isn't only "banked" — part already offset
-          income. Answers "where did the difference go?" between the two cards. */}
-      {isLoss && passiveLoss > 0 ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="text-sm text-gray-700 dark:text-neutral-300">Where your <b className="font-semibold text-gray-950 dark:text-white">{compact(passiveLoss)}</b> paper loss actually went</p>
-            <p className="text-xs text-gray-400">paper loss = used against income + banked</p>
-          </div>
-          <div className="mt-2.5 flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
-            <div className="h-full bg-blue-500" style={{ width: `${passiveLoss ? (used / passiveLoss) * 100 : 0}%` }} />
-            <div className="h-full bg-emerald-500" style={{ width: `${passiveLoss ? (suspended / passiveLoss) * 100 : 0}%` }} />
-          </div>
-          <div className="mt-2.5 grid gap-1.5 text-xs text-gray-600 dark:text-neutral-300 sm:grid-cols-2">
-            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-blue-500" />Already used against income · <b className="tabular-nums text-gray-900 dark:text-white">{compact(used)}</b> — deducted in past years via the $25k/yr special allowance</span>
-            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />Banked for a future sale · <b className="tabular-nums text-gray-900 dark:text-white">{compact(suspended)}</b> — released when you sell</span>
-          </div>
-        </div>
-      ) : null}
 
       {/* The story — plain English, the way the Loans page reads */}
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
@@ -1137,10 +1135,6 @@ function OverviewTab({ model, group, yearLabel, selectedYear, controls }) {
       <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="Tax year and grouping apply to this table" action={controls}>
         <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
       </Panel>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <MatrixWidget title="Property taxes" kind="tax" icon={ReceiptText} data={model.propertyTaxByYear} years={model.years} selectedYear={selectedYear} />
-        <MatrixWidget title="Insurance" kind="insurance" icon={Umbrella} data={model.insuranceByYear} years={model.years} selectedYear={selectedYear} />
-      </div>
     </div>
   )
 }
@@ -1511,6 +1505,10 @@ export default function TaxCenterPage() {
             <Panel title="Deduction details" subtitle="Click a property to expand its taxes, insurance, and operating costs over time">
               <PropertyLedger model={model} />
             </Panel>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <MatrixWidget title="Property taxes" kind="tax" icon={ReceiptText} data={model.propertyTaxByYear} years={model.years} selectedYear={year} />
+              <MatrixWidget title="Insurance" kind="insurance" icon={Umbrella} data={model.insuranceByYear} years={model.years} selectedYear={year} />
+            </div>
           </div>
         ) : null}
         {tab === 'Schedule E' ? <ScheduleETab properties={properties} /> : null}
