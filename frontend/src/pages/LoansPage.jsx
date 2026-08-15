@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { AlertTriangle, ArrowRight, CheckCircle2, Info } from 'lucide-react'
+import AuditAlerts from '../components/AuditAlerts'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
 import { formatCurrency, formatCurrencyCompact } from '../utils/formatters'
@@ -44,6 +45,7 @@ export default function LoansPage() {
   const [loading, setLoading] = useState(true)
   const [analysis, setAnalysis] = useState(null)
   const [propertyFilter, setPropertyFilter] = useState('all')
+  const navigate = useNavigate()
 
   useEffect(() => {
     const controller = new AbortController()
@@ -100,11 +102,14 @@ export default function LoansPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">Loans</h1>
             <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">Your debt as a story — what happened, what's going on, and what's coming.</p>
           </div>
-          <select value={propertyFilter} onChange={(e) => setPropertyFilter(e.target.value)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-white">
-            <option value="all">All properties</option>
-            {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <select value={propertyFilter} onChange={(e) => setPropertyFilter(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-white">
+              <option value="all">All properties</option>
+              {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <AuditAlerts model={analysis?.taxCenter} onCta={() => navigate('/tax-center')} />
+          </div>
         </div>
 
         {/* PAST */}
