@@ -336,6 +336,17 @@ def _selected_schedule_row(schedule: Dict[str, Any], year: int) -> Optional[Dict
     return next((row for row in history if row.get("year") == year and row.get("kind") != "total"), None)
 
 
+def _is_rental_row(row: Optional[Dict[str, Any]]) -> bool:
+    """A schedule-history year is a Schedule E (rental) year when it has rented
+    months. Rows without the field (legacy) are treated as rental. This keeps a
+    mixed-use home's primary years (0 rented months) off the tax analysis."""
+    if not row:
+        return False
+    if "rentalMonths" not in row:
+        return True
+    return (row.get("rentalMonths") or 0) > 0
+
+
 def _tax_row_components(selected: Optional[Dict[str, Any]]) -> Dict[str, Decimal]:
     """Deductible components for one Schedule-E schedule row (one property-year)."""
     total_expenses = _metric_value(selected, "totalExpenses")
@@ -367,12 +378,12 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
     rows = []
     available_years = set()
     for prop in properties:
-        if str(prop.get("usage_type") or "Rental").lower() == "primary":
+        if str(prop.get("usage_type") or "Rental").lower() == "primary" and not prop.get("hasRentalHistory"):
             continue
         schedule = schedules.get(prop.get("id")) or {}
         owned_rows = [
             row for row in schedule.get("history") or []
-            if row.get("year") and int(row["year"]) < 9999 and row.get("kind") != "total"
+            if row.get("year") and int(row["year"]) < 9999 and row.get("kind") != "total" and _is_rental_row(row)
         ]
         available_years.update(int(row["year"]) for row in owned_rows)
         if all_years:
@@ -393,6 +404,9 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
             if schedule.get("ownedInSelectedYear") is False:
                 continue
             selected = _selected_schedule_row(schedule, selected_year)
+            # A mixed-use home doesn't appear for a year it wasn't a rental.
+            if not _is_rental_row(selected):
+                continue
             comp = _tax_row_components(selected)
             source_label = (selected or {}).get("sourceLabel") or "No source data"
             status = "REPORTED" if selected else "UNAVAILABLE"
@@ -439,6 +453,8 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
         taxable = Decimal("0")
         for schedule in schedules.values():
             selected = _selected_schedule_row(schedule or {}, year)
+            if not _is_rental_row(selected):
+                continue
             deductions += _metric_value(selected, "totalExpenses")
             taxable += _metric_value(selected, "netScheduleE")
         trend.append({
@@ -454,21 +470,35 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
     matrix_years = sorted(available_years)
     property_tax_by_year: List[Dict[str, Any]] = []
     insurance_by_year: List[Dict[str, Any]] = []
+    property_ledger: List[Dict[str, Any]] = []
     by_year_map: Dict[int, Dict[str, Decimal]] = {}
     for prop in properties:
-        if str(prop.get("usage_type") or "Rental").lower() == "primary":
+        if str(prop.get("usage_type") or "Rental").lower() == "primary" and not prop.get("hasRentalHistory"):
             continue
         schedule = schedules.get(prop.get("id")) or {}
         name = prop.get("name") or prop.get("address") or f"Property {prop.get('id')}"
         location = ", ".join(str(item) for item in (prop.get("city"), prop.get("state")) if item)
         tax_cells: Dict[str, Any] = {}
         ins_cells: Dict[str, Any] = {}
+        ledger_years: Dict[str, Any] = {}
         for year in matrix_years:
             selected = _selected_schedule_row(schedule, year)
-            if selected:
-                tax_cells[str(year)] = _money(_metric_value(selected, "propertyTax"))
-                ins_cells[str(year)] = _money(_metric_value(selected, "insurance"))
+            if selected and _is_rental_row(selected):
+                property_tax = _metric_value(selected, "propertyTax")
+                insurance = _metric_value(selected, "insurance")
+                tax_cells[str(year)] = _money(property_tax)
+                ins_cells[str(year)] = _money(insurance)
                 comp = _tax_row_components(selected)
+                ledger_years[str(year)] = {
+                    "rentalIncome": _money(comp["rentalIncome"]),
+                    "mortgageInterest": _money(comp["mortgageInterest"]),
+                    "propertyTax": _money(property_tax),
+                    "insurance": _money(insurance),
+                    "operatingExpenses": _money(comp["operatingExpenses"]),
+                    "depreciation": _money(comp["depreciation"]),
+                    "totalDeductions": _money(comp["totalDeductions"]),
+                    "taxableIncome": _money(comp["taxableIncome"]),
+                }
                 acc = by_year_map.setdefault(year, {key: Decimal("0") for key in _TAX_COMPONENT_KEYS})
                 for key in _TAX_COMPONENT_KEYS:
                     acc[key] += comp[key]
@@ -478,6 +508,7 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
         meta = {"propertyId": prop.get("id"), "propertyName": name, "location": location}
         property_tax_by_year.append({**meta, "byYear": tax_cells})
         insurance_by_year.append({**meta, "byYear": ins_cells})
+        property_ledger.append({**meta, "byYear": ledger_years})
 
     by_year = [
         {"year": year, **{key: _money(by_year_map.get(year, {}).get(key, Decimal("0"))) for key in _TAX_COMPONENT_KEYS}}
@@ -491,6 +522,7 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
         "years": matrix_years,
         "rows": rows,
         "byYear": by_year,
+        "propertyLedger": property_ledger,
         "propertyTaxByYear": property_tax_by_year,
         "insuranceByYear": insurance_by_year,
         "totals": totals,
@@ -1068,6 +1100,8 @@ def build_portfolio_analysis(
     as_of_date: Optional[str] = None,
     occupancy_by_year: Optional[List[Dict[str, Any]]] = None,
     all_years: bool = False,
+    tax_properties: Optional[List[Dict[str, Any]]] = None,
+    tax_schedules: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     as_of = as_of_date or date.today().isoformat()
     loans = _loan_analysis(
@@ -1077,7 +1111,7 @@ def build_portfolio_analysis(
         loan_status=str(filter_context.get("loanStatus") or "Active"),
     )
     income = _income_analysis(properties, yearly_trends, as_of)
-    tax = _tax_analysis(properties, schedules, selected_year, all_years=all_years)
+    tax = _tax_analysis(tax_properties or properties, tax_schedules or schedules, selected_year, all_years=all_years)
     analytics = _analytics(properties, income, loans, as_of, occupancy_by_year)
     return {
         "schemaVersion": "portfolio-analysis.v1",

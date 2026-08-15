@@ -9080,11 +9080,13 @@ def _schedule_e_history_row(
     source_label: Optional[str] = None,
     row_kind: str = "year",
     detail_rows: Optional[List[Dict[str, Any]]] = None,
+    rental_months: Optional[float] = None,
 ) -> Dict[str, Any]:
     row = {
         "year": year,
         "label": label or str(year),
         "kind": row_kind,
+        "rentalMonths": rental_months,
         "sourceLabel": source_label or "Computed",
         "rentalIncome": _schedule_e_money(components.get("rents_received")),
         "operatingExpenses": _schedule_e_money(components.get("operating_expenses")),
@@ -9445,8 +9447,13 @@ def get_schedule_e_capture(
         _computed_schedule_e_components(prop, current_year, yearly_by_year.get(current_year)),
         yearly_by_year.get(current_year),
     )
+    # Rented months per year gate which years are true Schedule E (rental) years.
+    # A mixed-use home (rented for a stretch, then a primary residence) only
+    # deducts in its rental years — primary years carry 0 rental months.
+    rental_months_map = _rental_months_by_year(prop)
     history = []
     for history_year in available_years:
+        year_rental_months = rental_months_map.get(history_year, 0.0)
         if history_year == current_year and current_year_history_breakdown:
             total_row = (current_year_history_breakdown.get("rows") or [{}])[0]
             total_components = _schedule_e_components_from_breakdown_metrics(total_row)
@@ -9457,11 +9464,13 @@ def get_schedule_e_capture(
                 source_label=total_row.get("sourceLabel") or "Reported + projected",
                 row_kind="projected_current_year",
                 detail_rows=current_year_history_breakdown.get("detailRows") or [],
+                rental_months=year_rental_months,
             ))
         else:
             history.append(_schedule_e_history_row(
                 history_year,
                 _computed_schedule_e_components(prop, history_year, yearly_by_year.get(history_year)),
+                rental_months=year_rental_months,
             ))
     history_total_row = _schedule_e_history_total_row(history)
     selected_history = next((row for row in history if row["year"] == selected_year), None)
@@ -12762,6 +12771,29 @@ def portfolio_analysis(
         debts[prop.id] = get_debt(prop.id, db, current_user)
         schedules[prop.id] = get_schedule_e_capture(prop.id, selected_year, db, current_user)
 
+    # Tax scope also captures primary residences that were rented for a stretch
+    # (their rental years still generate Schedule E depreciation and passive
+    # losses). Kept separate from `props` so loan/income/equity metrics for the
+    # other portfolio pages are unaffected — only the tax center sees these.
+    tax_normalized = list(normalized_properties)
+    tax_schedules = dict(schedules)
+    if not explicit_selection and not include_primary_residence:
+        _existing_ids = {prop.id for prop in props}
+        for prop in all_props:
+            if prop.id in _existing_ids:
+                continue
+            if str(prop.usage_type or "Rental").lower() == "primary" and _has_rental_history(prop):
+                tax_schedules[prop.id] = get_schedule_e_capture(prop.id, selected_year, db, current_user)
+                tax_normalized.append({
+                    "id": prop.id,
+                    "name": prop.name or _default_property_name(prop.address, prop.id),
+                    "address": prop.address,
+                    "city": prop.city,
+                    "state": prop.state,
+                    "usage_type": prop.usage_type or "Primary",
+                    "hasRentalHistory": True,
+                })
+
     yearly_trends = _portfolio_income_expense_yearly_trends(props)
     start_year = _parse_iso_date(start_date).year if _parse_iso_date(start_date) else None
     end_year = _parse_iso_date(end_date).year if _parse_iso_date(end_date) else None
@@ -12806,6 +12838,8 @@ def portfolio_analysis(
         filter_context=filter_context,
         occupancy_by_year=occupancy_by_year,
         all_years=all_years,
+        tax_properties=tax_normalized,
+        tax_schedules=tax_schedules,
     )
 
 
@@ -12846,7 +12880,9 @@ def form_8582(
     if requested_ids or selection_explicit:
         props = [p for p in all_props if p.id in requested_ids]
     else:
-        props = [p for p in all_props if str(p.usage_type or "Rental").lower() != "primary"]
+        # Rentals, plus primaries that were rented for a stretch (their rental
+        # years still produce passive losses that carry forward).
+        props = [p for p in all_props if str(p.usage_type or "Rental").lower() != "primary" or _has_rental_history(p)]
 
     # Per-property Schedule E net and rented months by rental year.
     net_by: Dict[int, Dict[int, float]] = {}
@@ -12854,10 +12890,10 @@ def form_8582(
     names: Dict[int, Dict[str, Any]] = {}
     years: set = set()
     for prop in props:
-        if str(prop.usage_type or "Rental").lower() == "primary":
+        if str(prop.usage_type or "Rental").lower() == "primary" and not _has_rental_history(prop):
             continue
         try:
-            life = get_lifetime_summary(prop.id, db, current_user)
+            capture = get_schedule_e_capture(prop.id, None, db, current_user)
         except Exception:
             continue
         names[prop.id] = {
@@ -12865,16 +12901,17 @@ def form_8582(
             "propertyName": prop.name or _default_property_name(prop.address, prop.id),
             "location": ", ".join(str(x) for x in (prop.city, prop.state) if x),
         }
-        yearly_by_year = {int(row["year"]): row for row in (life.get("yearly") or []) if row.get("year")}
-        # Authoritative rental gate: only years the property was actually rented,
-        # with partial (mid-year) months, from usage/lease periods or the
-        # always-rental fallback.
-        for yr, months in _rental_months_by_year(prop).items():
-            if not months or months <= 0:
+        # Same rental-gated, partial-year-prorated Schedule E net the tax center
+        # uses, so the two views agree. rentalMonths carries the rental gate.
+        for row in capture.get("history") or []:
+            yr = row.get("year")
+            if not yr or row.get("kind") == "total":
+                continue
+            months = row.get("rentalMonths") or 0
+            if months <= 0:
                 continue
             yr = int(yr)
-            row = yearly_by_year.get(yr)
-            net_by.setdefault(prop.id, {})[yr] = _schedule_e_number(row.get("taxable_income")) if row else 0.0
+            net_by.setdefault(prop.id, {})[yr] = _schedule_e_number((row.get("netScheduleE") or {}).get("value"))
             months_by.setdefault(prop.id, {})[yr] = round(float(months), 1)
             years.add(yr)
 
