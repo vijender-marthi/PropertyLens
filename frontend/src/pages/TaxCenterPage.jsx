@@ -1171,6 +1171,21 @@ function ScheduleETab({ properties }) {
     exportTaxWorkbook(targets.length === 1 ? `ScheduleE_${targets[0]?.name || 'property'}_${year}` : `ScheduleE_${year}`, sheets)
   }
 
+  // Column-wise matrix (like the paper Schedule E, where each property is a
+  // column): union of line items in first-seen order, then a value per property.
+  const propsWithData = targets.filter((p) => ((dataByProp[p.id]?.lines) || []).length)
+  const lineOrder = []
+  const lineMeta = {}
+  const valueByPropKey = {}
+  propsWithData.forEach((p) => {
+    const m = {}
+    ;((dataByProp[p.id]?.lines) || []).forEach((l) => {
+      m[l.key] = l
+      if (!(l.key in lineMeta)) { lineMeta[l.key] = l; lineOrder.push(l.key) }
+    })
+    valueByPropKey[p.id] = m
+  })
+
   return (
     <div>
       <Toolbar>
@@ -1178,18 +1193,48 @@ function ScheduleETab({ properties }) {
         <Field label="Tax year"><select className={selectCls} value={year} onChange={(e) => setYear(Number(e.target.value))}>{Array.from({ length: 8 }, (_, i) => nowYear - i).map((y) => <option key={y} value={y}>{y}</option>)}</select></Field>
         <div className="ml-auto"><ExportButton onClick={doExport} /></div>
       </Toolbar>
-      {loading && !Object.keys(dataByProp).length ? <EmptyState text="Loading Schedule E…" /> : (
-        <div className="space-y-4">
-          {targets.map((p) => {
-            const lines = (dataByProp[p.id]?.lines) || []
-            if (!lines.length) return null
-            return (
-              <Panel key={p.id} title={p.name} subtitle={`${p.address || ''} · tax year ${year}`}>
-                <ScheduleELines lines={lines} showCompare={false} />
-              </Panel>
-            )
-          })}
-          {targets.every((p) => !((dataByProp[p.id]?.lines) || []).length) ? <EmptyState text={`No Schedule E entries for ${year} in this scope.`} /> : null}
+      <p className="mb-3 text-xs text-gray-500 dark:text-neutral-400">One column per property — PropertyLens-computed Schedule E for tax year {year}.</p>
+      {loading && !Object.keys(dataByProp).length ? <EmptyState text="Loading Schedule E…" /> : !propsWithData.length ? <EmptyState text={`No Schedule E entries for ${year} in this scope.`} /> : (
+        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-neutral-800">
+          <table className="min-w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
+                <th className="sticky left-0 z-10 bg-gray-50 px-3 py-3 text-left dark:bg-neutral-950">Schedule E · {year}</th>
+                {propsWithData.map((p) => (
+                  <th key={p.id} className="whitespace-nowrap px-4 py-3 text-right font-medium normal-case">
+                    <span className="inline-flex"><HomeName id={p.id} name={p.name} /></span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="tabular-nums">
+              {lineOrder.map((key) => {
+                const meta = lineMeta[key]
+                const decor = scheduleELineDecor(key)
+                const LineIcon = decor.Icon
+                const isNet = key === 'net_income'
+                return (
+                  <tr key={key} className={`border-t border-gray-100 dark:border-neutral-800 ${isNet ? 'font-semibold' : ''}`}>
+                    <td className={`sticky left-0 z-10 px-3 py-2 text-left text-gray-600 dark:text-neutral-300 ${isNet ? 'bg-gray-50 dark:bg-neutral-950/60' : 'bg-white dark:bg-neutral-900'}`}>
+                      <span className="inline-flex items-center gap-2">
+                        <span className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${decor.bg}`}>
+                          {LineIcon ? <LineIcon className={`h-3 w-3 ${decor.fg}`} /> : <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
+                        </span>
+                        <span className="whitespace-nowrap"><span className="text-gray-400">{meta.lineNumber}</span> · {meta.lineItem}</span>
+                      </span>
+                    </td>
+                    {propsWithData.map((p) => {
+                      const l = valueByPropKey[p.id]?.[key]
+                      const netTone = mnum(l?.computed) < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+                      return (
+                        <td key={p.id} className={`px-4 py-2 text-right ${isNet ? `${netTone} bg-gray-50 dark:bg-neutral-950/60` : 'text-gray-700 dark:text-neutral-200'}`}>{l?.computed?.display ?? '—'}</td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
