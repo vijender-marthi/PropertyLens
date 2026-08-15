@@ -840,6 +840,42 @@ def _timeline_periods(prop: models.Property):
     return [fallback]
 
 
+_MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _fmt_month_year(value) -> Optional[str]:
+    parsed = _parse_iso_date(str(value)[:10]) if value else None
+    return f"{_MONTH_ABBR[parsed.month - 1]} {parsed.year}" if parsed else None
+
+
+def _rental_period_label(prop: models.Property) -> Optional[str]:
+    """Human 'rented Apr 2023 – present' label for mixed-use homes, from the
+    RENTAL usage periods, falling back to legacy RentalPeriod rows."""
+    rentals = [p for p in _timeline_periods(prop) if _normalize_usage_type(p.usage_type) == "RENTAL"]
+    if rentals:
+        starts = [str(p.start_date) for p in rentals if p.start_date]
+        start = min(starts) if starts else getattr(prop, "rental_start_date", None)
+        ongoing = any(_parse_iso_date(getattr(p, "end_date", None)) is None for p in rentals)
+        ends = [str(p.end_date) for p in rentals if _parse_iso_date(getattr(p, "end_date", None))]
+        start_lbl = _fmt_month_year(start)
+        if not start_lbl:
+            return None
+        end_lbl = "present" if (ongoing or not ends) else _fmt_month_year(max(ends))
+        return f"{start_lbl} – {end_lbl}"
+
+    # Legacy RentalPeriod rows: (start_year, start_month) .. (end_year, end_month).
+    spans = [rp for rp in (getattr(prop, "rental_periods", []) or []) if rp.start_year and rp.start_month]
+    if not spans:
+        return None
+    first = min(spans, key=lambda rp: (rp.start_year, rp.start_month))
+    start_lbl = f"{_MONTH_ABBR[first.start_month - 1]} {first.start_year}"
+    ongoing = any((rp.end_year is None or rp.end_month is None) for rp in spans)
+    if ongoing:
+        return f"{start_lbl} – present"
+    last = max(spans, key=lambda rp: (rp.end_year, rp.end_month))
+    return f"{start_lbl} – {_MONTH_ABBR[last.end_month - 1]} {last.end_year}"
+
+
 def _usage_type_on(prop: models.Property, target: date) -> str:
     for period in reversed(_timeline_periods(prop)):
         start = _parse_iso_date(period.start_date)
@@ -12841,6 +12877,7 @@ def portfolio_analysis(
                     "state": prop.state,
                     "usage_type": prop.usage_type or "Primary",
                     "hasRentalHistory": True,
+                    "rentalPeriod": _rental_period_label(prop),
                     "depreciation": _property_depreciation_summary(prop),
                 })
 

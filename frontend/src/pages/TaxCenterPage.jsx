@@ -86,9 +86,12 @@ function compact(value) {
 
 // Marks a home that was a rental for only part of the time (now a primary
 // residence) — only its rental years count on Schedule E.
-function MixedBadge({ show }) {
+function MixedBadge({ show, period }) {
   if (!show) return null
-  return <span className="ml-2 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" title="Mixed use — rented for part of the time; only rental years are on Schedule E">Mixed</span>
+  const title = period
+    ? `Mixed use — this property was a rental ${period}; only those rental years are on Schedule E.`
+    : 'Mixed use — rented for part of the time; only rental years are on Schedule E'
+  return <span className="ml-2 inline-flex cursor-help items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" title={title}>Mixed</span>
 }
 
 function KpiCard({ icon: Icon, label, value, note, tone = 'emerald' }) {
@@ -201,10 +204,10 @@ const DEDUCTION_COLUMNS = {
   mortgageInterest: { header: 'Interest', get: (r) => money(r.mortgageInterest) },
   propertyTax: { header: 'Property tax', get: (r) => money(r.propertyTax) },
   operatingExpenses: { header: 'Operating', get: (r) => money(r.operatingExpenses) },
-  rentalIncome: { header: 'Income', get: (r) => money(r.rentalIncome), className: () => 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/30 dark:text-blue-300', headerClassName: 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300' },
-  taxableIncome: { header: 'Taxable income', get: (r) => money(r.taxableIncome), className: (r) => `font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}` },
+  rentalIncome: { header: 'Income', get: (r) => money(r.rentalIncome), className: () => 'font-semibold text-blue-700 dark:text-blue-300', headerClassName: 'text-blue-700 dark:text-blue-300' },
+  taxableIncome: { header: 'Taxable income', get: (r) => money(r.taxableIncome), className: (r) => `border-l border-gray-200 dark:border-neutral-800 font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`, headerClassName: 'border-l border-gray-200 dark:border-neutral-800' },
 }
-const ALL_DEDUCTION_COLUMNS = ['totalDeductions', 'depreciation', 'mortgageInterest', 'propertyTax', 'operatingExpenses', 'rentalIncome', 'taxableIncome']
+const ALL_DEDUCTION_COLUMNS = ['rentalIncome', 'depreciation', 'mortgageInterest', 'propertyTax', 'operatingExpenses', 'totalDeductions', 'taxableIncome']
 
 function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
   const cols = columns.filter((id) => DEDUCTION_COLUMNS[id])
@@ -221,7 +224,7 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
           {rows.map((row) => (
             <tr key={row.propertyId}>
               <td className="px-4 py-3">
-                <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300"><HomeName id={row.propertyId} name={row.propertyName} /></Link><MixedBadge show={row.mixedUse} />
+                <Link to={`/properties/${row.propertyId}/taxes`} className="font-medium text-gray-950 hover:text-blue-700 dark:text-white dark:hover:text-blue-300"><HomeName id={row.propertyId} name={row.propertyName} /></Link><MixedBadge show={row.mixedUse} period={row.rentalPeriod} />
                 <p className="text-xs text-gray-400">{row.location || row.sourceLabel}</p>
               </td>
               {cols.map((id) => {
@@ -983,19 +986,19 @@ function DeductionSummary({ model, group, yearLabel, selectedYear }) {
       <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
         <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
-            <tr><th className="px-4 py-3 text-left">Tax year</th><th className="px-4 py-3 text-right">Total ded.</th><th className="px-4 py-3 text-right">Depreciation</th><th className="px-4 py-3 text-right">Interest</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Operating</th><th className="border-l border-gray-200 px-4 py-3 text-right text-blue-700 dark:border-neutral-800 dark:text-blue-300">Income</th><th className="px-4 py-3 text-right">Taxable inc.</th></tr>
+            <tr><th className="px-4 py-3 text-left">Tax year</th><th className="px-4 py-3 text-right text-blue-700 dark:text-blue-300">Income</th><th className="px-4 py-3 text-right">Depreciation</th><th className="px-4 py-3 text-right">Interest</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Operating</th><th className="px-4 py-3 text-right">Total ded.</th><th className="border-l border-gray-200 px-4 py-3 text-right dark:border-neutral-800">Taxable inc.</th></tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white tabular-nums dark:divide-neutral-800 dark:bg-neutral-900">
             {rows.map((r) => (
               <tr key={r.year} className={selectedYear !== 'all' && Number(selectedYear) === r.year ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
                 <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{r.year}{r.year === currentYear ? <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium normal-case text-amber-600 dark:bg-amber-950/40 dark:text-amber-300" title="Current year — figures are year-to-date and will change as the year closes">projected</span> : null}</td>
-                <td className="px-4 py-3 text-right font-semibold">{money(r.totalDeductions)}</td>
+                <td className="px-4 py-3 text-right font-semibold text-blue-700 dark:text-blue-300">{money(r.rentalIncome)}</td>
                 <td className="px-4 py-3 text-right">{money(r.depreciation)}</td>
                 <td className="px-4 py-3 text-right">{money(r.mortgageInterest)}</td>
                 <td className="px-4 py-3 text-right">{money(r.propertyTax)}</td>
                 <td className="px-4 py-3 text-right">{money(r.operatingExpenses)}</td>
-                <td className="border-l border-gray-200 px-4 py-3 text-right font-semibold text-blue-700 dark:border-neutral-800 dark:text-blue-300">{money(r.rentalIncome)}</td>
-                <td className={`px-4 py-3 text-right font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(r.taxableIncome)}</td>
+                <td className="px-4 py-3 text-right font-semibold">{money(r.totalDeductions)}</td>
+                <td className={`border-l border-gray-200 px-4 py-3 text-right font-medium dark:border-neutral-800 ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(r.taxableIncome)}</td>
               </tr>
             ))}
           </tbody>
@@ -1046,7 +1049,7 @@ function PropertyLedger({ model }) {
               <Fragment key={p.propertyId}>
                 <tr className="cursor-pointer bg-white hover:bg-gray-50 dark:bg-neutral-900 dark:hover:bg-neutral-800/60" onClick={() => setOpen((o) => ({ ...o, [p.propertyId]: !o[p.propertyId] }))}>
                   <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}<HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} /></span>
+                    <span className="flex items-center gap-1.5 font-medium text-gray-950 dark:text-white">{isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}<HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} period={p.rentalPeriod} /></span>
                     <span className="ml-5 text-xs text-gray-400">{p.location}</span>
                   </td>
                   <td className="px-4 py-3 text-right">{money(totals.propertyTax)}</td>
@@ -1111,7 +1114,7 @@ function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
                 let total = 0
                 return (
                   <tr key={p.propertyId}>
-                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white"><HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} /></td>
+                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white"><HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} period={p.rentalPeriod} /></td>
                     {cols.map((y) => { const v = (p.byYear || {})[String(y)]; if (v != null) total += v; return <td key={y} className={`px-3 py-2 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''} ${v == null ? 'text-gray-300 dark:text-neutral-600' : 'text-gray-700 dark:text-neutral-200'}`}>{v == null ? '—' : money(v)}</td> })}
                     <td className="px-3 py-2 text-right font-medium">{money(total)}</td>
                   </tr>

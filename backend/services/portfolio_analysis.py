@@ -442,6 +442,7 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
             "propertyName": prop.get("name") or prop.get("address") or f"Property {prop.get('id')}",
             "location": ", ".join(str(item) for item in (prop.get("city"), prop.get("state")) if item),
             "mixedUse": is_mixed,
+            "rentalPeriod": prop.get("rentalPeriod"),
             "rentalIncome": _money(comp["rentalIncome"]),
             "operatingExpenses": _money(comp["operatingExpenses"]),
             "mortgageInterest": _money(comp["mortgageInterest"]),
@@ -538,6 +539,7 @@ def _tax_analysis(properties: List[Dict[str, Any]], schedules: Dict[int, Dict[st
             "propertyName": name,
             "location": location,
             "mixedUse": str(prop.get("usage_type") or "Rental").lower() == "primary" and bool(prop.get("hasRentalHistory")),
+            "rentalPeriod": prop.get("rentalPeriod"),
         }
         property_tax_by_year.append({**meta, "byYear": tax_cells})
         insurance_by_year.append({**meta, "byYear": ins_cells})
