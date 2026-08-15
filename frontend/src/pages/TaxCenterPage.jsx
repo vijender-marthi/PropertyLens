@@ -989,21 +989,69 @@ function PropertyLedger({ model }) {
 }
 function sumLedger(p, key) { return Object.values(p.byYear || {}).reduce((s, d) => s + (d[key] || 0), 0) }
 
+// ---- Property taxes / Insurance matrix widget -------------------------------
+function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
+  const rows = data || []
+  const cols = years || []
+  const isTax = kind === 'tax'
+  const hi = (y) => (selectedYear !== 'all' && Number(selectedYear) === y)
+  const tagCls = isTax ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+  const colTotal = (y) => rows.reduce((s, p) => s + ((p.byYear || {})[String(y)] || 0), 0)
+  return (
+    <Panel title={<span className="flex items-center gap-2"><Icon className="h-4 w-4 text-gray-400" />{title}</span>} action={<span className={`rounded-full px-2 py-0.5 text-xs ${tagCls}`}>by year</span>} subtitle="Deductible amount per property, per rental year">
+      {rows.length === 0 ? <EmptyState text={`No ${title.toLowerCase()} for this scope.`} /> : (
+        <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
+              <tr><th className="px-3 py-2.5 text-left">Property</th>{cols.map((y) => <th key={y} className={`px-3 py-2.5 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>{y}</th>)}<th className="px-3 py-2.5 text-right">Total</th></tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
+              {rows.map((p) => {
+                let total = 0
+                return (
+                  <tr key={p.propertyId}>
+                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{p.propertyName}</td>
+                    {cols.map((y) => { const v = (p.byYear || {})[String(y)]; if (v != null) total += v; return <td key={y} className={`px-3 py-2 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''} ${v == null ? 'text-gray-300 dark:text-neutral-600' : 'text-gray-700 dark:text-neutral-200'}`}>{v == null ? '—' : money(v)}</td> })}
+                    <td className="px-3 py-2 text-right font-medium">{money(total)}</td>
+                  </tr>
+                )
+              })}
+              <tr className="border-t border-gray-200 bg-gray-50 font-medium dark:border-neutral-700 dark:bg-neutral-950/40">
+                <td className="px-3 py-2.5">Total</td>{cols.map((y) => <td key={y} className={`px-3 py-2.5 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>{money(colTotal(y))}</td>)}<td className="px-3 py-2.5 text-right">{money(cols.reduce((s, y) => s + colTotal(y), 0))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
 // ---- Single-property chart (modernized) -------------------------------------
 function SinglePropertyChart({ model }) {
   const ledger = model.propertyLedger || []
   const [pid, setPid] = useState(ledger[0]?.propertyId)
   useEffect(() => { if (!ledger.find((p) => p.propertyId === pid)) setPid(ledger[0]?.propertyId) }, [ledger, pid])
   const prop = ledger.find((p) => p.propertyId === pid) || ledger[0]
-  if (!prop) return null
+  if (!prop) {
+    return <Panel title="Single-property view" subtitle="Deductible interest and depreciation over the rental years"><EmptyState text="No rental property in this scope." /></Panel>
+  }
   const years = model.years || []
   const data = years.filter((y) => prop.byYear[String(y)]).map((y) => ({ year: String(y), interest: (prop.byYear[String(y)] || {}).mortgageInterest || 0, depreciation: (prop.byYear[String(y)] || {}).depreciation || 0 }))
+  const sum = (k) => data.reduce((s, d) => s + (d[k] || 0), 0)
+  const netTotal = years.reduce((s, y) => s + ((prop.byYear[String(y)] || {}).taxableIncome || 0), 0)
   return (
-    <Panel title="Single-property trend" subtitle="Deductible interest and depreciation over the rental years" action={(
+    <Panel title="Single-property view" subtitle="Deductible interest and depreciation over the rental years" action={(
       <select className={selectCls} value={pid} onChange={(e) => setPid(Number(e.target.value))}>
         {ledger.map((p) => <option key={p.propertyId} value={p.propertyId}>{p.propertyName}</option>)}
       </select>
     )}>
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-lg bg-gray-50 p-3 dark:bg-neutral-950/40"><p className="text-xs text-gray-500 dark:text-neutral-400">Rental years</p><p className="mt-1 text-lg font-semibold text-gray-950 dark:text-white">{data.length}</p></div>
+        <div className="rounded-lg bg-blue-50 p-3 dark:bg-blue-950/30"><p className="text-xs text-blue-700 dark:text-blue-300">Total interest</p><p className="mt-1 text-lg font-semibold text-blue-700 dark:text-blue-200">{compact(sum('interest'))}</p></div>
+        <div className="rounded-lg bg-purple-50 p-3 dark:bg-purple-950/30"><p className="text-xs text-purple-700 dark:text-purple-300">Total depreciation</p><p className="mt-1 text-lg font-semibold text-purple-700 dark:text-purple-200">{compact(sum('depreciation'))}</p></div>
+        <div className={`rounded-lg p-3 ${netTotal < 0 ? 'bg-red-50 dark:bg-red-950/30' : 'bg-emerald-50 dark:bg-emerald-950/30'}`}><p className={`text-xs ${netTotal < 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}`}>Net (Sch E)</p><p className={`mt-1 text-lg font-semibold ${netTotal < 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-200'}`}>{compact(netTotal)}</p></div>
+      </div>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
@@ -1032,14 +1080,15 @@ function OverviewTab({ model, group, yearLabel, selectedYear, onGoto }) {
       <Panel title={`Deduction summary by ${group === 'year' ? 'year' : 'property'} (${yearLabel})`} subtitle="One row per property or year — the year/group toggle drives this">
         <DeductionSummary model={model} group={group} yearLabel={yearLabel} selectedYear={selectedYear} />
       </Panel>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <MatrixWidget title="Property taxes" kind="tax" icon={ReceiptText} data={model.propertyTaxByYear} years={model.years} selectedYear={selectedYear} />
+        <MatrixWidget title="Insurance" kind="insurance" icon={Umbrella} data={model.insuranceByYear} years={model.years} selectedYear={selectedYear} />
+      </div>
+      <SinglePropertyChart model={model} />
       <Panel title="Property financials ledger" subtitle="Click a property to expand its taxes, insurance, and operating costs over time">
         <PropertyLedger model={model} />
       </Panel>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Panel title="Deductions by category" subtitle="Proportional breakdown"><DeductionBars categories={model.categories || []} /></Panel>
-        <Panel title="Tax savings over time" subtitle="From backend yearly tax rows"><SavingsTrend data={model.trend || []} /></Panel>
-      </div>
-      <SinglePropertyChart model={model} />
+      <Panel title="Deductions by category" subtitle="Proportional breakdown"><DeductionBars categories={model.categories || []} /></Panel>
     </div>
   )
 }
