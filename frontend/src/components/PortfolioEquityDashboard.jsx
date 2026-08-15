@@ -230,7 +230,7 @@ export function HomeTimeline({ rows, onSelect, selectedIds, hint = 'Click a home
           )
         })}
       </div>
-      {hint ? <p className="mt-0.5 text-right text-[10px] text-gray-400 dark:text-gray-500">{hint}</p> : null}
+      {hint ? <span className="absolute right-0 top-0 cursor-help text-[11px] leading-none text-gray-300 dark:text-gray-600" title={hint} aria-label={hint}>ⓘ</span> : null}
     </div>
   )
 }

@@ -857,24 +857,60 @@ function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = fals
 }
 
 function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
-  const taxable = totals.taxableIncome || 0
   const rate = formatFixed(assumptions?.effectiveTaxRate || 0, 1)
+  const taxable = totals.taxableIncome || 0
+  const deductions = totals.totalDeductions || 0
+  const depreciation = totals.depreciation || 0
+  const savings = totals.estimatedSavings || 0
+  const rents = taxable + deductions            // Schedule E: rents = taxable income + deductions
+  const cashDeductions = Math.max(deductions - depreciation, 0)
+  const isLoss = taxable < 0
+  const suspended = carryforward != null && carryforward < 0 ? Math.abs(carryforward) : 0
+  const depPct = deductions ? Math.round((depreciation / deductions) * 100) : 0
+  const yrs = scopeLabel || 'your rental years'
+
   return (
-    <div>
-      <div className="mb-3 flex items-start gap-2 text-sm text-gray-500 dark:text-neutral-400">
-        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>Lifetime tax position — cumulative across all rental years{scopeLabel ? ` (${scopeLabel})` : ''}. Hover the <Info className="inline h-3.5 w-3.5 align-text-bottom" /> on any card for its formula. Use the tabs below to drill into a single year or property.</span>
+    <div className="space-y-4">
+      {/* The story — plain English, the way the Loans page reads */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="grid gap-x-10 gap-y-5 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+          <p className="text-[17px] leading-relaxed text-gray-800 dark:text-neutral-200">
+            Across {scopeLabel ? <>your rental years <b className="font-semibold">({scopeLabel})</b></> : 'your rental years'} you collected{' '}
+            <b className="font-semibold">{compact(rents)}</b> in rent and claimed <b className="font-semibold">{compact(deductions)}</b> in deductions —{' '}
+            <b className="font-semibold">{compact(depreciation)}</b> of it depreciation you never paid out of pocket. That{' '}
+            {isLoss
+              ? <>turned your rentals into a <b className="font-semibold text-red-600 dark:text-red-300">{compact(Math.abs(taxable))}</b> paper loss, trimming your federal tax by about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b>.</>
+              : <>left <b className="font-semibold">{compact(taxable)}</b> of net taxable income, with about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b> of tax sheltered by your deductions.</>}
+            {suspended > 0 ? <> <b className="font-semibold text-red-600 dark:text-red-300">{compact(suspended)}</b> of those losses are still suspended under Form 8582 — banked to offset future rental income or a sale.</> : null}
+          </p>
+          <div>
+            <div className="mb-1.5 flex justify-between text-xs text-gray-500 dark:text-neutral-400"><span>How your deductions break down</span><span className="tabular-nums">{compact(deductions)}</span></div>
+            <div className="flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
+              <div className="h-full bg-amber-500" style={{ width: `${deductions ? (depreciation / deductions) * 100 : 0}%` }} />
+              <div className="h-full bg-purple-500" style={{ width: `${deductions ? (cashDeductions / deductions) * 100 : 0}%` }} />
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-1.5 text-xs text-gray-600 dark:text-neutral-300 sm:grid-cols-2 lg:grid-cols-1">
+              <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />Depreciation (non-cash) · <span className="tabular-nums">{compact(depreciation)}</span> · {depPct}%</span>
+              <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-purple-500" />Cash deductions · <span className="tabular-nums">{compact(cashDeductions)}</span> · {100 - depPct}%</span>
+            </div>
+          </div>
+        </div>
+        <p className="mt-4 flex items-center gap-1.5 border-t border-gray-100 pt-3 text-xs text-gray-400 dark:border-neutral-800 dark:text-neutral-500">
+          <Info className="h-3.5 w-3.5 shrink-0" /> The flow below reads left to right — rent in, deductions out, what's taxable, what it saves. Hover any <Info className="inline h-3 w-3 align-text-bottom" /> for its formula, or use the tabs to drill into a single year or property.
+        </p>
       </div>
+
+      {/* The flow: Rent → Deductions → Taxable → Savings → Suspended */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard hero icon={ShieldCheck} label="Estimated tax savings" value={heroCompact(totals.estimatedSavings)} note={`deductions × ${rate}%`}
-          formula={`What your deductions save in federal tax.\n\n= Total deductions × ${rate}% assumed marginal rate.\n\nCumulative across all rental years.`} />
-        <MetricCard icon={ReceiptText} tone="purple" label="Total deductions" value={compact(totals.totalDeductions)} note={scopeLabel ? `lifetime · ${scopeLabel}` : 'lifetime'}
+        <MetricCard icon={Wallet} tone="blue" label="Rent collected" value={compact(rents)} note={`gross rents · ${yrs}`}
+          formula={'Total rents received across all rental years — the top line of Schedule E, before any deductions.'} />
+        <MetricCard icon={ReceiptText} tone="purple" label="Total deductions" value={compact(deductions)} note={`incl. ${compact(depreciation)} depreciation`}
           formula={'Every deductible Schedule E expense — operating costs + mortgage interest + property tax + depreciation — summed across all rental years.'} />
-        <MetricCard icon={Landmark} tone="amber" label="Depreciation" value={compact(totals.depreciation)} note="non-cash, lifetime"
-          formula={'Non-cash write-off of the building basis (purchase + closing − land) ÷ 27.5 years, prorated by rented months. Summed across all rental years.'} />
-        <MetricCard icon={FileSpreadsheet} tone={taxable < 0 ? 'red' : 'gray'} label="Net taxable income" value={compact(taxable)} valueClass={taxable < 0 ? 'text-red-600 dark:text-red-300' : ''} note="Schedule E total, lifetime"
+        <MetricCard icon={FileSpreadsheet} tone={isLoss ? 'red' : 'gray'} label="Net taxable income" value={compact(taxable)} valueClass={isLoss ? 'text-red-600 dark:text-red-300' : ''} note={isLoss ? 'a passive loss on paper' : 'rent − deductions'}
           formula={'Schedule E bottom line = rents received − total deductions, across all rental years. Negative means a passive loss.'} />
-        <MetricCard icon={ArrowRight} tone="red" label="Carryforward to next year" value={carryforward == null ? '—' : compact(carryforward)} valueClass="text-red-600 dark:text-red-300" note="Form 8582 · suspended"
+        <MetricCard hero icon={ShieldCheck} label="Estimated tax savings" value={heroCompact(savings)} note={`deductions × ${rate}%`}
+          formula={`What your deductions save in federal tax.\n\n= Total deductions × ${rate}% assumed marginal rate.\n\nCumulative across all rental years.`} />
+        <MetricCard icon={ArrowRight} tone="red" label="Suspended (carryforward)" value={carryforward == null ? '—' : compact(carryforward)} valueClass={suspended > 0 ? 'text-red-600 dark:text-red-300' : ''} note="Form 8582 · to future years"
           formula={'Passive losses you could not use, carried forward under Form 8582 — after the $25,000 special allowance (phased out between $100k and $150k MAGI). Set your MAGI on the Form 8582 tab to refine this.'} />
       </div>
     </div>
