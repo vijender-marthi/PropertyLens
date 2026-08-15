@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { AlertTriangle, ArrowRight, CheckCircle2, Info } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Building2, CheckCircle2, Home, Info } from 'lucide-react'
 import AuditAlerts from '../components/AuditAlerts'
 import PageContainer from '../components/PageContainer'
 import { HomeTimeline, PropertyFilter } from '../components/PortfolioEquityDashboard'
@@ -14,6 +14,9 @@ const compact = (v) => formatCurrencyCompact(v || 0, { threshold: 1_000, kDigits
 const num = (v) => (v && typeof v === 'object' ? (v.value ?? 0) : (v ?? 0))
 const metric = (kpis, key) => num(kpis?.[key])
 const label = (kpis, key, fallback) => kpis?.[key]?.label || fallback
+
+const HOME_TEXT = ['text-blue-500', 'text-teal-500', 'text-indigo-500', 'text-fuchsia-500', 'text-cyan-500', 'text-rose-500']
+const HOME_BG = ['bg-blue-500', 'bg-teal-500', 'bg-indigo-500', 'bg-fuchsia-500', 'bg-cyan-500', 'bg-rose-500']
 
 const KIND = {
   fixed: { label: 'Fixed', cls: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
@@ -90,6 +93,13 @@ export default function LoansPage() {
   const annualNoi = num(analysis?.incomeExpenses?.kpis?.noi)
   const dscr = monthlyPI > 0 && annualNoi > 0 ? annualNoi / (monthlyPI * 12) : null
 
+  const accentById = Object.fromEntries(available.map((p) => [p.id, p.accentIndex ?? 0]))
+  const primaryById = Object.fromEntries(available.map((p) => [p.id, p.isPrimary || String(p.type || '').toLowerCase() === 'primary']))
+  const HomeLabel = ({ id, name }) => {
+    const Icon = primaryById[id] ? Home : Building2
+    return <span className="inline-flex items-center gap-1.5"><Icon className={`h-3.5 w-3.5 ${HOME_TEXT[(accentById[id] ?? 0) % HOME_TEXT.length]}`} />{name}</span>
+  }
+
   const arms = rows.filter((r) => r.isArm)
   const balloons = rows.filter((r) => r.isBalloon)
   const nextPayoff = rows.map((r) => r.payoffYear).filter(Boolean).sort((a, b) => a - b)[0]
@@ -128,19 +138,21 @@ export default function LoansPage() {
         <section className="pt-4">
           <BandHead tense="Past" title="What happened" />
           <Card>
-            <p className="max-w-2xl text-[17px] leading-relaxed text-gray-800 dark:text-neutral-200">
-              You've borrowed <b className="font-semibold">{compact(originalTotal)}</b>, paid it down by <b className="font-semibold">{compact(principalPaid)}</b>, and paid <b className="font-semibold">{compact(interestToDate)}</b> in interest along the way — the real cost of the leverage.
-            </p>
-            <div className="mt-4 max-w-xl">
-              <div className="mb-1.5 flex justify-between text-xs text-gray-500 dark:text-neutral-400"><span>Original borrowed → today</span><span className="tabular-nums">{compact(originalTotal)}</span></div>
-              <div className="flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
-                <div className="h-full bg-emerald-500" style={{ width: `${originalTotal ? (principalPaid / originalTotal) * 100 : 0}%` }} />
-                <div className="h-full bg-indigo-500" style={{ width: `${originalTotal ? (balance / originalTotal) * 100 : 0}%` }} />
-              </div>
-              <div className="mt-2.5 flex flex-wrap gap-4 text-xs text-gray-600 dark:text-neutral-300">
-                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />Principal paid · <span className="tabular-nums">{compact(principalPaid)}</span></span>
-                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-indigo-500" />Still owed · <span className="tabular-nums">{compact(balance)}</span></span>
-                <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />Interest paid to date · <span className="tabular-nums">{compact(interestToDate)}</span></span>
+            <div className="grid gap-x-10 gap-y-5 lg:grid-cols-[1.35fr_1fr] lg:items-center">
+              <p className="text-[17px] leading-relaxed text-gray-800 dark:text-neutral-200">
+                You've borrowed <b className="font-semibold">{compact(originalTotal)}</b>, paid it down by <b className="font-semibold">{compact(principalPaid)}</b>, and paid <b className="font-semibold">{compact(interestToDate)}</b> in interest along the way — the real cost of the leverage.
+              </p>
+              <div>
+                <div className="mb-1.5 flex justify-between text-xs text-gray-500 dark:text-neutral-400"><span>Original borrowed → today</span><span className="tabular-nums">{compact(originalTotal)}</span></div>
+                <div className="flex h-3.5 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950">
+                  <div className="h-full bg-emerald-500" style={{ width: `${originalTotal ? (principalPaid / originalTotal) * 100 : 0}%` }} />
+                  <div className="h-full bg-indigo-500" style={{ width: `${originalTotal ? (balance / originalTotal) * 100 : 0}%` }} />
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-1.5 text-xs text-gray-600 dark:text-neutral-300 sm:grid-cols-3 lg:grid-cols-1">
+                  <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />Principal paid · <span className="tabular-nums">{compact(principalPaid)}</span></span>
+                  <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-indigo-500" />Still owed · <span className="tabular-nums">{compact(balance)}</span></span>
+                  <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />Interest paid to date · <span className="tabular-nums">{compact(interestToDate)}</span></span>
+                </div>
               </div>
             </div>
           </Card>
@@ -170,7 +182,7 @@ export default function LoansPage() {
                 <tbody className="tabular-nums">
                   {progressRows.map((r) => (
                     <tr key={r.id} className="border-t border-gray-100 dark:border-neutral-800">
-                      <td className="py-2.5"><Link to={`/properties/${r.propertyId}/loans`} className="font-medium text-gray-950 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-400">{r.propertyName}</Link> <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${kindOf(r).cls}`}>{kindOf(r).label}</span><div className="text-[11.5px] text-gray-400">{r.lender} · matures {r.payoffYear || '—'}</div></td>
+                      <td className="py-2.5"><Link to={`/properties/${r.propertyId}/loans`} className="font-medium text-gray-950 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-400"><HomeLabel id={r.propertyId} name={r.propertyName} /></Link> <span className={`ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${kindOf(r).cls}`}>{kindOf(r).label}</span><div className="ml-5 text-[11.5px] text-gray-400">{r.lender} · matures {r.payoffYear || '—'}</div></td>
                       <td className="py-2.5 text-right">{num(r.rate).toFixed(2)}%</td>
                       <td className="py-2.5 text-right">{money(num(r.balance))}</td>
                       <td className="py-2.5 text-right">{money(num(r.monthlyPI))}</td>
@@ -186,13 +198,14 @@ export default function LoansPage() {
         <section className="pt-6">
           <BandHead tense="Progress" title="How much you've paid off" />
           <Card>
-            <div className="max-w-2xl space-y-4">
+            <div className="grid gap-x-10 gap-y-4 md:grid-cols-2">
               {progressRows.map((r) => {
                 const pct = Math.round(num(r.paidPercent))
+                const bg = HOME_BG[(accentById[r.propertyId] ?? 0) % HOME_BG.length]
                 return (
                   <div key={r.id}>
-                    <div className="mb-1.5 flex items-baseline justify-between"><span className="text-sm font-medium text-gray-900 dark:text-white">{r.propertyName}</span><span className="text-[11.5px] tabular-nums text-gray-400">payoff {r.payoffYear || '—'}</span></div>
-                    <div className="h-2.5 overflow-hidden rounded-full border border-gray-100 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} /></div>
+                    <div className="mb-1.5 flex items-baseline justify-between"><span className="text-sm font-medium text-gray-900 dark:text-white"><HomeLabel id={r.propertyId} name={r.propertyName} /></span><span className="text-[11.5px] tabular-nums text-gray-400">payoff {r.payoffYear || '—'}</span></div>
+                    <div className="h-2.5 overflow-hidden rounded-full border border-gray-100 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950"><div className={`h-full rounded-full ${bg}`} style={{ width: `${pct}%` }} /></div>
                     <div className="mt-1.5 text-[11.5px] text-gray-500 dark:text-neutral-400"><b className="tabular-nums text-gray-800 dark:text-neutral-200">{compact(num(r.principalPaid))}</b> paid · {pct}% · <b className="tabular-nums text-gray-800 dark:text-neutral-200">{compact(num(r.balance))}</b> to go</div>
                   </div>
                 )
