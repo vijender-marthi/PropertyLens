@@ -108,6 +108,51 @@ export default function AnalyticsPage() {
   const worst = [...rows].sort((a, b) => a.cf - b.cf)[0]
   const best = [...rows].sort((a, b) => b.coc - a.coc)[0]
 
+  // Year-over-year trend — all values are backend-computed (taxCenter.byYear +
+  // trend). We only diff consecutive years to spot and explain declines.
+  const thisYear = new Date().getFullYear()
+  const savingsByYear = Object.fromEntries((analysis?.taxCenter?.trend || []).map((t) => [Number(t.period), num(t.estimatedSavings)]))
+  const byYear = (analysis?.taxCenter?.byYear || [])
+    .map((r) => {
+      const year = Number(r.year)
+      const deductions = num(r.totalDeductions)
+      return {
+        year,
+        partial: year >= thisYear,
+        income: num(r.rentalIncome),
+        deductions,
+        interest: num(r.mortgageInterest),
+        depreciation: num(r.depreciation),
+        propertyTax: num(r.propertyTax),
+        opex: num(r.operatingExpenses),
+        savings: savingsByYear[year] ?? (deductions * taxRate) / 100,
+      }
+    })
+    .sort((a, b) => a.year - b.year)
+  const maxIncome = Math.max(1, ...byYear.map((r) => r.income))
+  const maxSavings = Math.max(1, ...byYear.map((r) => r.savings))
+
+  // Explain the most recent complete-year decline (skip the partial current year
+  // so an expected year-to-date dip doesn't read as a real drop).
+  const complete = byYear.filter((r) => !r.partial)
+  const [pa, pb] = complete.slice(-2)
+  const insights = []
+  if (pa && pb) {
+    if (pb.income < pa.income - 1) {
+      insights.push({ metric: 'Rental income', year: pb.year, drop: pa.income - pb.income, why: `you collected less rent than in ${pa.year} — check for a vacancy, a converted unit, or a rent that hasn't kept up.` })
+    }
+    if (pb.savings < pa.savings - 1) {
+      const comps = [
+        { label: 'mortgage interest', delta: pb.interest - pa.interest, why: 'your loans are amortizing, so less of each payment is deductible interest' },
+        { label: 'depreciation', delta: pb.depreciation - pa.depreciation, why: 'depreciation stepped down (a property finished its schedule or was rented fewer months)' },
+        { label: 'property tax', delta: pb.propertyTax - pa.propertyTax, why: 'property-tax deductions came in lower' },
+        { label: 'operating expenses', delta: pb.opex - pa.opex, why: 'you had fewer deductible operating expenses' },
+      ]
+      const worstComp = comps.filter((c) => c.delta < -1).sort((x, y) => x.delta - y.delta)[0]
+      insights.push({ metric: 'Tax savings', year: pb.year, drop: pa.savings - pb.savings, why: worstComp ? `deductions fell mainly from lower ${worstComp.label} — ${worstComp.why}.` : 'your total deductions came in lower than the prior year.' })
+    }
+  }
+
   return (
     <PageContainer className="max-w-[80rem]">
       <div className="space-y-1">
@@ -152,6 +197,32 @@ export default function AnalyticsPage() {
             </div>
           </Card>
         </section>
+
+        {/* TREND — what's rising, what's slipping */}
+        {byYear.length >= 2 ? (
+          <section className="pt-6">
+            <BandHead tag="Trend" title="What's rising, what's slipping" />
+            <Card>
+              <div className="grid gap-x-10 gap-y-6 md:grid-cols-2">
+                <MiniTrend title="Rental income by year" rows={byYear} valueKey="income" max={maxIncome} fmt={compact} />
+                <MiniTrend title="Tax savings by year" rows={byYear} valueKey="savings" max={maxSavings} fmt={compact} />
+              </div>
+              {insights.length ? (
+                <div className="mt-5 space-y-2 border-t border-gray-100 pt-4 dark:border-neutral-800">
+                  {insights.map((it) => (
+                    <div key={it.metric} className="flex gap-3 rounded-xl border border-l-[3px] border-rose-200 border-l-rose-500 bg-rose-50/50 p-3.5 dark:border-rose-900/40 dark:bg-rose-950/20">
+                      <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"><TrendingDown className="h-4 w-4" /></span>
+                      <p className="text-[12.5px] text-gray-700 dark:text-neutral-300"><b className="font-semibold text-gray-950 dark:text-white">{it.metric} slipped {compact(it.drop)} in {it.year}</b> — {it.why}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-5 border-t border-gray-100 pt-4 text-xs text-emerald-600 dark:border-neutral-800 dark:text-emerald-400">Both income and tax savings held or grew year over year — nothing slipping.</p>
+              )}
+              {byYear.some((r) => r.partial) ? <p className="mt-3 text-[11px] text-gray-400">* {thisYear} is year-to-date and will fill in as the year closes — a partial-year dip is expected, so it's excluded from the callouts above.</p> : null}
+            </Card>
+          </section>
+        ) : null}
 
         {/* SCORECARD */}
         <section className="pt-6">
@@ -218,6 +289,33 @@ const OP_TONE = {
   violet: { bl: 'border-l-violet-500', ic: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' },
   rose: { bl: 'border-l-rose-500', ic: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' },
   emerald: { bl: 'border-l-emerald-500', ic: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
+}
+// Per-year mini bar list. Down-years (below the prior year) render rose with a
+// ▼ delta; up-years show an emerald ▲. Partial (current) years are muted.
+function MiniTrend({ title, rows, valueKey, max, fmt }) {
+  return (
+    <div>
+      <div className="mb-2.5 text-sm font-medium text-gray-900 dark:text-white">{title}</div>
+      <div className="space-y-1.5">
+        {rows.map((r, i) => {
+          const v = r[valueKey]
+          const prev = i > 0 ? rows[i - 1][valueKey] : null
+          const down = prev != null && v < prev - 1
+          const up = prev != null && v > prev + 1
+          return (
+            <div key={r.year} className="flex items-center gap-2 text-xs">
+              <span className={`w-12 shrink-0 tabular-nums ${r.partial ? 'italic text-gray-400' : 'text-gray-500 dark:text-neutral-400'}`}>{r.year}{r.partial ? '*' : ''}</span>
+              <div className="h-3 flex-1 overflow-hidden rounded bg-gray-100 dark:bg-neutral-800">
+                <div className={`h-full rounded ${down ? 'bg-rose-400' : r.partial ? 'bg-violet-300 dark:bg-violet-500/50' : 'bg-violet-500'}`} style={{ width: `${Math.max((v / max) * 100, 1)}%` }} />
+              </div>
+              <span className="w-16 shrink-0 text-right tabular-nums text-gray-800 dark:text-neutral-100">{fmt(v)}</span>
+              <span className={`w-16 shrink-0 text-right tabular-nums ${down ? 'text-rose-600 dark:text-rose-400' : up ? 'text-emerald-600 dark:text-emerald-400' : 'text-transparent'}`}>{prev != null && (down || up) ? `${up ? '▲' : '▼'} ${fmt(Math.abs(v - prev))}` : ' '}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 function Op({ icon: Icon, tone, title, body, impact }) {
   const t = OP_TONE[tone] || OP_TONE.blue

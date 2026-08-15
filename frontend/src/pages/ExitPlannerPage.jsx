@@ -322,8 +322,8 @@ function Waterfall({ row, maxSale }) {
   const n = bars.length
   const W = 720, rowH = 40, topPad = 6
   const H = topPad * 2 + n * rowH
-  const LW = 118, RW = 92                          // label gutter, value column
-  const plot = W - LW - RW
+  const LW = 118, rightPad = 12                     // label gutter, small right margin
+  const plot = W - LW - rightPad
   const maxLvl = Math.max(maxSale || 0, ...bars.map((b) => b.top))
   const minLvl = Math.min(0, ...bars.map((b) => b.bot))
   const span = (maxLvl - minLvl) || 1
@@ -339,12 +339,16 @@ function Waterfall({ row, maxSale }) {
         const x1 = x(b.bot), x2 = x(b.top)
         const bw = Math.max(x2 - x1, 2)
         const labelValue = `${b.sub ? '−' : b.signed && b.v < 0 ? '−' : ''}${formatChartCurrency(Math.abs(b.v))}`
+        // Amount sits just past the bar's right edge; if the bar runs near the
+        // right margin, tuck the amount inside the bar (white) so it stays visible.
+        const near = x2 > W - 66
+        const vx = near ? x2 - 8 : x2 + 8
         return (
           <g key={i}>
             {i < n - 1 ? <line x1={x(b.end)} y1={barY + barH} x2={x(b.end)} y2={barY + rowH - (rowH - barH) / 2 + 2} strokeWidth="1" strokeDasharray="3 3" className="stroke-gray-300 dark:stroke-neutral-600" /> : null}
             <rect x={x1} y={barY} width={bw} height={barH} rx="3" fill={b.col} fillOpacity={b.total ? 1 : 0.9} />
             <text x={LW - 12} y={barY + barH / 2} textAnchor="end" dominantBaseline="central" fontSize="13" fontWeight={b.total ? 600 : 400} className="fill-gray-700 dark:fill-neutral-200">{b.l}</text>
-            <text x={W - 6} y={barY + barH / 2} textAnchor="end" dominantBaseline="central" fontSize="13" fontWeight="600" className="fill-gray-900 dark:fill-white tabular-nums">{labelValue}</text>
+            <text x={vx} y={barY + barH / 2} textAnchor={near ? 'end' : 'start'} dominantBaseline="central" fontSize="13" fontWeight="600" className={near ? 'fill-white tabular-nums' : 'fill-gray-900 dark:fill-white tabular-nums'}>{labelValue}</text>
           </g>
         )
       })}
