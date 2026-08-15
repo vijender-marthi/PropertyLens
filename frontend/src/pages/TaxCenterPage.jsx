@@ -175,17 +175,22 @@ function DeductionBars({ categories }) {
 
 function SavingsAcrossYears({ data }) {
   if (!data.length) return <EmptyState text="No yearly savings yet." />
+  const cy = String(new Date().getFullYear())
+  const partial = String(data[data.length - 1].period) === cy
   return (
-    <div className="h-64">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
-          <XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
-          <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
-          <Tooltip formatter={(v) => [money(v), 'Estimated savings']} contentStyle={chartTooltipStyle(false)} />
-          <Line type="monotone" dataKey="estimatedSavings" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-        </LineChart>
-      </ResponsiveContainer>
+    <div>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
+            <XAxis dataKey="period" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
+            <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={52} />
+            <Tooltip formatter={(v) => [money(v), 'Estimated savings']} contentStyle={chartTooltipStyle(false)} />
+            <Line type="monotone" dataKey="estimatedSavings" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      {partial ? <p className="mt-2 text-xs text-gray-400">{cy} is year-to-date, so it dips below {Number(cy) - 1} until the year completes — not a real decline.</p> : null}
     </div>
   )
 }
@@ -1088,13 +1093,13 @@ function SinglePropertyChart({ model }) {
           <h3 className="mb-2 text-sm font-semibold text-gray-950 dark:text-white">Mortgage interest by year</h3>
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={interestData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+              <LineChart data={interestData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
                 <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={48} />
                 <Tooltip formatter={(v) => [money(v), 'Mortgage interest']} contentStyle={chartTooltipStyle(false)} />
-                <Bar dataKey="interest" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
-              </BarChart>
+                <Line type="monotone" dataKey="interest" stroke={chartColors.primary} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
