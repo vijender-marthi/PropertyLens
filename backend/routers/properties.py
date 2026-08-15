@@ -12968,6 +12968,10 @@ def form_8582(
     years_sorted = sorted(years)
     allowance = _special_allowance(magi)
     current_year = date.today().year
+    # Planning marginal rate — matches the Tax Center assumption (18.7%). Used to
+    # translate suspended losses into the tax they'll offset when the property is
+    # sold, so the chart reads as a banked benefit rather than a loss.
+    effective_rate = 18.7
 
     # Year-over-year roll-forward of suspended losses against the allowance.
     carry = 0.0
@@ -12979,12 +12983,17 @@ def form_8582(
         total = current + carry
         allowed = min(abs(total), allowance)
         carry = total + allowed
+        banked = round(abs(carry), 2)
         series.append({
             "year": yr,
             "currentLoss": round(current, 2),
             "specialAllowance": allowance,
             "allowed": round(allowed, 2),
             "carryforward": round(carry, 2),
+            # Positive framing: the suspended-loss balance is a benefit banked for
+            # a future sale, and the tax it would offset at the planning rate.
+            "banked": banked,
+            "taxValueAtSale": round(banked * effective_rate / 100, 2),
         })
 
     ty = int(tax_year) if tax_year else (years_sorted[-1] if years_sorted else current_year)
@@ -13032,12 +13041,17 @@ def form_8582(
             "totalLoss": round(total_all, 2),
             "allowedThisYear": round(allowed_all, 2),
             "carryforwardToNext": round(carry_all, 2),
+            # Suspended losses reframed as a benefit: the balance banked to date
+            # and the tax it would offset in a fully taxable sale.
+            "bankedLosses": round(abs(carry_all), 2),
+            "taxValueAtSale": round(abs(carry_all) * effective_rate / 100, 2),
         },
         "assumptions": {
             "specialAllowanceCap": 25000.0,
             "phaseoutStart": 100000.0,
             "phaseoutEnd": 150000.0,
             "activeParticipation": True,
+            "effectiveTaxRate": effective_rate,
             "label": "Planning estimate — active participation assumed",
             "status": "ESTIMATED",
         },

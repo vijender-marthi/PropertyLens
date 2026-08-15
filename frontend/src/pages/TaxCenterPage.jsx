@@ -881,7 +881,7 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
             {isLoss
               ? <>turned your rentals into a <b className="font-semibold text-red-600 dark:text-red-300">{compact(Math.abs(taxable))}</b> paper loss, trimming your federal tax by about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b>.</>
               : <>left <b className="font-semibold">{compact(taxable)}</b> of net taxable income, with about <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(savings)}</b> of tax sheltered by your deductions.</>}
-            {suspended > 0 ? <> <b className="font-semibold text-red-600 dark:text-red-300">{compact(suspended)}</b> of those losses are still suspended under Form 8582 — banked to offset future rental income or a sale.</> : null}
+            {suspended > 0 ? <> And <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(suspended)}</b> of those losses aren't lost — they're banked under Form 8582 and released to offset future rental income or a sale.</> : null}
           </p>
           <div>
             <div className="mb-1.5 flex justify-between text-xs text-gray-500 dark:text-neutral-400"><span>How your deductions break down</span><span className="tabular-nums">{compact(deductions)}</span></div>
@@ -910,8 +910,8 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward }) {
           formula={'Schedule E bottom line = rents received − total deductions, across all rental years. Negative means a passive loss.'} />
         <MetricCard hero icon={ShieldCheck} label="Estimated tax savings" value={heroCompact(savings)} note={`deductions × ${rate}%`}
           formula={`What your deductions save in federal tax.\n\n= Total deductions × ${rate}% assumed marginal rate.\n\nCumulative across all rental years.`} />
-        <MetricCard icon={ArrowRight} tone="red" label="Suspended (carryforward)" value={carryforward == null ? '—' : compact(carryforward)} valueClass={suspended > 0 ? 'text-red-600 dark:text-red-300' : ''} note="Form 8582 · to future years"
-          formula={'Passive losses you could not use, carried forward under Form 8582 — after the $25,000 special allowance (phased out between $100k and $150k MAGI). Set your MAGI on the Form 8582 tab to refine this.'} />
+        <MetricCard icon={Landmark} tone="emerald" label="Banked for a future sale" value={carryforward == null ? '—' : compact(suspended)} note="Form 8582 · released when you sell"
+          formula={'Passive losses you could not use yet — banked under Form 8582, not lost. In a fully taxable sale the whole balance is released to offset your capital gain and other income. (After the $25,000 special allowance, phased out between $100k and $150k MAGI. Set your MAGI on the Form 8582 tab to refine this.)'} />
       </div>
     </div>
   )
@@ -1346,7 +1346,10 @@ function Form8582Tab({ selectedPropertyIds }) {
 
   const availableYears = data?.availableYears?.length ? data.availableYears : [year]
   const t = data?.totals || {}
-  const series = (data?.series || []).map((s) => ({ year: String(s.year), carryforward: s.carryforward, allowed: s.allowed }))
+  const series = (data?.series || []).map((s) => ({ year: String(s.year), banked: s.banked ?? Math.abs(s.carryforward || 0), allowed: Math.abs(s.allowed || 0), taxValue: s.taxValueAtSale ?? 0 }))
+  const bankedTotal = t.bankedLosses ?? Math.abs(t.carryforwardToNext || 0)
+  const taxValueAtSale = t.taxValueAtSale ?? 0
+  const planRate = data?.assumptions?.effectiveTaxRate ?? 18.7
   return (
     <div>
       <Toolbar>
@@ -1364,7 +1367,7 @@ function Form8582Tab({ selectedPropertyIds }) {
               <p className="mt-2 text-2xl font-bold text-emerald-700 dark:text-emerald-200">{compact(t.allowedThisYear)}</p>
               <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/80">special allowance {money(data.specialAllowance)}</p>
             </div>
-            <KpiCard icon={ArrowRight} label="Carryforward to next year" value={compact(t.carryforwardToNext)} note="suspended losses" tone="purple" />
+            <KpiCard icon={ArrowRight} label="Carryforward to next year" value={compact(t.carryforwardToNext)} note="banked — released at sale" tone="purple" />
           </div>
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
             <Panel title="Passive loss by property" subtitle={`Allocated against the ${money(data.specialAllowance)} special allowance`}>
@@ -1390,24 +1393,32 @@ function Form8582Tab({ selectedPropertyIds }) {
               </div>
             </Panel>
           </div>
-          <Panel title="Carryforward — year over year" subtitle="Roll-forward of suspended losses against the special allowance">
+          <Panel title="Your suspended-loss bank" subtitle="Not lost — released to offset your gain when you sell">
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+              <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"><Lightbulb className="h-4 w-4" /></span>
+              <div className="text-sm text-gray-700 dark:text-neutral-300">
+                <p><b className="font-semibold text-gray-950 dark:text-white">The balance grows — and that's a good thing.</b> Each year the IRS suspends the passive losses you couldn't use against the $25,000 allowance. They don't vanish: in a fully taxable sale, the whole banked amount is freed to offset your capital gain and other income.</p>
+                <p className="mt-2">You've banked <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(bankedTotal)}</b> in suspended losses — roughly <b className="font-semibold text-emerald-700 dark:text-emerald-300">{compact(taxValueAtSale)}</b> of tax deferred to the year you sell, at the {formatFixed(planRate, 1)}% planning rate.</p>
+              </div>
+            </div>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={series} margin={{ left: 0, right: 16, top: 10, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="cfAreaFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={LOSS_TONE} stopOpacity={0.05} /><stop offset="95%" stopColor={LOSS_TONE} stopOpacity={0.35} /></linearGradient>
+                    <linearGradient id="bankFill" x1="0" x2="0" y1="0" y2="1"><stop offset="5%" stopColor={chartColors.positive} stopOpacity={0.35} /><stop offset="95%" stopColor={chartColors.positive} stopOpacity={0.03} /></linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartColors.gridLight} />
                   <XAxis dataKey="year" tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} />
                   <YAxis tickFormatter={formatChartCurrency} tick={chartTypography.smallMutedTick} axisLine={false} tickLine={false} width={56} />
-                  <Tooltip formatter={(v, n) => [money(v), n === 'carryforward' ? 'Carryforward balance' : 'Allowed that year']} contentStyle={chartTooltipStyle(false)} />
+                  <Tooltip formatter={(v, n) => [money(v), n === 'banked' ? 'Banked — released at sale' : 'Used against income that year']} contentStyle={chartTooltipStyle(false)} />
                   <ReferenceLine y={0} stroke={chartColors.neutral} />
                   <Legend />
-                  <Area type="monotone" dataKey="carryforward" name="Carryforward balance" stroke={LOSS_TONE} strokeWidth={2.5} fill="url(#cfAreaFill)" />
-                  <Line type="monotone" dataKey="allowed" name="Allowed that year" stroke={chartColors.positive} strokeWidth={2.5} dot={{ r: 3 }} />
+                  <Area type="monotone" dataKey="banked" name="Banked (released at sale)" stroke={chartColors.positive} strokeWidth={2.5} fill="url(#bankFill)" />
+                  <Line type="monotone" dataKey="allowed" name="Used against income that year" stroke={chartColors.primary} strokeWidth={2.5} dot={{ r: 3 }} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+            <p className="mt-2 text-[11px] text-gray-400">Shown as a positive benefit. The bank keeps growing while yearly losses exceed the $25,000 allowance, then releases in full the year you sell.</p>
           </Panel>
           <p className="text-xs text-gray-500 dark:text-neutral-400">{data.assumptions?.label || 'Planning estimate'} — the $25,000 special allowance drops 50% of MAGI over $100,000 and is gone at $150,000. Rental-period and partial-year aware. Planning only.</p>
         </div>
@@ -1479,7 +1490,7 @@ export default function TaxCenterPage() {
   }
 
   return (
-    <PageContainer className="max-w-[112rem]">
+    <PageContainer className="max-w-[80rem]">
       <HomeAccentProvider available={available}>
       <div className="space-y-5">
         <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 dark:border-neutral-800 lg:flex-row lg:items-start lg:justify-between">
