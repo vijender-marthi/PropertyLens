@@ -949,6 +949,7 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
 
 // ---- Deduction summary (property or year) -----------------------------------
 function DeductionSummary({ model, group, yearLabel, selectedYear }) {
+  const currentYear = new Date().getFullYear()
   if (group === 'year') {
     const rows = model.byYear || []
     return (
@@ -960,7 +961,7 @@ function DeductionSummary({ model, group, yearLabel, selectedYear }) {
           <tbody className="divide-y divide-gray-100 bg-white tabular-nums dark:divide-neutral-800 dark:bg-neutral-900">
             {rows.map((r) => (
               <tr key={r.year} className={selectedYear !== 'all' && Number(selectedYear) === r.year ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
-                <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{r.year}</td>
+                <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{r.year}{r.year === currentYear ? <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium normal-case text-amber-600 dark:bg-amber-950/40 dark:text-amber-300" title="Current year — figures are year-to-date and will change as the year closes">projected</span> : null}</td>
                 <td className="px-4 py-3 text-right font-semibold">{money(r.totalDeductions)}</td>
                 <td className="px-4 py-3 text-right">{money(r.depreciation)}</td>
                 <td className="px-4 py-3 text-right">{money(r.mortgageInterest)}</td>
