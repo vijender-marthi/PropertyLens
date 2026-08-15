@@ -1368,13 +1368,13 @@ export default function TaxCenterPage() {
           </div>
         </header>
 
-        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={isAll ? 'Lifetime · all years' : `Tax year ${year}`} /> : null}
-
         <nav className="flex gap-1 overflow-x-auto border-b border-gray-200 dark:border-neutral-800" aria-label="Tax center views">
           {TAX_TABS.map((name) => (
             <button key={name} type="button" onClick={() => setTab(name)} className={`min-w-max border-b-2 px-4 py-3 text-sm font-medium ${tab === name ? 'border-emerald-500 text-emerald-700 dark:text-emerald-300' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-100'}`}>{name}</button>
           ))}
         </nav>
+
+        {tab === 'Overview' ? <TaxKpis totals={model.totals} assumptions={model.assumptions} scopeLabel={isAll ? 'Lifetime · all years' : `Tax year ${year}`} /> : null}
 
         {showGlobalBar ? (
           <Toolbar>
