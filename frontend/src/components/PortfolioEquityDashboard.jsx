@@ -751,9 +751,13 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.origLoan)}</span>
             <span />
 
+            <span className="text-gray-500 dark:text-gray-400">Principal paid to date</span>
+            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(m.origLoan - m.loan)}</span>
+            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.paidOff)}</span>
+
             <span className="text-gray-500 dark:text-gray-400">Loan balance</span>
-            <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.loan)}</span>
-            <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.origLoan ? m.loan / m.origLoan : 0)}</span>
+            <span className="text-right tabular-nums text-red-600 dark:text-red-400">{compactMoney(m.loan)}</span>
+            <span className="text-right tabular-nums text-red-600 dark:text-red-400">{pct1(m.origLoan ? m.loan / m.origLoan : 0)}</span>
 
             <span className="pl-4 text-gray-400">↳ Fixed loans</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.fixedBalance)}</span>
@@ -762,10 +766,6 @@ export default function PortfolioEquityDashboard({ data, title, headerRight, tim
             <span className="pl-4 text-gray-400">↳ ARM loans</span>
             <span className="text-right tabular-nums text-gray-700 dark:text-gray-200">{compactMoney(m.armBalance)}</span>
             <span className="text-right tabular-nums text-gray-500 dark:text-gray-400">{pct1(m.loan ? m.armBalance / m.loan : 0)}</span>
-
-            <span className="text-gray-500 dark:text-gray-400">Principal paid to date</span>
-            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{compactMoney(m.origLoan - m.loan)}</span>
-            <span className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{pct1(m.paidOff)}</span>
 
             <span className="text-gray-500 dark:text-gray-400">Weighted rate</span>
             <span />
