@@ -85,7 +85,7 @@ function PropertyTable({ rows }) {
           ) : rows.map((r) => {
             const pct = r.value > 0 ? Math.max(0, Math.min(100, Math.round(r.equity / r.value * 100))) : 0
             return (
-              <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-neutral-800/40">
+              <tr key={r.id} className={r.primary ? 'bg-emerald-50/60 hover:bg-emerald-50 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/30' : 'hover:bg-gray-50 dark:hover:bg-neutral-800/40'}>
                 <td className="px-4 py-2.5">
                   <Link to={`/properties/${r.id}`} className="font-medium text-gray-950 hover:text-emerald-700 dark:text-white dark:hover:text-emerald-300">{r.name}</Link>
                   <p className="text-xs text-gray-400">{[r.city, r.state].filter(Boolean).join(', ') || r.type}</p>

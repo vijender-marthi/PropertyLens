@@ -221,7 +221,15 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
         <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
           <tr>
             <th className="px-4 py-3 text-left">Property</th>
-            {cols.map((id) => <th key={id} className={`px-4 py-3 text-right ${DEDUCTION_COLUMNS[id].headerClassName || ''}`}>{DEDUCTION_COLUMNS[id].header}</th>)}
+            {cols.map((id) => {
+              const col = DEDUCTION_COLUMNS[id]
+              return (
+                <Fragment key={id}>
+                  <th className={`px-4 py-3 text-right ${col.headerClassName || ''}`}>{col.header}</th>
+                  {col.pct ? <th className="px-1 py-3 text-right text-[11px] font-normal normal-case text-gray-400 dark:text-neutral-500">%</th> : null}
+                </Fragment>
+              )
+            })}
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 bg-white dark:divide-neutral-800 dark:bg-neutral-900">
@@ -236,12 +244,10 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
                 const cls = col.className ? col.className(row) : ''
                 const pct = col.pct ? col.pct(row) : null
                 return (
-                  <td key={id} className={`px-4 py-3 text-right ${cls}`}>
-                    <span className="whitespace-nowrap">
-                      {col.get(row)}
-                      {pct ? <span className="ml-1.5 text-[11px] font-normal text-gray-400 dark:text-neutral-500">{pct}</span> : null}
-                    </span>
-                  </td>
+                  <Fragment key={id}>
+                    <td className={`px-4 py-3 text-right ${cls}`}>{col.get(row)}</td>
+                    {col.pct ? <td className="px-1 py-3 text-right text-[11px] text-gray-400 dark:text-neutral-500">{pct ?? '—'}</td> : null}
+                  </Fragment>
                 )
               })}
             </tr>
