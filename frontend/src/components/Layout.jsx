@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import {
-  Building2, Upload, Settings, LogOut, Home, Plus,
+  Building2, Settings, LogOut, Home, Plus,
   TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark, Scale,
   Sun, Moon, DoorOpen, FileBarChart, Sparkles, MessageCircle, Database,
 } from 'lucide-react'
