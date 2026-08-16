@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertCircle, CalendarClock, PiggyBank, TimerReset, Info, Home, Building2, Flag, Bookmark, Save, Download, Plus, X, Check, Trophy, GitCompare, ChevronDown, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageContainer from '../components/PageContainer'
@@ -660,6 +661,7 @@ function SliderField({ label, value, min, max, step, display, note, onChange }) 
 // Results
 // ---------------------------------------------------------------------------
 function ResultsPanel({ report, loading }) {
+  const [amortHome, setAmortHome] = useState(null)
   if (loading) {
     return (
       <div className="card flex items-center justify-center py-16 text-sm text-gray-400">
@@ -745,10 +747,11 @@ function ResultsPanel({ report, loading }) {
         {/* Message boxes → curved connectors → home icons → dotted colour map → one timeline */}
         <div className="flex w-full items-stretch">
           {timeline.map((row) => (
-            <ChartCard key={`${row.order}-${row.name}`} row={row} asOf={asOf} />
+            <ChartCard key={`${row.order}-${row.name}`} row={row} asOf={asOf} onOpen={setAmortHome} />
           ))}
         </div>
-        <PayoffTimeline report={report} timeline={timeline} />
+        <PayoffTimeline report={report} timeline={timeline} onOpenHome={setAmortHome} />
+        <AmortizationModal home={amortHome} onClose={() => setAmortHome(null)} />
 
         {/* Legend (bottom) */}
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-gray-100 pt-3 text-[10px] text-gray-500 dark:border-gray-700/60 dark:text-gray-400">
@@ -973,11 +976,16 @@ function homeAccentFor(row, never) {
 
 // A home-icon node placed at the home's true time position on the axis.
 // Hovering it shows the reason (why this home clears where it does).
-function HomeNode({ row }) {
+function HomeNode({ row, onOpen }) {
   const never = row.verdict?.neverPaysOff
   const accent = homeAccentFor(row, never)
+  const clickable = onOpen && row.loanId != null
   return (
-    <span className={`group/node relative z-10 flex h-9 w-9 cursor-help items-center justify-center rounded-full border-2 bg-white shadow-sm dark:bg-gray-900 ${accent.ring}`}>
+    <span
+      className={`group/node relative z-10 flex h-9 w-9 items-center justify-center rounded-full border-2 bg-white shadow-sm dark:bg-gray-900 ${accent.ring} ${clickable ? 'cursor-pointer' : 'cursor-help'}`}
+      onClick={clickable ? () => onOpen(row) : undefined}
+      role={clickable ? 'button' : undefined}
+    >
       {row.isPrimary ? <Home className={`h-4 w-4 ${accent.icon}`} /> : <Building2 className={`h-4 w-4 ${accent.icon}`} />}
       <span className={`absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] font-bold text-white ${accent.badge}`}>
         {row.order}
@@ -997,13 +1005,19 @@ function HomeNode({ row }) {
 
 // Evenly-spaced detail card (connected to its time-positioned node by a leader).
 // All cards share the same height; hover the node below for the reason.
-function ChartCard({ row, asOf }) {
+function ChartCard({ row, asOf, onOpen }) {
   const never = row.verdict?.neverPaysOff
   const belowMarket = row.verdict?.belowMarket
   const accent = homeAccentFor(row, never)
+  const clickable = onOpen && row.loanId != null
   return (
     <div className="min-w-0 flex-1 px-1">
-      <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div
+        className={`flex h-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white text-center shadow-sm dark:border-gray-700 dark:bg-gray-800 ${clickable ? 'cursor-pointer transition hover:border-blue-400 hover:shadow dark:hover:border-blue-500' : ''}`}
+        onClick={clickable ? () => onOpen(row) : undefined}
+        role={clickable ? 'button' : undefined}
+        title={clickable ? `View ${row.name} amortization schedule` : undefined}
+      >
         <div className={`h-1 w-full shrink-0 ${accent.badge}`} />
         <div className="flex flex-1 flex-col px-1.5 py-1.5">
           <div className="truncate text-[13px] font-semibold text-gray-900 dark:text-white" title={row.name}>{row.name}</div>
@@ -1027,6 +1041,100 @@ function ChartCard({ row, asOf }) {
   )
 }
 
+// Amortization schedule for one home's loan, rolled up by year. Opened by
+// clicking a home's detail block (or its node) on the payoff timeline. Values
+// are the standalone loan amortization (no extra payments) — how that loan pays
+// down year by year.
+function AmortizationModal({ home, onClose }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!home || home.loanId == null || home.propertyId == null) return undefined
+    let active = true
+    setLoading(true); setError(''); setData(null)
+    propAPI.amortization(home.propertyId, home.loanId, 0)
+      .then((r) => { if (active) setData(r.data) })
+      .catch(() => { if (active) setError('Could not load the amortization schedule.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [home])
+
+  const yearly = useMemo(() => {
+    const sched = data?.schedule || []
+    if (!sched.length) return []
+    const start = new Date()
+    const byYear = new Map()
+    sched.forEach((m, i) => {
+      const y = new Date(start.getFullYear(), start.getMonth() + i, 1).getFullYear()
+      const acc = byYear.get(y) || { year: y, principal: 0, interest: 0, payment: 0, endingBalance: 0 }
+      acc.principal += m.principal || 0
+      acc.interest += m.interest || 0
+      acc.payment += m.payment || 0
+      acc.endingBalance = m.balance || 0
+      byYear.set(y, acc)
+    })
+    return Array.from(byYear.values())
+  }, [data])
+
+  if (!home) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center" role="dialog" aria-modal="true" aria-label="Amortization schedule" onMouseDown={onClose}>
+      <div className="my-8 w-full max-w-2xl rounded-2xl bg-white shadow-xl dark:bg-gray-900" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
+          <div>
+            <h4 className="font-semibold text-gray-900 dark:text-white">{home.name} · amortization by year</h4>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">How this loan pays down each year at its current rate{home.rateDisplay ? ` (${home.rateDisplay})` : ''} — no extra payments.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200" aria-label="Close">
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="max-h-[65vh] overflow-y-auto px-5 py-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-10 text-sm text-gray-400"><div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" /><span className="ml-3">Loading schedule…</span></div>
+          ) : error ? (
+            <p className="py-8 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
+          ) : yearly.length === 0 ? (
+            <p className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">No amortization schedule available for this loan.</p>
+          ) : (
+            <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-gray-950 dark:text-gray-400">
+                  <tr>
+                    <th className="px-3 py-2.5 text-left">Year</th>
+                    <th className="px-3 py-2.5 text-right text-emerald-700 dark:text-emerald-300">Principal</th>
+                    <th className="px-3 py-2.5 text-right text-amber-700 dark:text-amber-300">Interest</th>
+                    <th className="px-3 py-2.5 text-right">Total paid</th>
+                    <th className="px-3 py-2.5 text-right">Ending balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-gray-800">
+                  {yearly.map((y) => (
+                    <tr key={y.year} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                      <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{y.year}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300">{formatCurrency(y.principal)}</td>
+                      <td className="px-3 py-2 text-right text-amber-700 dark:text-amber-300">{formatCurrency(y.interest)}</td>
+                      <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-200">{formatCurrency(y.payment)}</td>
+                      <td className="px-3 py-2 text-right font-medium text-gray-900 dark:text-white">{formatCurrency(y.endingBalance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end border-t border-gray-100 px-5 py-3 dark:border-gray-800">
+          <button type="button" className="btn-secondary text-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // One merged timeline. Message boxes (above) curve down to their home icons,
 // which sit just above a single axis; a dotted line in each home's colour maps
 // the icon to its exact year. The axis carries the year ticks, the blue "with
@@ -1034,7 +1142,7 @@ function ChartCard({ row, asOf }) {
 // fixed red Original flag.
 const PT = { H: 212, HOME_Y: 88, AXIS_Y: 134 } // container geometry (px)
 
-function PayoffTimeline({ report, timeline }) {
+function PayoffTimeline({ report, timeline, onOpenHome }) {
   const axis = report.baselineMonth || 1
   const greenPct = Math.max(0, Math.min((report.debtFreeMonth / axis) * 100, 100))
   const start = new Date(report.startDate)
@@ -1075,7 +1183,7 @@ function PayoffTimeline({ report, timeline }) {
       {/* Home icons, hugging the timeline (#2) */}
       {timeline.map((row) => (
         <span key={`${row.order}-${row.name}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${clampPct(row.planPct)}%`, top: PT.HOME_Y }}>
-          <HomeNode row={row} />
+          <HomeNode row={row} onOpen={onOpenHome} />
         </span>
       ))}
 

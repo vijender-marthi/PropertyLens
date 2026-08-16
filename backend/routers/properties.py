@@ -12202,6 +12202,8 @@ def payoff_planner(
                 "name": label,
                 "isPrimary": is_primary,
                 "accentIndex": _accent.get(prop.id, 0),
+                "propertyId": prop.id,
+                "loanId": loan.id,
                 "balance": round(current_loan_balance(loan), 2),
                 "rate": float(loan.interest_rate or 0.0) / 100.0,  # engine stores percent
                 "pi": round(loan_monthly_pi(loan), 2),
