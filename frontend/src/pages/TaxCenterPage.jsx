@@ -842,27 +842,6 @@ const METRIC_ICON_TONE = {
   red: 'text-red-600 dark:text-red-300',
   gray: 'text-gray-500 dark:text-neutral-400',
 }
-// Small SVG doughnut for embedding inside a metric card. Segments are drawn as
-// dasharray arcs on stacked circles; values need not be pre-normalized.
-function Doughnut({ segments, size = 54, stroke = 9 }) {
-  const total = segments.reduce((s, x) => s + Math.max(x.value, 0), 0) || 1
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  let offset = 0
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0" role="img" aria-label="Rent composition">
-      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-gray-100 dark:stroke-neutral-800" />
-        {segments.map((s, i) => {
-          const len = (Math.max(s.value, 0) / total) * c
-          const el = <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={stroke} strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-offset} />
-          offset += len
-          return el
-        })}
-      </g>
-    </svg>
-  )
-}
 function MetricCard({ icon: Icon, label, value, note, tone = 'gray', hero = false, valueClass = '', formula, tooltip, chart }) {
   const hasTip = tooltip || formula
   return (
@@ -898,16 +877,6 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
   const passiveLoss = used + suspended
   const depPct = deductions ? Math.round((depreciation / deductions) * 100) : 0
   const yrs = scopeLabel || 'your rental years'
-  // What happens to each rent dollar — the three slices always sum to rents:
-  // sheltered by depreciation, sheltered by cash deductions, then taxable kept.
-  const depSheltered = Math.min(depreciation, rents)
-  const cashSheltered = Math.min(cashDeductions, Math.max(rents - depreciation, 0))
-  const taxableKept = Math.max(rents - deductions, 0)
-  const rentSegments = [
-    { value: depSheltered, color: '#f59e0b', label: 'Sheltered by depreciation' },
-    { value: cashSheltered, color: '#a855f7', label: 'Sheltered by cash deductions' },
-    { value: taxableKept, color: '#10b981', label: 'Taxable income kept' },
-  ]
   // The paper-loss reconciliation, shown on hover of the Banked card (used to be
   // a strip on the page): total loss = used against income + banked.
   const bankedTooltip = (isLoss && passiveLoss > 0) ? (
@@ -928,9 +897,8 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
     <div className="space-y-4">
       {/* The flow: Rent → Deductions → Taxable → Savings → Suspended */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <MetricCard icon={Wallet} tone="blue" label="Rent collected" value={compact(rents)} note={`gross rents · ${yrs}`}
-          chart={<Doughnut segments={rentSegments} />}
-          formula={'Total rents received across all rental years — the top line of Schedule E, before any deductions.\n\nThe ring shows what happened to that rent: amber = sheltered by depreciation, purple = sheltered by cash deductions, green = taxable income kept. A full amber+purple ring means deductions absorbed all of it.'} />
+        <MetricCard icon={Wallet} tone="blue" label="Rental income" value={compact(rents)} note={`gross rents · ${yrs}`}
+          formula={'Total rents received across all rental years — the top line of Schedule E, before any deductions.'} />
         <MetricCard icon={ReceiptText} tone="purple" label="Total deductions" value={compact(deductions)} note={`incl. ${compact(depreciation)} depreciation`}
           formula={'Every deductible Schedule E expense — operating costs + mortgage interest + property tax + depreciation — summed across all rental years.'} />
         <MetricCard icon={FileSpreadsheet} tone={isLoss ? 'red' : 'gray'} label="Net taxable income" value={compact(taxable)} valueClass={isLoss ? 'text-red-600 dark:text-red-300' : ''} note={isLoss ? 'a passive loss on paper' : 'rent − deductions'}
@@ -1095,33 +1063,44 @@ function sumLedger(p, key) { return Object.values(p.byYear || {}).reduce((s, d) 
 
 // ---- Property taxes / Insurance matrix widget -------------------------------
 function MatrixWidget({ title, kind, icon: Icon, data, years, selectedYear }) {
-  const rows = data || []
-  const cols = years || []
+  // Rows are years, columns are properties.
+  const props = data || []
+  const rowYears = years || []
   const isTax = kind === 'tax'
   const hi = (y) => (selectedYear !== 'all' && Number(selectedYear) === y)
   const tagCls = isTax ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-  const colTotal = (y) => rows.reduce((s, p) => s + ((p.byYear || {})[String(y)] || 0), 0)
+  const cellVal = (p, y) => (p.byYear || {})[String(y)]
+  const rowTotal = (y) => props.reduce((s, p) => s + (cellVal(p, y) || 0), 0)
+  const colTotal = (p) => rowYears.reduce((s, y) => s + (cellVal(p, y) || 0), 0)
+  const grandTotal = props.reduce((s, p) => s + colTotal(p), 0)
   return (
-    <Panel title={<span className="flex items-center gap-2"><Icon className="h-4 w-4 text-gray-400" />{title}</span>} action={<span className={`rounded-full px-2 py-0.5 text-xs ${tagCls}`}>by year</span>} subtitle="Deductible amount per property, per rental year">
-      {rows.length === 0 ? <EmptyState text={`No ${title.toLowerCase()} for this scope.`} /> : (
+    <Panel title={<span className="flex items-center gap-2"><Icon className="h-4 w-4 text-gray-400" />{title}</span>} action={<span className={`rounded-full px-2 py-0.5 text-xs ${tagCls}`}>by year</span>} subtitle="Deductible amount per year, per property">
+      {props.length === 0 ? <EmptyState text={`No ${title.toLowerCase()} for this scope.`} /> : (
         <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
-              <tr><th className="px-3 py-2.5 text-left">Property</th>{cols.map((y) => <th key={y} className={`px-3 py-2.5 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>{y}</th>)}<th className="px-3 py-2.5 text-right">Total</th></tr>
+              <tr>
+                <th className="px-3 py-2.5 text-left">Year</th>
+                {props.map((p) => (
+                  <th key={p.propertyId} className="px-3 py-2.5 text-right">
+                    <HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} period={p.rentalPeriod} />
+                  </th>
+                ))}
+                <th className="px-3 py-2.5 text-right">Total</th>
+              </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
-              {rows.map((p) => {
-                let total = 0
-                return (
-                  <tr key={p.propertyId}>
-                    <td className="px-3 py-2 font-medium text-gray-900 dark:text-white"><HomeName id={p.propertyId} name={p.propertyName} /><MixedBadge show={p.mixedUse} period={p.rentalPeriod} /></td>
-                    {cols.map((y) => { const v = (p.byYear || {})[String(y)]; if (v != null) total += v; return <td key={y} className={`px-3 py-2 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''} ${v == null ? 'text-gray-300 dark:text-neutral-600' : 'text-gray-700 dark:text-neutral-200'}`}>{v == null ? '—' : money(v)}</td> })}
-                    <td className="px-3 py-2 text-right font-medium">{money(total)}</td>
-                  </tr>
-                )
-              })}
+              {rowYears.map((y) => (
+                <tr key={y} className={hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}>
+                  <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{y}</td>
+                  {props.map((p) => { const v = cellVal(p, y); return <td key={p.propertyId} className={`px-3 py-2 text-right ${v == null ? 'text-gray-300 dark:text-neutral-600' : 'text-gray-700 dark:text-neutral-200'}`}>{v == null ? '—' : money(v)}</td> })}
+                  <td className="px-3 py-2 text-right font-medium">{money(rowTotal(y))}</td>
+                </tr>
+              ))}
               <tr className="border-t border-gray-200 bg-gray-50 font-medium dark:border-neutral-700 dark:bg-neutral-950/40">
-                <td className="px-3 py-2.5">Total</td>{cols.map((y) => <td key={y} className={`px-3 py-2.5 text-right ${hi(y) ? 'bg-emerald-50 dark:bg-emerald-950/30' : ''}`}>{money(colTotal(y))}</td>)}<td className="px-3 py-2.5 text-right">{money(cols.reduce((s, y) => s + colTotal(y), 0))}</td>
+                <td className="px-3 py-2.5">Total</td>
+                {props.map((p) => <td key={p.propertyId} className="px-3 py-2.5 text-right">{money(colTotal(p))}</td>)}
+                <td className="px-3 py-2.5 text-right">{money(grandTotal)}</td>
               </tr>
             </tbody>
           </table>
