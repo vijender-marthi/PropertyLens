@@ -198,12 +198,16 @@ function SavingsAcrossYears({ data }) {
   )
 }
 
+// Share of a property's total deductions — shown under each component column so
+// you can read the deduction mix at a glance.
+const pctOfDeductions = (part, total) => (total ? `${Math.round((Number(part) || 0) / total * 100)}%` : null)
+
 const DEDUCTION_COLUMNS = {
   totalDeductions: { header: 'Total deductions', get: (r) => money(r.totalDeductions), className: () => 'font-semibold text-gray-950 dark:text-white' },
-  depreciation: { header: 'Depreciation', get: (r) => money(r.depreciation) },
-  mortgageInterest: { header: 'Interest', get: (r) => money(r.mortgageInterest) },
-  propertyTax: { header: 'Property tax', get: (r) => money(r.propertyTax) },
-  operatingExpenses: { header: 'Operating', get: (r) => money(r.operatingExpenses) },
+  depreciation: { header: 'Depreciation', get: (r) => money(r.depreciation), pct: (r) => pctOfDeductions(r.depreciation, r.totalDeductions) },
+  mortgageInterest: { header: 'Interest', get: (r) => money(r.mortgageInterest), pct: (r) => pctOfDeductions(r.mortgageInterest, r.totalDeductions) },
+  propertyTax: { header: 'Property tax', get: (r) => money(r.propertyTax), pct: (r) => pctOfDeductions(r.propertyTax, r.totalDeductions) },
+  operatingExpenses: { header: 'Operating', get: (r) => money(r.operatingExpenses), pct: (r) => pctOfDeductions(r.operatingExpenses, r.totalDeductions) },
   rentalIncome: { header: 'Income', get: (r) => money(r.rentalIncome), className: () => 'font-semibold text-blue-700 dark:text-blue-300', headerClassName: 'text-blue-700 dark:text-blue-300' },
   taxableIncome: { header: 'Taxable income', get: (r) => money(r.taxableIncome), className: (r) => `border-l border-gray-200 dark:border-neutral-800 font-medium ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`, headerClassName: 'border-l border-gray-200 dark:border-neutral-800' },
 }
@@ -230,7 +234,13 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
               {cols.map((id) => {
                 const col = DEDUCTION_COLUMNS[id]
                 const cls = col.className ? col.className(row) : ''
-                return <td key={id} className={`px-4 py-3 text-right ${cls}`}>{col.get(row)}</td>
+                const pct = col.pct ? col.pct(row) : null
+                return (
+                  <td key={id} className={`px-4 py-3 text-right ${cls}`}>
+                    {col.get(row)}
+                    {pct ? <div className="text-[11px] font-normal text-gray-400 dark:text-neutral-500">{pct}</div> : null}
+                  </td>
+                )
               })}
             </tr>
           ))}
