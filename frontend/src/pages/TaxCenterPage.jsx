@@ -237,8 +237,10 @@ function DeductionTable({ rows, columns = ALL_DEDUCTION_COLUMNS }) {
                 const pct = col.pct ? col.pct(row) : null
                 return (
                   <td key={id} className={`px-4 py-3 text-right ${cls}`}>
-                    {col.get(row)}
-                    {pct ? <div className="text-[11px] font-normal text-gray-400 dark:text-neutral-500">{pct}</div> : null}
+                    <span className="whitespace-nowrap">
+                      {col.get(row)}
+                      {pct ? <span className="ml-1.5 text-[11px] font-normal text-gray-400 dark:text-neutral-500">{pct}</span> : null}
+                    </span>
                   </td>
                 )
               })}
@@ -958,8 +960,35 @@ function TaxKpis({ totals, assumptions, scopeLabel, carryforward, usedToDate, th
 // ---- Deduction summary (property or year) -----------------------------------
 function DeductionSummary({ model, group, yearLabel, selectedYear }) {
   const currentYear = new Date().getFullYear()
+  const [expandProjected, setExpandProjected] = useState(false)
   if (group === 'year') {
     const rows = model.byYear || []
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const elapsedMonths = Math.min(12, new Date().getMonth() + 1)  // Jan..current month inclusive
+    const actualFrac = elapsedMonths / 12
+    const actualRange = `Jan–${MON[elapsedMonths - 1]}`
+    const projRange = elapsedMonths >= 12 ? '—' : `${MON[elapsedMonths]}–Dec`
+    const scale = (r, f) => ({
+      rentalIncome: (r.rentalIncome || 0) * f,
+      depreciation: (r.depreciation || 0) * f,
+      mortgageInterest: (r.mortgageInterest || 0) * f,
+      propertyTax: (r.propertyTax || 0) * f,
+      operatingExpenses: (r.operatingExpenses || 0) * f,
+      totalDeductions: (r.totalDeductions || 0) * f,
+      taxableIncome: (r.taxableIncome || 0) * f,
+    })
+    const pad = (muted) => (muted ? 'py-2' : 'py-3')
+    const valueCells = (v, muted = false) => (
+      <>
+        <td className={`px-4 ${pad(muted)} text-right font-semibold text-blue-700 dark:text-blue-300`}>{money(v.rentalIncome)}</td>
+        <td className={`px-4 ${pad(muted)} text-right`}>{money(v.depreciation)}</td>
+        <td className={`px-4 ${pad(muted)} text-right`}>{money(v.mortgageInterest)}</td>
+        <td className={`px-4 ${pad(muted)} text-right`}>{money(v.propertyTax)}</td>
+        <td className={`px-4 ${pad(muted)} text-right`}>{money(v.operatingExpenses)}</td>
+        <td className={`px-4 ${pad(muted)} text-right ${muted ? '' : 'font-semibold'}`}>{money(v.totalDeductions)}</td>
+        <td className={`border-l border-gray-200 px-4 ${pad(muted)} text-right font-medium dark:border-neutral-800 ${v.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(v.taxableIncome)}</td>
+      </>
+    )
     return (
       <div className="overflow-auto rounded-lg border border-gray-200 dark:border-neutral-800">
         <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-neutral-800">
@@ -967,18 +996,39 @@ function DeductionSummary({ model, group, yearLabel, selectedYear }) {
             <tr><th className="px-4 py-3 text-left">Tax year</th><th className="px-4 py-3 text-right text-blue-700 dark:text-blue-300">Income</th><th className="px-4 py-3 text-right">Depreciation</th><th className="px-4 py-3 text-right">Interest</th><th className="px-4 py-3 text-right">Property tax</th><th className="px-4 py-3 text-right">Operating</th><th className="px-4 py-3 text-right">Total ded.</th><th className="border-l border-gray-200 px-4 py-3 text-right dark:border-neutral-800">Taxable inc.</th></tr>
           </thead>
           <tbody className="divide-y divide-gray-100 bg-white tabular-nums dark:divide-neutral-800 dark:bg-neutral-900">
-            {rows.map((r) => (
-              <tr key={r.year} className={selectedYear !== 'all' && Number(selectedYear) === r.year ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''}>
-                <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">{r.year}{r.year === currentYear ? <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium normal-case text-amber-600 dark:bg-amber-950/40 dark:text-amber-300" title="Current year — figures are year-to-date and will change as the year closes">projected</span> : null}</td>
-                <td className="px-4 py-3 text-right font-semibold text-blue-700 dark:text-blue-300">{money(r.rentalIncome)}</td>
-                <td className="px-4 py-3 text-right">{money(r.depreciation)}</td>
-                <td className="px-4 py-3 text-right">{money(r.mortgageInterest)}</td>
-                <td className="px-4 py-3 text-right">{money(r.propertyTax)}</td>
-                <td className="px-4 py-3 text-right">{money(r.operatingExpenses)}</td>
-                <td className="px-4 py-3 text-right font-semibold">{money(r.totalDeductions)}</td>
-                <td className={`border-l border-gray-200 px-4 py-3 text-right font-medium dark:border-neutral-800 ${r.taxableIncome < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{money(r.taxableIncome)}</td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const isProjected = r.year === currentYear
+              const open = isProjected && expandProjected
+              return (
+                <Fragment key={r.year}>
+                  <tr
+                    className={`${selectedYear !== 'all' && Number(selectedYear) === r.year ? 'bg-emerald-50/60 dark:bg-emerald-950/20' : ''} ${isProjected ? 'cursor-pointer' : ''}`}
+                    onClick={isProjected ? () => setExpandProjected((v) => !v) : undefined}
+                  >
+                    <td className="px-4 py-3 font-medium text-gray-950 dark:text-white">
+                      <span className="inline-flex items-center gap-1.5">
+                        {isProjected ? <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" /> : null}
+                        {r.year}
+                        {isProjected ? <span className="ml-1 rounded-full bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-medium normal-case text-amber-600 dark:bg-amber-950/40 dark:text-amber-300" title="Current year — figures are year-to-date and will change as the year closes. Click to split into actual and projected.">projected</span> : null}
+                      </span>
+                    </td>
+                    {valueCells(r)}
+                  </tr>
+                  {open ? (
+                    <>
+                      <tr className="bg-gray-50/70 text-xs dark:bg-neutral-950/40">
+                        <td className="px-4 py-2 pl-10 text-gray-600 dark:text-neutral-300">Actual <span className="text-gray-400">· {actualRange}</span></td>
+                        {valueCells(scale(r, actualFrac), true)}
+                      </tr>
+                      <tr className="bg-gray-50/70 text-xs dark:bg-neutral-950/40">
+                        <td className="px-4 py-2 pl-10 text-gray-600 dark:text-neutral-300">Projected <span className="text-gray-400">· {projRange}</span></td>
+                        {valueCells(scale(r, 1 - actualFrac), true)}
+                      </tr>
+                    </>
+                  ) : null}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
       </div>
