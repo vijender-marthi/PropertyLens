@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Building2, Home, Plus, Search } from 'lucide-react'
+import { Building2, Home, Plus, Search, LayoutGrid, Table2 } from 'lucide-react'
 import PageContainer from '../components/PageContainer'
 import { propAPI } from '../services/api'
 import { homeTypeLabel } from '../config/propertySetupPresentation'
@@ -64,12 +64,56 @@ function PropertyCard({ r, accent }) {
   )
 }
 
+function PropertyTable({ rows }) {
+  return (
+    <div className="overflow-auto rounded-xl border border-gray-200 dark:border-neutral-800">
+      <table className="min-w-full text-sm">
+        <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-neutral-950 dark:text-neutral-400">
+          <tr>
+            <th className="px-4 py-3 text-left">Property</th>
+            <th className="px-4 py-3 text-left">Type</th>
+            <th className="px-4 py-3 text-right">Value</th>
+            <th className="px-4 py-3 text-right">Equity</th>
+            <th className="px-4 py-3 text-right">% owned</th>
+            <th className="px-4 py-3 text-right">Cash flow /mo</th>
+            <th className="px-4 py-3 text-center">Health</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 tabular-nums dark:divide-neutral-800">
+          {rows.length === 0 ? (
+            <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-neutral-400">No properties match.</td></tr>
+          ) : rows.map((r) => {
+            const pct = r.value > 0 ? Math.max(0, Math.min(100, Math.round(r.equity / r.value * 100))) : 0
+            return (
+              <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-neutral-800/40">
+                <td className="px-4 py-2.5">
+                  <Link to={`/properties/${r.id}`} className="font-medium text-gray-950 hover:text-emerald-700 dark:text-white dark:hover:text-emerald-300">{r.name}</Link>
+                  <p className="text-xs text-gray-400">{[r.city, r.state].filter(Boolean).join(', ') || r.type}</p>
+                </td>
+                <td className="px-4 py-2.5">
+                  <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${r.primary ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'}`}>{r.primary ? 'Primary' : 'Rental'}</span>
+                </td>
+                <td className="px-4 py-2.5 text-right font-medium text-gray-900 dark:text-white">{compact(r.value)}</td>
+                <td className="px-4 py-2.5 text-right">{compact(r.equity)}</td>
+                <td className="px-4 py-2.5 text-right">{pct}%</td>
+                <td className={`px-4 py-2.5 text-right font-medium ${r.cashFlow < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{compact(r.cashFlow)}</td>
+                <td className="px-4 py-2.5 text-center"><span className="inline-block h-2.5 w-2.5 rounded-full align-middle" style={{ backgroundColor: HEALTH[r.health] }} title={r.health} /></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function PropertiesPage() {
   const [properties, setProperties] = useState([])
   const [dashboardData, setDashboardData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [attention, setAttention] = useState(false)
+  const [view, setView] = useState('cards') // 'cards' | 'table'
 
   useEffect(() => {
     setLoading(true)
@@ -134,26 +178,47 @@ export default function PropertiesPage() {
           {attentionCount > 0 ? (
             <button type="button" onClick={() => setAttention((a) => !a)} aria-pressed={attention} className={`rounded-full border px-3.5 py-2 text-sm transition ${attention ? 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-neutral-700 dark:text-neutral-300'}`}>Needs attention · {attentionCount}</button>
           ) : null}
+          <div className="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-neutral-700" role="group" aria-label="View">
+            {[['cards', 'Cards', LayoutGrid], ['table', 'Table', Table2]].map(([key, label, Icon]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setView(key)}
+                aria-pressed={view === key}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition ${view === key ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50 dark:text-neutral-300 dark:hover:bg-neutral-800'}`}
+              >
+                <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        {primaries.length ? (
+        {view === 'table' ? (
+          <div className="pt-4 pb-4">
+            <PropertyTable rows={[...primaries, ...rentals]} />
+          </div>
+        ) : (
           <>
-            <div className="flex items-center gap-2 pt-5 text-xs font-semibold uppercase tracking-wide text-gray-400"><Home className="h-4 w-4" /> Primary residence <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-normal normal-case dark:border-neutral-700">{primaries.length}</span></div>
-            <div className="grid gap-3.5 pt-3 sm:grid-cols-2 lg:grid-cols-3">
-              {primaries.map((r) => <PropertyCard key={r.id} r={r} accent={ACCENT[accentByRank[r.id] ?? 0]} />)}
+            {primaries.length ? (
+              <>
+                <div className="flex items-center gap-2 pt-5 text-xs font-semibold uppercase tracking-wide text-gray-400"><Home className="h-4 w-4" /> Primary residence <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-normal normal-case dark:border-neutral-700">{primaries.length}</span></div>
+                <div className="grid gap-3.5 pt-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {primaries.map((r) => <PropertyCard key={r.id} r={r} accent={ACCENT[accentByRank[r.id] ?? 0]} />)}
+                </div>
+              </>
+            ) : null}
+
+            <div className="flex items-center gap-2 pt-5 text-xs font-semibold uppercase tracking-wide text-gray-400"><Building2 className="h-4 w-4" /> Rentals <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-normal normal-case dark:border-neutral-700">{rentals.length}</span></div>
+            <div className="grid gap-3.5 pt-3 pb-4 sm:grid-cols-2 lg:grid-cols-3">
+              {rentals.map((r) => <PropertyCard key={r.id} r={r} accent={ACCENT[accentByRank[r.id] ?? 0]} />)}
+              <Link to="/properties/new" className="flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-2xl border-[1.5px] border-dashed border-gray-300 text-gray-500 transition hover:border-emerald-400 hover:text-emerald-600 dark:border-neutral-700 dark:text-neutral-400">
+                <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"><Plus className="h-5 w-5" /></span>
+                <span className="text-sm font-medium">Add property</span>
+                <span className="text-[11.5px] text-gray-400">Primary or rental</span>
+              </Link>
             </div>
           </>
-        ) : null}
-
-        <div className="flex items-center gap-2 pt-5 text-xs font-semibold uppercase tracking-wide text-gray-400"><Building2 className="h-4 w-4" /> Rentals <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-normal normal-case dark:border-neutral-700">{rentals.length}</span></div>
-        <div className="grid gap-3.5 pt-3 pb-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rentals.map((r) => <PropertyCard key={r.id} r={r} accent={ACCENT[accentByRank[r.id] ?? 0]} />)}
-          <Link to="/properties/new" className="flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-2xl border-[1.5px] border-dashed border-gray-300 text-gray-500 transition hover:border-emerald-400 hover:text-emerald-600 dark:border-neutral-700 dark:text-neutral-400">
-            <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300"><Plus className="h-5 w-5" /></span>
-            <span className="text-sm font-medium">Add property</span>
-            <span className="text-[11.5px] text-gray-400">Primary or rental</span>
-          </Link>
-        </div>
+        )}
       </div>
     </PageContainer>
   )
