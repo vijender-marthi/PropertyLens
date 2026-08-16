@@ -4,7 +4,7 @@ import { useTheme } from '../hooks/useTheme'
 import {
   Building2, Upload, Settings, LogOut, Home, Plus,
   TrendingUp, Menu, X, HelpCircle, Wrench, Users, ReceiptText, Landmark, Scale,
-  Sun, Moon, DoorOpen, FileBarChart, Sparkles, MessageCircle,
+  Sun, Moon, DoorOpen, FileBarChart, Sparkles, MessageCircle, Database,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import BrandLogo from './BrandLogo'
@@ -22,7 +22,7 @@ const DASHBOARDS_NAV = [
 
 const MAIN_NAV = [
   { to: '/properties', icon: Building2,  label: 'Properties' },
-  { to: '/uploads',    icon: Upload,     label: 'Upload Files' },
+  { to: '/uploads',    icon: Database,   label: 'Import Data' },
 ]
 
 // Per-property accent colors (by property id) — shared with the portfolio /
