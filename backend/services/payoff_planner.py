@@ -70,6 +70,35 @@ def _format_month_year(value: date) -> str:
     return f"{_MONTH_ABBR[value.month - 1]} {value.year}"
 
 
+def _yearly_amortization(months_log, start_date):
+    """Roll a loan's per-month principal/interest (under the plan) up into
+    calendar-year rows, ending the year the loan is paid off."""
+    if not months_log or not start_date:
+        return []
+    buckets = {}
+    order = []
+    for entry in months_log:
+        cal = _add_months(start_date, int(entry["m"]) - 1)
+        year = cal.year
+        if year not in buckets:
+            buckets[year] = {"principal": 0.0, "interest": 0.0, "endingBalance": 0.0}
+            order.append(year)
+        b = buckets[year]
+        b["principal"] += float(entry.get("principal", 0.0) or 0.0)
+        b["interest"] += float(entry.get("interest", 0.0) or 0.0)
+        b["endingBalance"] = float(entry.get("balance", 0.0) or 0.0)  # last month wins
+    return [
+        {
+            "year": year,
+            "principal": round(buckets[year]["principal"], 2),
+            "interest": round(buckets[year]["interest"], 2),
+            "payment": round(buckets[year]["principal"] + buckets[year]["interest"], 2),
+            "endingBalance": round(buckets[year]["endingBalance"], 2),
+        }
+        for year in order
+    ]
+
+
 def _ordinal(n: int) -> str:
     """1 -> '1st', 2 -> '2nd', 11 -> '11th', ..."""
     n = int(n)
@@ -176,6 +205,9 @@ def simulate(
             # Attribution of the TOTAL money that clears this loan:
             "own_paid": 0.0,          # its own P&I payment stream (you pay)
             "attack_by": {},          # {source loan name / "__external__": $ rolled in}
+            # Per-month principal/interest under THIS plan, for the amortization
+            # view (rolled up by year on the frontend). One entry per active month.
+            "months_log": [],
         })
 
     total_interest = 0.0
@@ -194,6 +226,13 @@ def simulate(
     while open_state() and month < cap:
         month += 1
 
+        # Per-loan accumulators for this month's amortization log. Every loan open
+        # at the start of the month participates (even if it closes this month).
+        for s in state:
+            s["_active_month"] = bool(s["open"])
+            s["_m_int"] = 0.0
+            s["_m_prin"] = 0.0
+
         # 1. Interest + minimum P&I principal for every open loan.
         for s in state:
             if not s["open"]:
@@ -205,6 +244,8 @@ def simulate(
             s["balance"] -= principal
             principal_paid += principal
             s["own_paid"] += interest + principal  # the loan's own payment toward itself
+            s["_m_int"] += interest
+            s["_m_prin"] += principal
             if s["balance"] <= 1e-6:
                 s["balance"] = 0.0
                 s["open"] = False
@@ -258,6 +299,7 @@ def simulate(
                     break
                 pay = min(pool, target["balance"])
                 target["balance"] -= pay
+                target["_m_prin"] += pay
                 pool -= pay
                 principal_paid += pay
                 attack_paid += pay
@@ -268,6 +310,16 @@ def simulate(
                     target["balance"] = 0.0
                     target["open"] = False
                     target["payoff_month"] = month
+
+        # 5. Log this month's principal/interest for every loan that was active.
+        for s in state:
+            if s.get("_active_month"):
+                s["months_log"].append({
+                    "m": month,
+                    "interest": round(s["_m_int"], 2),
+                    "principal": round(s["_m_prin"], 2),
+                    "balance": round(s["balance"], 2),
+                })
 
     loans_out = [
         {
@@ -285,6 +337,7 @@ def simulate(
             "own_paid": round(s["own_paid"], 2),
             "attack_by": {k: round(v, 2) for k, v in s["attack_by"].items()},
             "total_paid": round(s["own_paid"] + sum(s["attack_by"].values()), 2),
+            "months_log": s["months_log"],
         }
         for s in state
     ]
@@ -609,6 +662,7 @@ def build_report(
             "accentIndex": int(l.get("accentIndex", 0) or 0),
             "propertyId": l.get("propertyId"),
             "loanId": l.get("loanId"),
+            "amortization": _yearly_amortization(l.get("months_log"), start_date),
             "payoffMonth": pm,
             "payoffDate": None if never else _format_month_year(pay_date),
             "barPct": 0.0 if never else round(min(pm / denom, 1.0) * 100, 1),

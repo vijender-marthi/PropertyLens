@@ -979,7 +979,7 @@ function homeAccentFor(row, never) {
 function HomeNode({ row, onOpen }) {
   const never = row.verdict?.neverPaysOff
   const accent = homeAccentFor(row, never)
-  const clickable = onOpen && row.loanId != null
+  const clickable = onOpen && (row.amortization?.length > 0)
   return (
     <span
       className={`group/node relative z-10 flex h-9 w-9 items-center justify-center rounded-full border-2 bg-white shadow-sm dark:bg-gray-900 ${accent.ring} ${clickable ? 'cursor-pointer' : 'cursor-help'}`}
@@ -1009,7 +1009,7 @@ function ChartCard({ row, asOf, onOpen }) {
   const never = row.verdict?.neverPaysOff
   const belowMarket = row.verdict?.belowMarket
   const accent = homeAccentFor(row, never)
-  const clickable = onOpen && row.loanId != null
+  const clickable = onOpen && (row.amortization?.length > 0)
   return (
     <div className="min-w-0 flex-1 px-1">
       <div
@@ -1041,63 +1041,28 @@ function ChartCard({ row, asOf, onOpen }) {
   )
 }
 
-// Amortization schedule for one home's loan, rolled up by year. Opened by
-// clicking a home's detail block (or its node) on the payoff timeline. Values
-// are the standalone loan amortization (no extra payments) — how that loan pays
-// down year by year.
+// Amortization schedule for one home's loan, rolled up by year and ending at the
+// loan's payoff year on the timeline. Values are the schedule UNDER THE PLAN
+// (backend-computed row.amortization) — so it reaches the payoff date shown.
 function AmortizationModal({ home, onClose }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!home || home.loanId == null || home.propertyId == null) return undefined
-    let active = true
-    setLoading(true); setError(''); setData(null)
-    propAPI.amortization(home.propertyId, home.loanId, 0)
-      .then((r) => { if (active) setData(r.data) })
-      .catch(() => { if (active) setError('Could not load the amortization schedule.') })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [home])
-
-  const yearly = useMemo(() => {
-    const sched = data?.schedule || []
-    if (!sched.length) return []
-    const start = new Date()
-    const byYear = new Map()
-    sched.forEach((m, i) => {
-      const y = new Date(start.getFullYear(), start.getMonth() + i, 1).getFullYear()
-      const acc = byYear.get(y) || { year: y, principal: 0, interest: 0, payment: 0, endingBalance: 0 }
-      acc.principal += m.principal || 0
-      acc.interest += m.interest || 0
-      acc.payment += m.payment || 0
-      acc.endingBalance = m.balance || 0
-      byYear.set(y, acc)
-    })
-    return Array.from(byYear.values())
-  }, [data])
-
   if (!home) return null
-
+  const yearly = home.amortization || []
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center" role="dialog" aria-modal="true" aria-label="Amortization schedule" onMouseDown={onClose}>
       <div className="my-8 w-full max-w-2xl rounded-2xl bg-white shadow-xl dark:bg-gray-900" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
           <div>
             <h4 className="font-semibold text-gray-900 dark:text-white">{home.name} · amortization by year</h4>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">How this loan pays down each year at its current rate{home.rateDisplay ? ` (${home.rateDisplay})` : ''} — no extra payments.</p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              How this loan pays down each year under your plan{home.rateDisplay ? ` (${home.rateDisplay})` : ''}{home.payoffDate ? ` — paid off ${home.payoffDate}` : ''}.
+            </p>
           </div>
           <button type="button" onClick={onClose} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200" aria-label="Close">
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
         <div className="max-h-[65vh] overflow-y-auto px-5 py-4">
-          {loading ? (
-            <div className="flex items-center justify-center py-10 text-sm text-gray-400"><div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" /><span className="ml-3">Loading schedule…</span></div>
-          ) : error ? (
-            <p className="py-8 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
-          ) : yearly.length === 0 ? (
+          {yearly.length === 0 ? (
             <p className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">No amortization schedule available for this loan.</p>
           ) : (
             <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
