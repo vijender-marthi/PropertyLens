@@ -274,6 +274,8 @@ def simulate(
             "name": s["name"],
             "isPrimary": s.get("isPrimary", False),
             "accentIndex": s.get("accentIndex", 0),
+            "propertyId": s.get("propertyId"),
+            "loanId": s.get("loanId"),
             "rate": s["rate"],
             "pi": s["pi"],
             "noi": s["noi"],
